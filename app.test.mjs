@@ -65,7 +65,7 @@ test('password login fetches the private bank, merges records, and automatically
   assert.equal(app.saved.get('dse_quiz_sync_session_v1'), sessionId);
   assert.ok([...app.saved.values()].every(value => !value.includes('test-password')));
   assert.equal(calls.find(call => call.url.endsWith('/bank')).options.headers.Authorization, 'Bearer ' + sessionId);
-  assert.match(app.node('#syncStatus').textContent, /已自動同步/);
+  assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
 });
 
 test('wrong passwords cannot load questions or overwrite progress', async () => {
@@ -111,6 +111,7 @@ test('automatic polling skips unchanged uploads, and logout retains local record
   app.intervals.find(timer => timer.delay === 60000).fn();
   await settle();
   assert.deepEqual(calls.map(call => call.method), ['GET']);
+  assert.match(app.node('#syncStatus').textContent, /雲端已核對，無新記錄/);
   assert.match(app.node('#app').innerHTML, /退出登入/);
   app.context.confirm = () => { throw new Error('Password logout must not depend on a browser dialog'); };
   app.node('#syncDisconnectBtn').listeners.click();
@@ -119,6 +120,30 @@ test('automatic polling skips unchanged uploads, and logout retains local record
   assert.equal(app.saved.get('dse_quiz_sessions_v2'), '[]');
   assert.ok(calls.some(call => call.url.endsWith('/auth/logout')));
   assert.match(app.node('#app').innerHTML, /passwordLoginForm/);
+});
+
+test('sync combines answers from two computers and reports an upload only when one occurs', async () => {
+  const cycle = boot().saved.get('dse_quiz_cycle_v1');
+  const key = 'chem:T3';
+  const localDraft = { pick: { a: 'A' }, text: {}, paper: {}, changedAt: { 'pick:a': 110 }, deletedAt: 0 };
+  const remoteDraft = { pick: { b: 'B' }, text: {}, paper: {}, changedAt: { 'pick:b': 120 }, deletedAt: 0 };
+  const remote = { app: 'kyle-dse-quiz', sessions: [], archive: [], drafts: { [key]: remoteDraft }, reviewPlan: {}, cycle };
+  let uploaded, puts = 0;
+  const app = boot('', async (_, options) => {
+    if (options.method === 'PUT') {
+      puts++;
+      uploaded = JSON.parse(options.body).data;
+      return { ok: true, json: async () => ({ savedAt: '2026-10-12T16:00:00Z' }) };
+    }
+    return { ok: true, json: async () => ({ data: remote }) };
+  }, { dse_quiz_sync_session_v1: 'valid-session', dse_quiz_cycle_v1: cycle,
+    dse_quiz_draft_v2: JSON.stringify({ [key]: localDraft }) }, false, true);
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.node('#syncNowBtn').listeners.click();
+  await settle();
+  assert.equal(puts, 1);
+  assert.deepEqual(uploaded.drafts[key].pick, { a: 'A', b: 'B' });
+  assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
 });
 
 test('visible sync times and the review calendar use Beijing time across midnight', async () => {
@@ -236,7 +261,7 @@ test('existing correct answers without a review plan do not break startup or OAu
   assert.equal(backup.reviewPlan['old-mc'].streak, 2);
   assert.equal(backup.reviewPlan['old-sub'].streak, 1);
   assert.equal(backup.reviewPlan['old-sub'].interval, 15);
-  assert.match(app.node('#syncStatus').textContent, /已自動同步/);
+  assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
 });
 
 test('fresh visits, restored records and session links all start on the home page', () => {
@@ -266,7 +291,7 @@ test('OAuth callback renders home immediately, then exchanges and syncs', async 
   assert.equal(calls.length, 3);
   assert.equal(JSON.parse(calls[0].options.body).handoff, 'test-handoff');
   assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'test-session');
-  assert.match(app.node('#syncStatus').textContent, /已自動同步/);
+  assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
 });
 
 test('failed authorization and cancelled authorization leave a visible home page', async () => {
