@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import worker from './worker.js';
+import worker, { mergeBackup } from './worker.js';
 
 const ORIGIN = 'https://makise-kurisu-d.github.io';
 const BASE = 'https://sync.example.workers.dev';
@@ -32,7 +32,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'password-20261012');
+  assert.equal(status.version, 'draft-sync-20261013');
   assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
@@ -59,7 +59,33 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'password-20261012', passwordConfigured: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'draft-sync-20261013', passwordConfigured: false });
+});
+
+test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
+  const base = { app: 'kyle-dse-quiz', sessions: [], archive: [], reviewPlan: {}, cycle: '100' };
+  const first = { ...base, drafts: { 'chem:T3': {
+    pick: { a: 'A' }, text: {}, paper: {}, changedAt: { 'pick:a': 110 }, deletedAt: 0,
+  } } };
+  const second = { ...base, drafts: { 'chem:T3': {
+    pick: { b: 'B' }, text: {}, paper: {}, changedAt: { 'pick:b': 120 }, deletedAt: 0,
+  } } };
+  const merged = mergeBackup(first, second);
+  assert.deepEqual(merged.drafts['chem:T3'].pick, { a: 'A', b: 'B' });
+  const stale = { ...base, drafts: { 'chem:T3': {
+    pick: { a: 'C', b: 'B' }, text: {}, paper: {}, changedAt: { 'pick:a': 105, 'pick:b': 120 }, deletedAt: 0,
+  } } };
+  assert.deepEqual(mergeBackup(merged, stale).drafts['chem:T3'].pick, { a: 'A', b: 'B' });
+  const deleted = { ...base, drafts: { 'chem:T3': {
+    pick: {}, text: {}, paper: {}, changedAt: {}, deletedAt: 130,
+  } } };
+  assert.deepEqual(mergeBackup(merged, deleted).drafts['chem:T3'].pick, {});
+  assert.deepEqual(mergeBackup(mergeBackup(merged, deleted), stale).drafts['chem:T3'].pick, {});
+  const newer = { ...base, drafts: { 'chem:T3': {
+    pick: { c: 'D' }, text: {}, paper: {}, changedAt: { 'pick:c': 140 }, deletedAt: 130,
+  } } };
+  assert.deepEqual(mergeBackup(mergeBackup(merged, deleted), newer).drafts['chem:T3'].pick, { c: 'D' });
+  assert.deepEqual(mergeBackup(first, { ...second, cycle: '200' }).drafts['chem:T3'].pick, { b: 'B' });
 });
 
 test('OAuth handoff authenticates and sync merges through GitHub contents API', async t => {
