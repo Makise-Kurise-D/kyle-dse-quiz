@@ -146,6 +146,28 @@ test('sync combines answers from two computers and reports an upload only when o
   assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
 });
 
+test('an answer changed during an upload stays visibly pending until a later sync', async () => {
+  let finishPut;
+  const app = boot('', async (_, options) => {
+    if (options.method === 'PUT') return new Promise(resolve => { finishPut = resolve; });
+    return { ok: true, json: async () => ({ data: null }) };
+  }, { dse_quiz_sync_session_v1: 'valid-session' }, false, true);
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.node('#syncNowBtn').listeners.click();
+  await settle();
+  assert.equal(typeof finishPut, 'function');
+  const choice = { dataset: { l: 'A' }, classList: { toggle() {} } };
+  const box = { dataset: { id: 'example-mc' }, listeners: {},
+    addEventListener(type, fn) { this.listeners[type] = fn; },
+    querySelectorAll(selector) { return selector === '.opt' ? [choice] : []; } };
+  app.node('#app').querySelectorAll = selector => selector === '.opts' ? [box] : [];
+  app.location.hash = '#/session/chem/T3'; app.events.hashchange();
+  box.listeners.click({ target: { closest: () => choice } });
+  finishPut({ ok: true, json: async () => ({ savedAt: '2026-10-12T16:00:00Z' }) });
+  await settle();
+  assert.match(app.node('#syncStatus').textContent, /本機有新變更，等待自動同步/);
+});
+
 test('visible sync times and the review calendar use Beijing time across midnight', async () => {
   const savedAt = '2026-10-12T16:30:45.000Z'; // 2026-10-13 00:30:45 in Beijing
   const app = boot('', async (_, options) => ({
