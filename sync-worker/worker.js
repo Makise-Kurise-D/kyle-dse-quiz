@@ -6,7 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'password-20261012';
+const SERVICE_VERSION = 'draft-sync-20261013';
 const refreshes = new Map();
 
 function json(data, status = 200, headers = {}) {
@@ -36,7 +36,38 @@ function decodeUtf8(value) {
   return new TextDecoder().decode(bytes);
 }
 
-function mergeBackup(current, incoming) {
+function mergeDraft(a = {}, b = {}) {
+  const deletedAt = Math.max(Number(a.deletedAt) || 0, Number(b.deletedAt) || 0);
+  const merged = { pick: {}, text: {}, paper: {}, changedAt: {}, deletedAt };
+  for (const kind of ['pick', 'text', 'paper']) {
+    const left = a[kind] || {}, right = b[kind] || {};
+    const prefix = `${kind}:`;
+    const ids = new Set([...Object.keys(left), ...Object.keys(right),
+      ...Object.keys(a.changedAt || {}).filter(key => key.startsWith(prefix)).map(key => key.slice(prefix.length)),
+      ...Object.keys(b.changedAt || {}).filter(key => key.startsWith(prefix)).map(key => key.slice(prefix.length))]);
+    for (const id of ids) {
+      const key = prefix + id;
+      const leftAt = Number((a.changedAt || {})[key]) || 0;
+      const rightAt = Number((b.changedAt || {})[key]) || 0;
+      const useRight = rightAt > leftAt || (rightAt === leftAt && Object.hasOwn(right, id) &&
+        (!Object.hasOwn(left, id) || !!right[id] || !left[id]));
+      const source = useRight ? right : left;
+      const at = useRight ? rightAt : leftAt;
+      if (deletedAt && at <= deletedAt) continue;
+      if (Object.hasOwn(source, id)) merged[kind][id] = source[id];
+      if (at) merged.changedAt[key] = at;
+    }
+  }
+  return merged;
+}
+
+function mergeDrafts(a = {}, b = {}) {
+  const out = {};
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) out[key] = mergeDraft(a[key], b[key]);
+  return out;
+}
+
+export function mergeBackup(current, incoming) {
   if (!current || current.app !== 'kyle-dse-quiz') return incoming;
   function mergeSessions(a, b) {
     const seen = new Set(), out = [];
@@ -51,13 +82,15 @@ function mergeBackup(current, incoming) {
   Object.entries(incoming.reviewPlan || {}).forEach(([id, p]) => {
     if (!plans[id] || (p.lastAt || 0) >= (plans[id].lastAt || 0)) plans[id] = p;
   });
+  const cycle = Math.max(Number(current.cycle || 0), Number(incoming.cycle || 0));
   return {
     app: 'kyle-dse-quiz', version: 1, exportedAt: new Date().toISOString(),
     sessions: mergeSessions(current.sessions, incoming.sessions),
     archive: mergeSessions(current.archive, incoming.archive),
-    drafts: { ...(current.drafts || {}), ...(incoming.drafts || {}) },
+    drafts: mergeDrafts(Number(current.cycle || 0) === cycle ? current.drafts : {},
+      Number(incoming.cycle || 0) === cycle ? incoming.drafts : {}),
     reviewPlan: plans,
-    cycle: String(Math.max(Number(current.cycle || 0), Number(incoming.cycle || 0))) || null,
+    cycle: cycle ? String(cycle) : null,
   };
 }
 
