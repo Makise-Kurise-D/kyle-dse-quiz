@@ -108,6 +108,12 @@ b{font-weight:700}
 .btn-ghost{background:transparent}
 .btn-lg{padding:14px 26px;font-size:15.5px}
 .btn-random{display:block;margin:22px auto 0}
+.sync-login{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:18px 0;max-width:640px}
+.sync-login label{font-weight:700}
+.sync-login input{flex:1 1 180px;min-width:0;padding:12px 14px;border:1px solid var(--gold-line);border-radius:10px;background:#fff;font:inherit}
+.sync-login input:focus{outline:2px solid var(--gold);outline-offset:2px}
+.sync-storage{margin:16px 0;font-size:14px}
+.sync-storage summary{cursor:pointer}
 .soon-banner{background:var(--gold-soft);border:1px solid var(--gold-line);border-radius:14px;
   padding:26px;text-align:center;font-size:16px;margin-bottom:18px}
 
@@ -397,4 +403,3 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   .rp-head{position:static}
   .toast{bottom:82px}
 }
-
