@@ -21,7 +21,7 @@
   var SYNC_API = String(window.QUIZ_SYNC_API || '').replace(/\/+$/, '');
   var PASSWORD_AUTH = window.QUIZ_PASSWORD_AUTH === true;
   var passwordLoginBusy = false;
-  var syncTimer = null, syncBusy = false;
+  var syncTimer = null, syncBusy = false, syncAgain = false;
   var syncMessage = '';
   var startupHash = location.hash;
   // 所有網頁日期及雙週週期均以北京時間（UTC+8）為準；儲存的時間戳仍使用 UTC。
@@ -59,6 +59,52 @@
       cycle: localStorage.getItem(LS_CYCLE) || null
     };
   }
+  function mergeDraft(a, b) {
+    a = a || {}; b = b || {};
+    var deletedAt = Math.max(Number(a.deletedAt) || 0, Number(b.deletedAt) || 0);
+    var merged = { pick: {}, text: {}, paper: {}, changedAt: {}, deletedAt: deletedAt };
+    ['pick', 'text', 'paper'].forEach(function (kind) {
+      var left = a[kind] || {}, right = b[kind] || {};
+      var ids = {};
+      Object.keys(left).concat(Object.keys(right)).forEach(function (id) { ids[id] = true; });
+      Object.keys(a.changedAt || {}).concat(Object.keys(b.changedAt || {})).forEach(function (key) {
+        if (key.indexOf(kind + ':') === 0) ids[key.slice(kind.length + 1)] = true;
+      });
+      Object.keys(ids).forEach(function (id) {
+        var key = kind + ':' + id;
+        var leftAt = Number((a.changedAt || {})[key]) || 0;
+        var rightAt = Number((b.changedAt || {})[key]) || 0;
+        var useRight = rightAt > leftAt || (rightAt === leftAt && Object.prototype.hasOwnProperty.call(right, id) &&
+          (!Object.prototype.hasOwnProperty.call(left, id) || !!right[id] || !left[id]));
+        var source = useRight ? right : left;
+        var at = useRight ? rightAt : leftAt;
+        if (deletedAt && at <= deletedAt) return;
+        if (Object.prototype.hasOwnProperty.call(source, id)) merged[kind][id] = source[id];
+        if (at) merged.changedAt[key] = at;
+      });
+    });
+    return merged;
+  }
+  function mergeDrafts(a, b) {
+    var out = {};
+    Object.keys(a || {}).concat(Object.keys(b || {})).forEach(function (key) {
+      if (!Object.prototype.hasOwnProperty.call(out, key)) out[key] = mergeDraft((a || {})[key], (b || {})[key]);
+    });
+    return out;
+  }
+  function deleteDraft(key) {
+    var old = drafts[key] || {};
+    var stamps = Object.values(old.changedAt || {}).map(Number).filter(Number.isFinite);
+    var deletedAt = Math.max(Date.now(), Number(old.deletedAt) || 0, ...stamps) + 1;
+    drafts[key] = { pick: {}, text: {}, paper: {}, changedAt: {}, deletedAt: deletedAt };
+  }
+  function stableStringify(value) {
+    if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+    if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(function (key) {
+      return JSON.stringify(key) + ':' + stableStringify(value[key]);
+    }).join(',') + '}';
+    return JSON.stringify(value);
+  }
   function mergeData(remote) {
     if (!remote || remote.app !== 'kyle-dse-quiz') return false;
     function mergeSessions(a, b) {
@@ -72,15 +118,15 @@
     }
     sessions = mergeSessions(sessions, remote.sessions);
     archive = mergeSessions(archive, remote.archive);
-    drafts = Object.assign({}, remote.drafts || {}, drafts);
+    var localCycle = Number(localStorage.getItem(LS_CYCLE) || 0);
+    var remoteCycle = Number(remote.cycle || 0);
+    var cycle = Math.max(localCycle, remoteCycle);
+    drafts = mergeDrafts(remoteCycle === cycle ? remote.drafts : {}, localCycle === cycle ? drafts : {});
     var plans = Object.assign({}, remote.reviewPlan || {});
     Object.keys(reviewPlan).forEach(function (id) {
       if (!plans[id] || (reviewPlan[id].lastAt || 0) >= (plans[id].lastAt || 0)) plans[id] = reviewPlan[id];
     });
     reviewPlan = plans;
-    var localCycle = parseInt(localStorage.getItem(LS_CYCLE) || '0', 10);
-    var remoteCycle = parseInt(remote.cycle || '0', 10);
-    var cycle = Math.max(localCycle, remoteCycle);
     localStorage.setItem(LS_SESS, JSON.stringify(sessions));
     localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
     localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
@@ -130,28 +176,39 @@
       }).finally(function () { clearTimeout(timer); });
   }
   function syncNow(mergeRemote) {
-    if (syncBusy || !localStorage.getItem(LS_SYNC_SESSION) || !SYNC_API) return Promise.resolve(false);
+    if (syncBusy) { syncAgain = true; return Promise.resolve(false); }
+    if (!localStorage.getItem(LS_SYNC_SESSION) || !SYNC_API) return Promise.resolve(false);
     syncBusy = true;
     var session = localStorage.getItem(LS_SYNC_SESSION);
     setSyncStatus('同步中…');
+    function state(data) {
+      return stableStringify([data.sessions || [], data.archive || [], data.drafts || {}, data.reviewPlan || {}, String(data.cycle || '')]);
+    }
+    var before = state(backupData());
     return syncRequest('GET').then(function (remote) {
       if (remote.data) mergeData(remote.data);
       var backup = backupData();
-      function state(data) {
-        return JSON.stringify([data.sessions || [], data.archive || [], data.drafts || {}, data.reviewPlan || {}, String(data.cycle || '')]);
+      if (remote.data && state(remote.data) === state(backup)) {
+        return { savedAt: new Date().toISOString(), kind: before === state(backup) ? 'checked' : 'downloaded' };
       }
-      if (remote.data && state(remote.data) === state(backup)) return { savedAt: remote.data.exportedAt || new Date().toISOString() };
-      return syncRequest('PUT', { data: backup });
+      return syncRequest('PUT', { data: backup }).then(function (result) {
+        result.kind = 'uploaded'; return result;
+      });
     }).then(function (result) {
-      localStorage.setItem(LS_SYNCED_AT, result.savedAt || new Date().toISOString());
-      setSyncStatus('已自動同步 · ' + fmtDateTime(result.savedAt || Date.now()));
+      var checkedAt = new Date().toISOString();
+      localStorage.setItem(LS_SYNCED_AT, checkedAt);
+      var label = result.kind === 'uploaded' ? '已上傳至雲端' : result.kind === 'downloaded' ? '已更新本機記錄' : '雲端已核對，無新記錄';
+      setSyncStatus(label + ' · 練習 ' + (sessions.length + archive.length) + ' 次 · ' + fmtDateTime(result.savedAt || checkedAt));
       if (location.hash.indexOf('/records') >= 0) renderRecords();
       return true;
     }).catch(function (err) {
       expireConnection(err, session);
       setSyncStatus('同步失敗：' + err.message);
       return false;
-    }).finally(function () { syncBusy = false; });
+    }).finally(function () {
+      syncBusy = false;
+      if (syncAgain) { syncAgain = false; scheduleSync(); }
+    });
   }
   function scheduleSync() {
     if (!localStorage.getItem(LS_SYNC_SESSION) || !SYNC_API) return;
@@ -846,8 +903,16 @@
 
   function bindSession(code, topic, dkey, renderItems, initialActive, mcOnly) {
     var activeItems = initialActive;
-    var draft = drafts[dkey] || { pick: {}, text: {}, paper: {} };
-    function persist() { drafts[dkey] = draft; save(); updateAnswered(); }
+    var draft = drafts[dkey] || { pick: {}, text: {}, paper: {}, changedAt: {}, deletedAt: 0 };
+    function persist(kind, id) {
+      var value = draft[kind][id];
+      draft = mergeDraft(drafts[dkey], draft);
+      draft[kind][id] = value;
+      draft.changedAt = draft.changedAt || {};
+      var key = kind + ':' + id;
+      draft.changedAt[key] = Math.max(Date.now(), Number(draft.changedAt[key]) + 1 || 0, Number(draft.deletedAt) + 1 || 0);
+      drafts[dkey] = draft; save(); updateAnswered();
+    }
     function answeredCount() {
       return activeItems.filter(function (it) {
         if (it.kind === 'mc') return !!draft.pick[it.id];
@@ -872,7 +937,7 @@
       rerollBtn.addEventListener('click', function () {
         var pfx = code + ':__random__';
         Object.keys(drafts).forEach(function (k) {
-          if (k.indexOf(pfx) === 0) delete drafts[k];
+          if (k.indexOf(pfx) === 0) deleteDraft(k);
         });
         localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
         scheduleSync();
@@ -913,14 +978,14 @@
         $all('.opt', box).forEach(function (x) {
           x.classList.toggle('picked', x.dataset.l === draft.pick[id]);
         });
-        persist();
+        persist('pick', id);
       });
     });
     $all('.ans-box', $('#app')).forEach(function (ta) {
-      ta.addEventListener('input', function () { draft.text[ta.dataset.id] = ta.value; persist(); });
+      ta.addEventListener('input', function () { draft.text[ta.dataset.id] = ta.value; persist('text', ta.dataset.id); });
     });
     $all('.paper-chk', $('#app')).forEach(function (cb) {
-      cb.addEventListener('change', function () { draft.paper[cb.dataset.id] = cb.checked; persist(); });
+      cb.addEventListener('change', function () { draft.paper[cb.dataset.id] = cb.checked; persist('paper', cb.dataset.id); });
     });
 
     $('#submitBtn').addEventListener('click', function () {
@@ -1064,13 +1129,17 @@
       });
       if (mcOnly && topic !== '__random__') {
         // 只清今次提交嘅 MC 揀答，保留大題默寫草稿
-        items.forEach(function (it) { delete draft.pick[it.id]; });
-        if (!Object.keys(draft.pick).length &&
-            !Object.keys(draft.text).length && !Object.keys(draft.paper).length) {
-          delete drafts[dkey];
-        }
+        items.forEach(function (it) {
+          draft.pick[it.id] = '';
+          draft.changedAt = draft.changedAt || {};
+          var key = 'pick:' + it.id;
+          draft.changedAt[key] = Math.max(Date.now(), Number(draft.changedAt[key]) + 1 || 0);
+        });
+        if (!Object.values(draft.pick).some(Boolean) &&
+            !Object.values(draft.text).some(Boolean) && !Object.values(draft.paper).some(Boolean)) deleteDraft(dkey);
+        else drafts[dkey] = draft;
       } else {
-        delete drafts[dkey];
+        deleteDraft(dkey);
       }
       save();
       var totalGot = mcMarks + (mcOnly ? 0 : subGotFinal);
@@ -1168,7 +1237,7 @@
                 : '<a class="btn btn-primary" id="syncConnectBtn" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">连接 GitHub</a>'))) +
           '</div></div>' +
           '<p class="review-note" id="syncStatus" role="status" aria-live="polite">' + esc(syncMessage || (!SYNC_API ? '同步服务尚未部署。部署完成后，练习记录会自动备份到你的私有仓库。' :
-            (connected ? ('已连接 · 上次同步：' + (localStorage.getItem(LS_SYNCED_AT) ? fmtDateTime(localStorage.getItem(LS_SYNCED_AT)) : '尚未同步')) : (PASSWORD_AUTH ? '輸入密碼後，會合併本機與雲端記錄並自動同步。' : '在新分頁連接 GitHub，原頁面會保留。完成後會合併記錄並自動同步。')))) + '</p>' +
+            (connected ? ('已連接 · 上次雲端核對：' + (localStorage.getItem(LS_SYNCED_AT) ? fmtDateTime(localStorage.getItem(LS_SYNCED_AT)) : '尚未同步')) : (PASSWORD_AUTH ? '輸入密碼後，會合併本機與雲端記錄並自動同步。' : '在新分頁連接 GitHub，原頁面會保留。完成後會合併記錄並自動同步。')))) + '</p>' +
           (PASSWORD_AUTH && SYNC_API && !connected ? passwordForm() : '') + '</div>' +
 
         '<div class="stat-cards">' +
