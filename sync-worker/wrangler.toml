@@ -1,0 +1,16 @@
+# Cloudflare Workers Builds: main branch, root directory sync-worker.
+# Build command: none. Deploy command: npx wrangler deploy --keep-vars.
+name = "snowy-cake-a0a7"
+main = "worker.js"
+compatibility_date = "2026-10-08"
+
+# Set SITE_PASSWORD as a Worker secret, alongside SESSION_SECRET and GITHUB_CLIENT_SECRET.
+# The owner's existing OAuth connection initializes private storage on the first visit.
+# GITHUB_TOKEN is an optional server-only alternative for repository access.
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "abf716fb1a6b49338835370ac0026569"
+
+[vars]
+GITHUB_CLIENT_ID = "Iv23liDCF1nzb5DgalhR"
