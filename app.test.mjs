@@ -121,6 +121,31 @@ test('automatic polling skips unchanged uploads, and logout retains local record
   assert.match(app.node('#app').innerHTML, /passwordLoginForm/);
 });
 
+test('visible sync times and the review calendar use Beijing time across midnight', async () => {
+  const savedAt = '2026-10-12T16:30:45.000Z'; // 2026-10-13 00:30:45 in Beijing
+  const app = boot('', async (_, options) => ({
+    ok: true,
+    json: async () => options.method === 'GET' ? { data: null } : { savedAt }
+  }), { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password',
+    dse_quiz_sync_at_v1: savedAt }, false, true);
+  app.location.hash = '#/records'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /2026\/10\/13 00:30:45（北京時間）/);
+  app.node('#syncNowBtn').listeners.click();
+  await settle();
+  assert.match(app.node('#syncStatus').textContent, /2026\/10\/13 00:30:45（北京時間）/);
+
+  const day = 864e5, offset = 8 * 3600e3;
+  const today = Math.floor((Date.now() + offset) / day);
+  const midnight = today * day - offset;
+  const sessions = [midnight - 60000, midnight + 60000].map(t => ({
+    t, subj: 'chem', topic: 'T3', results: { 'example-mc': { ok: true, marks: 1, tot: 1 } }
+  }));
+  const calendar = boot('', async () => { throw new Error('offline'); },
+    { dse_quiz_sessions_v2: JSON.stringify(sessions) });
+  calendar.location.hash = '#/records'; calendar.events.hashchange();
+  assert.equal((calendar.node('#heat').innerHTML.match(/1 次練習/g) || []).length, 2);
+});
+
 test('an expired session offers reconnection without deleting local records or uploading', async () => {
   const records = [{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }];
   const calls = [];

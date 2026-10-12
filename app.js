@@ -24,9 +24,11 @@
   var syncTimer = null, syncBusy = false;
   var syncMessage = '';
   var startupHash = location.hash;
-  // 雙週重置：以 2026-10-05（一）00:00 本地為錨，每 14 日為一輪
-  var CYCLE_MS = 14 * 24 * 3600 * 1000;
-  var CYCLE_ANCHOR = new Date(2026, 9, 5, 0, 0, 0).getTime();
+  // 所有網頁日期及雙週週期均以北京時間（UTC+8）為準；儲存的時間戳仍使用 UTC。
+  var DAY_MS = 24 * 3600 * 1000;
+  var BEIJING_OFFSET_MS = 8 * 3600 * 1000;
+  var CYCLE_MS = 14 * DAY_MS;
+  var CYCLE_ANCHOR = Date.UTC(2026, 9, 4, 16); // 北京時間 2026-10-05（一）00:00
 
   var sessions = load(LS_SESS, []);
   var archive = load(LS_ARCHIVE, []);
@@ -142,7 +144,7 @@
       return syncRequest('PUT', { data: backup });
     }).then(function (result) {
       localStorage.setItem(LS_SYNCED_AT, result.savedAt || new Date().toISOString());
-      setSyncStatus('已自動同步 · ' + new Date(result.savedAt || Date.now()).toLocaleString());
+      setSyncStatus('已自動同步 · ' + fmtDateTime(result.savedAt || Date.now()));
       if (location.hash.indexOf('/records') >= 0) renderRecords();
       return true;
     }).catch(function (err) {
@@ -1166,7 +1168,7 @@
                 : '<a class="btn btn-primary" id="syncConnectBtn" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">连接 GitHub</a>'))) +
           '</div></div>' +
           '<p class="review-note" id="syncStatus" role="status" aria-live="polite">' + esc(syncMessage || (!SYNC_API ? '同步服务尚未部署。部署完成后，练习记录会自动备份到你的私有仓库。' :
-            (connected ? ('已连接 · 上次同步：' + (localStorage.getItem(LS_SYNCED_AT) ? new Date(localStorage.getItem(LS_SYNCED_AT)).toLocaleString() : '尚未同步')) : (PASSWORD_AUTH ? '輸入密碼後，會合併本機與雲端記錄並自動同步。' : '在新分頁連接 GitHub，原頁面會保留。完成後會合併記錄並自動同步。')))) + '</p>' +
+            (connected ? ('已连接 · 上次同步：' + (localStorage.getItem(LS_SYNCED_AT) ? fmtDateTime(localStorage.getItem(LS_SYNCED_AT)) : '尚未同步')) : (PASSWORD_AUTH ? '輸入密碼後，會合併本機與雲端記錄並自動同步。' : '在新分頁連接 GitHub，原頁面會保留。完成後會合併記錄並自動同步。')))) + '</p>' +
           (PASSWORD_AUTH && SYNC_API && !connected ? passwordForm() : '') + '</div>' +
 
         '<div class="stat-cards">' +
@@ -1286,8 +1288,7 @@
     var days = 183, totalQ = SUBJECT_ORDER.reduce(function (n, c) { return n + itemsOf(c).length; }, 0);
     var byDay = {};
     allSessions().forEach(function (s) {
-      var d = new Date(s.t); d.setHours(0, 0, 0, 0);
-      var key = d.getTime();
+      var key = beijingDayIndex(s.t);
       if (!byDay[key]) byDay[key] = { q: 0, n: 0 };
       byDay[key].n += 1;
       byDay[key].q += Object.keys(s.results).length;
@@ -1297,21 +1298,21 @@
       var p = q / totalQ;
       return p >= 0.5 ? 4 : p >= 0.25 ? 3 : p >= 0.1 ? 2 : 1;
     }
-    var today = new Date(); today.setHours(0, 0, 0, 0);
-    var start = new Date(today.getTime() - (days - 1) * 864e5);
-    start.setDate(start.getDate() - start.getDay()); // 對齊週日
+    var today = beijingDayIndex(Date.now());
+    var start = today - (days - 1);
+    start -= new Date(start * DAY_MS).getUTCDay(); // 對齊北京時間週日
 
-    var nCol = Math.ceil(((today.getTime() - start.getTime()) / 864e5 + 1) / 7);
+    var nCol = Math.ceil((today - start + 1) / 7);
 
     // 月份標籤：該列週三（index 3）所在月與上一個標籤不同即標
     var monthHtml = '';
     var lastMonth = -1;
     for (var col = 0; col < nCol; col++) {
-      var mid = new Date(start.getTime() + (col * 7 + 3) * 864e5);
-      if (mid.getTime() > today.getTime()) {
-        mid = new Date(start.getTime() + col * 7 * 864e5 + 6 * 864e5);
+      var mid = start + col * 7 + 3;
+      if (mid > today) {
+        mid = start + col * 7 + 6;
       }
-      var mo = mid.getMonth();
+      var mo = new Date(mid * DAY_MS).getUTCMonth();
       if (mo !== lastMonth) {
         monthHtml += '<span class="hm-label" style="left:' + (col * HEAT_STEP) + 'px">' +
           MONTHS_EN[mo] + '</span>';
@@ -1328,12 +1329,12 @@
     for (var c2 = 0; c2 < nCol; c2++) {
       colsHtml += '<div class="heat-col">';
       for (var dow = 0; dow < 7; dow++) {
-        var t = start.getTime() + (c2 * 7 + dow) * 864e5;
-        var future = t > today.getTime();
+        var t = start + c2 * 7 + dow;
+        var future = t > today;
         var info = byDay[t];
         var lvl = (!future && info) ? lvlOf(info.q) : 0;
-        var dt = new Date(t);
-        var dateLabel = MONTHS_EN[dt.getMonth()] + ' ' + ordinal(dt.getDate());
+        var dt = new Date(t * DAY_MS);
+        var dateLabel = MONTHS_EN[dt.getUTCMonth()] + ' ' + ordinal(dt.getUTCDate());
         var detail;
         if (future) {
           detail = '';
@@ -1511,9 +1512,15 @@
       group('🟢 已答對（再刷可鞏固）', passOnce, 'once', null) +
       group('🌟 反複測試通過', passStrong, 'strong', null);
   }
+  function beijingDayIndex(t) { return Math.floor((new Date(t).getTime() + BEIJING_OFFSET_MS) / DAY_MS); }
+  function beijingClock(t) { return new Date(new Date(t).getTime() + BEIJING_OFFSET_MS); }
   function fmtDate(t) {
-    var d = new Date(t);
-    return d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate());
+    var d = beijingClock(t);
+    return d.getUTCFullYear() + '/' + pad(d.getUTCMonth() + 1) + '/' + pad(d.getUTCDate());
+  }
+  function fmtDateTime(t) {
+    var d = beijingClock(t);
+    return fmtDate(t) + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + '（北京時間）';
   }
 
   /* ---------------- 重設 ---------------- */
