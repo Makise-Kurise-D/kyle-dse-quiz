@@ -30,7 +30,10 @@ test('health and CORS preflight are available locally', async () => {
   const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, GITHUB_CLIENT_ID: 'test-client' };
   const health = await worker.fetch(new Request(`${BASE}/health`), env);
   assert.equal(health.status, 200);
-  assert.equal((await health.json()).service, 'kyle-dse-quiz-sync');
+  const status = await health.json();
+  assert.equal(status.service, 'kyle-dse-quiz-sync');
+  assert.equal(status.version, 'password-20261012');
+  assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
     method: 'OPTIONS', headers: { Origin: ORIGIN, 'Access-Control-Request-Method': 'PUT' },
@@ -56,7 +59,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync' });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'password-20261012', passwordConfigured: false });
 });
 
 test('OAuth handoff authenticates and sync merges through GitHub contents API', async t => {
@@ -272,4 +275,19 @@ test('password login checks configuration, origin, attempts, expiry and credenti
     const expired = await worker.fetch(new Request(`${BASE}/sync`, { headers }), env);
     assert.equal(expired.status, 401);
   } finally { Date.now = originalNow; }
+});
+
+test('storage failures return a readable CORS error instead of an opaque browser fetch failure', async () => {
+  const env = { SITE_PASSWORD: 'test-password', SESSION_SECRET: SECRET, SESSIONS: {
+    get: async () => { throw new Error('private-internal-detail'); }, put: async () => {},
+  } };
+  const response = await worker.fetch(new Request(`${BASE}/auth/password`, {
+    method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'wrong' }),
+  }), env);
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('access-control-allow-origin'), ORIGIN);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { error: 'service_unavailable' });
+  const health = await worker.fetch(new Request(`${BASE}/health`), env);
+  assert.equal((await health.json()).passwordConfigured, true);
 });

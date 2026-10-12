@@ -6,6 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
+const SERVICE_VERSION = 'password-20261012';
 const refreshes = new Map();
 
 function json(data, status = 200, headers = {}) {
@@ -212,7 +213,7 @@ async function tokenFor(request, env) {
   return credential ? { token: credential.accessToken, sessionKey, credentialKey: sessionKey } : null;
 }
 
-export default {
+const worker = {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(request) });
@@ -416,7 +417,16 @@ export default {
         return json({ error: error.message || 'github_error', status: error.status || 500 }, error.status || 500, cors(request));
       }
     }
-    if (url.pathname === '/health') return json({ ok: true, service: 'kyle-dse-quiz-sync' });
+    if (url.pathname === '/health') return json({ ok: true, service: 'kyle-dse-quiz-sync',
+      version: SERVICE_VERSION, passwordConfigured: typeof env.SITE_PASSWORD === 'string' && !!env.SITE_PASSWORD.trim(),
+    });
     return json({ error: 'not_found' }, 404);
+  },
+};
+
+export default {
+  async fetch(request, env) {
+    try { return await worker.fetch(request, env); }
+    catch { return json({ error: 'service_unavailable' }, 503, cors(request)); }
   },
 };

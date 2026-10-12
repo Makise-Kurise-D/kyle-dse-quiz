@@ -105,6 +105,7 @@
       else if (r.status === 401) message = PASSWORD_AUTH ? '登入連接已失效，請重新輸入密碼；本機記錄已保留' : 'GitHub 連接已失效，請重新連接；本機記錄已保留';
       else if (r.status === 403) message = 'GitHub 授權或存取被拒絕，請重新連接並檢查授權（' + detail + '）';
       else if (detail === 'service_not_configured') message = '同步服務設定不完整';
+      else if (detail === 'service_unavailable') message = '同步服務暫時無法使用，請稍後重試';
       else if (detail === 'owner_connection_required') message = '資料儲存需要重新連接，請開啟儲存設定';
       else if (detail === 'too_many_attempts') message = '密碼嘗試次數過多，請於 15 分鐘後再試';
       throw Object.assign(new Error(message + ' [HTTP ' + r.status + ']'), { status: r.status, code: detail });
