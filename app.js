@@ -21,7 +21,7 @@
   var SYNC_API = String(window.QUIZ_SYNC_API || '').replace(/\/+$/, '');
   var PASSWORD_AUTH = window.QUIZ_PASSWORD_AUTH === true;
   var passwordLoginBusy = false;
-  var syncTimer = null, syncBusy = false, syncAgain = false;
+  var syncTimer = null, syncBusy = false, syncAgain = false, syncRevision = 0;
   var syncMessage = '';
   var startupHash = location.hash;
   // 所有網頁日期及雙週週期均以北京時間（UTC+8）為準；儲存的時間戳仍使用 UTC。
@@ -49,6 +49,7 @@
     localStorage.setItem(LS_SESS, JSON.stringify(sessions));
     localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
     localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
+    syncRevision++;
     scheduleSync();
   }
 
@@ -185,9 +186,11 @@
       return stableStringify([data.sessions || [], data.archive || [], data.drafts || {}, data.reviewPlan || {}, String(data.cycle || '')]);
     }
     var before = state(backupData());
+    var sentRevision = syncRevision;
     return syncRequest('GET').then(function (remote) {
       if (remote.data) mergeData(remote.data);
       var backup = backupData();
+      sentRevision = syncRevision;
       if (remote.data && state(remote.data) === state(backup)) {
         return { savedAt: new Date().toISOString(), kind: before === state(backup) ? 'checked' : 'downloaded' };
       }
@@ -198,7 +201,10 @@
       var checkedAt = new Date().toISOString();
       localStorage.setItem(LS_SYNCED_AT, checkedAt);
       var label = result.kind === 'uploaded' ? '已上傳至雲端' : result.kind === 'downloaded' ? '已更新本機記錄' : '雲端已核對，無新記錄';
-      setSyncStatus(label + ' · 練習 ' + (sessions.length + archive.length) + ' 次 · ' + fmtDateTime(result.savedAt || checkedAt));
+      setSyncStatus(syncRevision === sentRevision
+        ? label + ' · 練習 ' + (sessions.length + archive.length) + ' 次 · ' + fmtDateTime(result.savedAt || checkedAt)
+        : '本機有新變更，等待自動同步…');
+      if (syncRevision !== sentRevision) scheduleSync();
       if (location.hash.indexOf('/records') >= 0) renderRecords();
       return true;
     }).catch(function (err) {
@@ -388,6 +394,7 @@
       localStorage.setItem(LS_SESS, JSON.stringify([]));
       localStorage.removeItem(LS_DRAFT);
       localStorage.setItem(LS_CYCLE, String(cur));
+      syncRevision++;
       scheduleSync();
       return true;
     }
@@ -939,8 +946,7 @@
         Object.keys(drafts).forEach(function (k) {
           if (k.indexOf(pfx) === 0) deleteDraft(k);
         });
-        localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
-        scheduleSync();
+        save();
         renderSession(code, topic, sessState.mcOnly);
         toast('🎲 已換一組新題');
       });
@@ -1327,6 +1333,7 @@
       localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
       localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
       if (data.cycle) localStorage.setItem(LS_CYCLE, String(data.cycle));
+      syncRevision++;
       scheduleSync();
       e.target.value = '';
       toast('備份已還原 ✔');
