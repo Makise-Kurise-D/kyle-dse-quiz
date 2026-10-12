@@ -4,6 +4,9 @@ const REPO = 'Makise-Kurisu-D/kyle-dse-quiz-data';
 const DATA_PATH = 'records.json';
 const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
+const OWNER_KEY = 'service:github-owner';
+const PASSWORD_TTL = 30 * 24 * 3600;
+const refreshes = new Map();
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -132,25 +135,38 @@ async function github(path, token, init = {}) {
   return body;
 }
 
-async function tokenFor(request, env) {
-  const auth = request.headers.get('Authorization') || '';
-  const match = auth.match(/^Bearer ([A-Za-z0-9_-]{40,80})$/);
-  if (!match) return null;
-  const sessionKey = await digest(match[1]);
+async function passwordVersion(env) {
+  return signedState(String(env.SITE_PASSWORD), env.SESSION_SECRET);
+}
+
+async function passwordSession(env) {
+  const sessionId = await randomId();
+  await env.SESSIONS.put(await digest(sessionId), await seal({ kind: 'password',
+    passwordVersion: await passwordVersion(env), expiresAt: Date.now() + PASSWORD_TTL * 1000,
+  }, env.SESSION_SECRET), { expirationTtl: PASSWORD_TTL });
+  return sessionId;
+}
+
+async function credentialFor(sessionKey, env) {
   const saved = await env.SESSIONS.get(sessionKey);
   if (!saved) return null;
-  let session = await unseal(saved, env.SESSION_SECRET);
+  let session;
+  try { session = await unseal(saved, env.SESSION_SECRET); }
+  catch { await env.SESSIONS.delete(sessionKey); return null; }
   if (session.expiresAt && Date.now() > session.expiresAt - 60000) {
     if (!session.refreshToken) {
       await env.SESSIONS.delete(sessionKey);
       return null;
+    }
+    if (configurationError(env, ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'])) {
+      throw Object.assign(new Error('service_not_configured'), { status: 503 });
     }
     const refresh = await fetch('https://github.com/login/oauth/access_token', {
       method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET,
         grant_type: 'refresh_token', refresh_token: session.refreshToken }),
     });
-    const next = await refresh.json();
+    const next = await refresh.json().catch(() => ({}));
     if (!refresh.ok || !next.access_token) {
       await env.SESSIONS.delete(sessionKey);
       return null;
@@ -162,13 +178,112 @@ async function tokenFor(request, env) {
     };
     await env.SESSIONS.put(sessionKey, await seal(session, env.SESSION_SECRET), { expirationTtl: Math.max(3600, Number(next.refresh_token_expires_in || 15897600)) });
   }
-  return { token: session.accessToken, sessionKey };
+  return session.accessToken ? session : null;
+}
+
+async function ownerCredential(env) {
+  if (env.GITHUB_TOKEN) return { accessToken: env.GITHUB_TOKEN };
+  // Coalesce refreshes for requests handled by this Worker instance.
+  if (!refreshes.has(env.SESSIONS)) {
+    const promise = credentialFor(OWNER_KEY, env).finally(() => refreshes.delete(env.SESSIONS));
+    refreshes.set(env.SESSIONS, promise);
+  }
+  return refreshes.get(env.SESSIONS);
+}
+
+async function tokenFor(request, env) {
+  const match = (request.headers.get('Authorization') || '').match(/^Bearer ([A-Za-z0-9_-]{40,80})$/);
+  if (!match) return null;
+  const sessionKey = await digest(match[1]);
+  const saved = await env.SESSIONS.get(sessionKey);
+  if (!saved) return null;
+  let session;
+  try { session = await unseal(saved, env.SESSION_SECRET); }
+  catch { await env.SESSIONS.delete(sessionKey); return null; }
+  if (session.kind === 'password') {
+    if (!env.SITE_PASSWORD || session.expiresAt <= Date.now() || session.passwordVersion !== await passwordVersion(env)) {
+      await env.SESSIONS.delete(sessionKey); return null;
+    }
+    const credential = await ownerCredential(env);
+    if (!credential) throw Object.assign(new Error('owner_connection_required'), { status: 503 });
+    return { token: credential.accessToken, sessionKey, credentialKey: OWNER_KEY };
+  }
+  const credential = await credentialFor(sessionKey, env);
+  return credential ? { token: credential.accessToken, sessionKey, credentialKey: sessionKey } : null;
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(request) });
+    if (url.pathname === '/auth/upgrade' && request.method === 'POST') {
+      if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
+      if (configurationError(env, ['SITE_PASSWORD', 'SESSION_SECRET', 'SESSIONS'])) return json({ error: 'service_not_configured' }, 503, cors(request));
+      try {
+        const auth = await tokenFor(request, env);
+        if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
+        const user = await github('/user', auth.token);
+        if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return json({ error: 'owner_only' }, 403, cors(request));
+        if (auth.credentialKey !== OWNER_KEY) {
+          const saved = await env.SESSIONS.get(auth.credentialKey);
+          if (!saved) return json({ error: 'not_connected' }, 401, cors(request));
+          await env.SESSIONS.put(OWNER_KEY, saved);
+        }
+        const sessionId = await passwordSession(env);
+        if (auth.credentialKey !== OWNER_KEY) await env.SESSIONS.delete(auth.sessionKey);
+        return json({ sessionId, expiresIn: PASSWORD_TTL }, 200, cors(request));
+      } catch (error) {
+        return json({ error: error.status === 503 ? error.message : 'login_unavailable' }, error.status === 503 ? 503 : 502, cors(request));
+      }
+    }
+    if (url.pathname === '/auth/password' && request.method === 'POST') {
+      if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
+      if (configurationError(env, ['SITE_PASSWORD', 'SESSION_SECRET', 'SESSIONS'])) {
+        return json({ error: 'service_not_configured' }, 503, cors(request));
+      }
+      const body = await request.json().catch(() => ({}));
+      if (typeof body.password !== 'string' || body.password.length > 256) return json({ error: 'invalid_password' }, 401, cors(request));
+      const limitKey = 'login-limit:' + await digest(request.headers.get('CF-Connecting-IP') || 'unknown');
+      const attempts = JSON.parse(await env.SESSIONS.get(limitKey) || 'null');
+      const recent = attempts && attempts.until > Date.now() ? attempts : { count: 0, until: Date.now() + 900000 };
+      if (recent.count >= 5) return json({ error: 'too_many_attempts' }, 429, cors(request, { 'retry-after': String(Math.ceil((recent.until - Date.now()) / 1000)) }));
+      const supplied = new TextEncoder().encode(await digest(body.password));
+      const expected = new TextEncoder().encode(await digest(env.SITE_PASSWORD));
+      let mismatch = 0;
+      supplied.forEach((byte, i) => { mismatch |= byte ^ expected[i]; });
+      if (mismatch) {
+        await env.SESSIONS.put(limitKey, JSON.stringify({ ...recent, count: recent.count + 1 }), { expirationTtl: 900 });
+        return json({ error: 'invalid_password' }, 401, cors(request));
+      }
+      try {
+        let owner = await ownerCredential(env);
+        // An existing owner login can initialize the service without another authorization or token copy by the user.
+        if (!owner && request.headers.has('Authorization')) {
+          const auth = await tokenFor(request, env);
+          if (auth && auth.credentialKey !== OWNER_KEY) {
+            const user = await github('/user', auth.token);
+            if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return json({ error: 'owner_only' }, 403, cors(request));
+            const saved = await env.SESSIONS.get(auth.credentialKey);
+            if (!saved) return json({ error: 'not_connected' }, 401, cors(request));
+            await env.SESSIONS.put(OWNER_KEY, saved);
+            owner = { accessToken: auth.token };
+          }
+        }
+        if (!owner) return json({ error: 'owner_connection_required' }, 503, cors(request));
+        const sessionId = await passwordSession(env);
+        await env.SESSIONS.delete(limitKey);
+        return json({ sessionId, expiresIn: PASSWORD_TTL }, 200, cors(request));
+      } catch (error) {
+        return json({ error: error.status === 503 ? error.message : 'login_unavailable' }, error.status === 503 ? 503 : 502, cors(request));
+      }
+    }
+    if (url.pathname === '/auth/logout' && request.method === 'POST') {
+      if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
+      if (configurationError(env, ['SESSIONS'])) return json({ error: 'service_not_configured' }, 503, cors(request));
+      const match = (request.headers.get('Authorization') || '').match(/^Bearer ([A-Za-z0-9_-]{40,80})$/);
+      if (match) await env.SESSIONS.delete(await digest(match[1]));
+      return json({ ok: true }, 200, cors(request));
+    }
     if (url.pathname === '/auth/start' && request.method === 'GET') {
       const state = await randomId();
       const signed = await signedState(state, env.SESSION_SECRET);
@@ -204,11 +319,19 @@ export default {
         refreshToken: token.refresh_token || null,
         expiresAt: token.expires_in ? Date.now() + Number(token.expires_in) * 1000 : 0,
       };
-      await env.SESSIONS.put(sessionKey, await seal(session, env.SESSION_SECRET), {
-        expirationTtl: Math.max(3600, Number(token.refresh_token_expires_in || 15897600)),
-      });
+      let connectedId = sessionId;
+      if (env.SITE_PASSWORD) {
+        const user = await github('/user', token.access_token);
+        if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return new Response('Only the repository owner can connect storage.', { status: 403 });
+        await env.SESSIONS.put(OWNER_KEY, await seal(session, env.SESSION_SECRET));
+        connectedId = await passwordSession(env);
+      } else {
+        await env.SESSIONS.put(sessionKey, await seal(session, env.SESSION_SECRET), {
+          expirationTtl: Math.max(3600, Number(token.refresh_token_expires_in || 15897600)),
+        });
+      }
       const handoff = await randomId();
-      await env.SESSIONS.put(`handoff:${await digest(handoff)}`, sessionId, { expirationTtl: 120, metadata: { oneTime: true } });
+      await env.SESSIONS.put(`handoff:${await digest(handoff)}`, connectedId, { expirationTtl: 120, metadata: { oneTime: true } });
       const headers = new Headers({ location: `${SITE_HOME}?v=${Date.now()}#/records?sync=connected&handoff=${encodeURIComponent(handoff)}` });
       headers.append('set-cookie', 'dse_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/auth/callback; Max-Age=0');
       return new Response(null, { status: 302, headers });
@@ -243,15 +366,17 @@ export default {
           headers: cors(request, { 'content-type': 'image/jpeg', 'x-content-type-options': 'nosniff' }),
         });
       } catch (error) {
-        return json({ error: 'bank_unavailable' }, [401, 403, 404].includes(error.status) ? error.status : 502, cors(request));
+        return json({ error: error.status === 503 ? error.message : 'bank_unavailable' }, [401, 403, 404, 503].includes(error.status) ? error.status : 502, cors(request));
       }
     }
     if (url.pathname === '/sync' && ['GET', 'PUT', 'DELETE'].includes(request.method)) {
       if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
-      const auth = await tokenFor(request, env);
-      if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
+      if (configurationError(env, ['SESSION_SECRET', 'SESSIONS'])) return json({ error: 'service_not_configured' }, 503, cors(request));
+      let auth;
       const path = `/repos/${REPO}/contents/${DATA_PATH}`;
       try {
+        auth = await tokenFor(request, env);
+        if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
         if (request.method === 'GET') {
           try {
             const file = await github(path, auth.token);
@@ -287,7 +412,7 @@ export default {
         }
         return json({ ok: true, sha: saved && saved.content && saved.content.sha, savedAt: new Date().toISOString() }, 200, cors(request));
       } catch (error) {
-        if (error.status === 401) await env.SESSIONS.delete(auth.sessionKey);
+        if (error.status === 401 && auth) await env.SESSIONS.delete(auth.sessionKey);
         return json({ error: error.message || 'github_error', status: error.status || 500 }, error.status || 500, cors(request));
       }
     }

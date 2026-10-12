@@ -167,10 +167,109 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   const stranger = await worker.fetch(new Request(`${BASE}/bank`, { headers: privateHeaders }), env);
   assert.equal(stranger.status, 403);
   assert.equal((await stranger.json()).error, 'owner_only');
+
+  // Upgrade an already connected owner's session; no new token is supplied by the user.
+  env.SITE_PASSWORD = 'test-password';
+  login = 'Makise-Kurisu-D';
+  const loginRequest = headers => new Request(`${BASE}/auth/password`, {
+    method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify({ password: 'test-password' }),
+  });
+  const needsOwner = await worker.fetch(loginRequest({}), env);
+  assert.equal(needsOwner.status, 503);
+  assert.equal((await needsOwner.json()).error, 'owner_connection_required');
+  login = 'someone-else';
+  assert.equal((await worker.fetch(loginRequest({ Authorization: `Bearer ${sessionId}` }), env)).status, 403);
+  assert.equal(await env.SESSIONS.get('service:github-owner'), null);
+  login = 'Makise-Kurisu-D';
+  const upgraded = await worker.fetch(loginRequest({ Authorization: `Bearer ${sessionId}` }), env);
+  assert.equal(upgraded.status, 200);
+  const passwordId = (await upgraded.json()).sessionId;
+  const newComputer = await worker.fetch(loginRequest({}), env);
+  assert.equal(newComputer.status, 200);
+  const secondId = (await newComputer.json()).sessionId;
+  assert.notEqual(passwordId, secondId);
+  const passwordHeaders = { Origin: ORIGIN, Authorization: `Bearer ${passwordId}` };
+  const bankViaPassword = await worker.fetch(new Request(`${BASE}/bank`, { headers: passwordHeaders }), env);
+  assert.equal(bankViaPassword.status, 200);
+  assert.deepEqual(await bankViaPassword.json(), bank);
+  const savedViaPassword = await worker.fetch(new Request(`${BASE}/sync`, {
+    method: 'PUT', headers: { ...passwordHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ data: backup }),
+  }), env);
+  assert.equal(savedViaPassword.status, 200);
+  const pictureViaPassword = await worker.fetch(new Request(`${BASE}/bank/images/chem-2022-mc-01.jpg`, { headers: passwordHeaders }), env);
+  assert.equal(pictureViaPassword.status, 200);
+  const logout = await worker.fetch(new Request(`${BASE}/auth/logout`, { method: 'POST', headers: passwordHeaders }), env);
+  assert.equal(logout.status, 200);
+  assert.equal((await worker.fetch(new Request(`${BASE}/bank`, { headers: passwordHeaders }), env)).status, 401);
+  assert.equal((await worker.fetch(new Request(`${BASE}/bank`, { headers: { Origin: ORIGIN, Authorization: `Bearer ${secondId}` } }), env)).status, 200);
+
+  // Shared credentials can refresh without logging in again on each computer.
+  const originalNow = Date.now;
+  Date.now = () => originalNow() + 9 * 3600000;
+  try {
+    const refreshed = await Promise.all([
+      worker.fetch(new Request(`${BASE}/bank`, { headers: { Origin: ORIGIN, Authorization: `Bearer ${secondId}` } }), env),
+      worker.fetch(new Request(`${BASE}/sync`, { headers: { Origin: ORIGIN, Authorization: `Bearer ${secondId}` } }), env),
+    ]);
+    assert.ok(refreshed.every(response => response.status === 200));
+  } finally { Date.now = originalNow; }
+  env.SITE_PASSWORD = 'new-test-password';
+  assert.equal((await worker.fetch(new Request(`${BASE}/bank`, { headers: { Origin: ORIGIN, Authorization: `Bearer ${secondId}` } }), env)).status, 401);
+  const upgradedOwner = await worker.fetch(new Request(`${BASE}/auth/upgrade`, { method: 'POST', headers: privateHeaders }), env);
+  assert.equal(upgradedOwner.status, 200);
+  const upgradedId = (await upgradedOwner.json()).sessionId;
+  assert.equal((await worker.fetch(new Request(`${BASE}/sync`, { headers: privateHeaders }), env)).status, 401);
+  assert.equal((await worker.fetch(new Request(`${BASE}/sync`, { headers: { Origin: ORIGIN, Authorization: `Bearer ${upgradedId}` } }), env)).status, 200);
+
+  // A new owner OAuth connection also provisions storage for password-only devices.
+  const freshStart = await worker.fetch(new Request(`${BASE}/auth/start`), env);
+  const freshCookie = freshStart.headers.get('set-cookie').split(';')[0];
+  const freshState = new URL(freshStart.headers.get('location')).searchParams.get('state');
+  const freshCallback = await worker.fetch(new Request(`${BASE}/auth/callback?code=new-code&state=${freshState}`, { headers: { Cookie: freshCookie } }), env);
+  assert.equal(freshCallback.status, 302);
+  assert.equal((await worker.fetch(loginRequest({}), env)).status, 401, 'old password is rejected after a password change');
+  login = 'someone-else';
+  const deniedCallback = await worker.fetch(new Request(`${BASE}/auth/callback?code=other-code&state=${freshState}`, { headers: { Cookie: freshCookie } }), env);
+  assert.equal(deniedCallback.status, 403);
+  login = 'Makise-Kurisu-D';
 });
 
 test('private bank fails closed when storage or secrets are not configured', async () => {
   const response = await worker.fetch(new Request(`${BASE}/bank`, { headers: { Origin: ORIGIN } }), {});
   assert.equal(response.status, 503);
   assert.equal((await response.json()).error, 'service_not_configured');
+});
+
+test('password login checks configuration, origin, attempts, expiry and credential isolation', async () => {
+  const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'test-password', GITHUB_TOKEN: 'server-only-test-token' };
+  function request(password, ip = '192.0.2.1', origin = ORIGIN) {
+    return new Request(`${BASE}/auth/password`, { method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json', 'CF-Connecting-IP': ip }, body: JSON.stringify({ password }),
+    });
+  }
+  assert.equal((await worker.fetch(request('test-password'), {})).status, 503);
+  assert.equal((await worker.fetch(request('test-password', '192.0.2.1', 'https://attacker.example'), env)).status, 403);
+  for (let i = 0; i < 5; i++) {
+    const rejected = await worker.fetch(request('wrong'), env);
+    assert.equal(rejected.status, 401);
+    assert.equal((await rejected.json()).error, 'invalid_password');
+  }
+  const limited = await worker.fetch(request('test-password'), env);
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get('retry-after')) > 0);
+  const accepted = await worker.fetch(request('test-password', '192.0.2.2'), env);
+  assert.equal(accepted.status, 200);
+  const body = await accepted.json();
+  assert.match(body.sessionId, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(body.expiresIn, 30 * 24 * 3600);
+  assert.ok(!JSON.stringify(body).includes(env.SITE_PASSWORD));
+  assert.ok(!JSON.stringify(body).includes(env.GITHUB_TOKEN));
+  const headers = { Origin: ORIGIN, Authorization: `Bearer ${body.sessionId}` };
+  const originalNow = Date.now;
+  Date.now = () => originalNow() + 31 * 24 * 3600000;
+  try {
+    const expired = await worker.fetch(new Request(`${BASE}/sync`, { headers }), env);
+    assert.equal(expired.status, 401);
+  } finally { Date.now = originalNow; }
 });

@@ -10,8 +10,8 @@ const data = 'window.QUIZ_DATA = ' + JSON.stringify({ subjects: {
     { id: 'example-mc', kind: 'mc', topic: 'T3', year: '2022', paper: '卷一', qref: '示例 1', stem: '示例題', correctOpt: 'A', img: 'images/chem-2022-mc-01.jpg' }
   ] }, bio: { name: '生物', topics: [], items: [] }
 } });
-function boot(hash = '', fetch = async () => { throw new Error('offline'); }, initialStorage = {}, privateBank = false) {
-  const nodes = new Map(), events = {}, timers = [], saved = new Map(Object.entries(initialStorage));
+function boot(hash = '', fetch = async () => { throw new Error('offline'); }, initialStorage = {}, privateBank = false, passwordAuth = false) {
+  const nodes = new Map(), events = {}, timers = [], intervals = [], saved = new Map(Object.entries(initialStorage));
   function node(selector) {
     if (!nodes.has(selector)) nodes.set(selector, {
       innerHTML: '', textContent: '', hidden: false, listeners: {},
@@ -28,18 +28,97 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
     localStorage: { getItem: k => saved.get(k) ?? null, setItem: (k, v) => saved.set(k, v), removeItem: k => saved.delete(k) },
     history: { replaceState(_, __, url) { location.hash = url.slice(url.indexOf('#')); } },
     setTimeout(fn, delay) { timers.push({ fn, delay }); return timers.length; },
-    clearTimeout() {}, setInterval() {}, clearInterval() {},
+    clearTimeout() {}, setInterval(fn, delay) { intervals.push({ fn, delay }); }, clearInterval() {},
+    confirm: () => true,
     scrollTo() {}, addEventListener(type, fn) { events[type] = fn; },
-    QUIZ_SYNC_API: 'https://sync.example.workers.dev', QUIZ_PRIVATE_BANK: privateBank,
+    QUIZ_SYNC_API: 'https://sync.example.workers.dev', QUIZ_PRIVATE_BANK: privateBank, QUIZ_PASSWORD_AUTH: passwordAuth,
     URL, Blob,
   };
   context.window = context;
   vm.createContext(context);
   vm.runInContext(data, context);
   vm.runInContext(source, context);
-  return { context, location, nodes, node, saved, timers, events };
+  return { context, location, nodes, node, saved, timers, intervals, events };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('password login fetches the private bank, merges records, and automatically uploads without persisting the password', async () => {
+  const local = { t: Date.now() - 2000, subj: 'chem', topic: 'T3', results: {} };
+  const remote = { t: Date.now() - 1000, subj: 'bio', topic: 'I', results: {} };
+  const calls = [], sessionId = 'p'.repeat(43);
+  let uploaded;
+  const app = boot('', async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/auth/password')) return { ok: true, json: async () => ({ sessionId }) };
+    if (url.endsWith('/bank')) return { ok: true, json: async () => app.context.QUIZ_DATA };
+    if (options.method === 'PUT') { uploaded = JSON.parse(options.body).data; return { ok: true, json: async () => ({ savedAt: new Date().toISOString() }) }; }
+    return { ok: true, json: async () => ({ data: { app: 'kyle-dse-quiz', sessions: [remote], archive: [], drafts: {}, reviewPlan: {} } }) };
+  }, { dse_quiz_sessions_v2: JSON.stringify([local]) }, true, true);
+  assert.match(app.node('#app').innerHTML, /type="password".*登入並自動同步/s);
+  assert.doesNotMatch(app.node('#app').innerHTML, /test-password/);
+  app.node('#syncPassword').value = 'test-password';
+  app.node('#passwordLoginForm').listeners.submit({ preventDefault() {} });
+  await settle();
+  assert.equal(JSON.parse(calls[0].options.body).password, 'test-password');
+  assert.equal(app.node('#syncPassword').value, '');
+  assert.deepEqual(uploaded.sessions, [local, remote]);
+  assert.equal(app.saved.get('dse_quiz_sync_session_v1'), sessionId);
+  assert.ok([...app.saved.values()].every(value => !value.includes('test-password')));
+  assert.equal(calls.find(call => call.url.endsWith('/bank')).options.headers.Authorization, 'Bearer ' + sessionId);
+  assert.match(app.node('#syncStatus').textContent, /已自動同步/);
+});
+
+test('wrong passwords cannot load questions or overwrite progress', async () => {
+  const calls = [];
+  const app = boot('', async url => {
+    calls.push(url);
+    return { ok: false, status: 401, json: async () => ({ error: 'invalid_password' }) };
+  }, {}, true, true);
+  app.node('#syncPassword').value = 'wrong';
+  app.node('#passwordLoginForm').listeners.submit({ preventDefault() {} });
+  await settle();
+  assert.equal(calls.length, 1);
+  assert.equal(app.saved.has('dse_quiz_sync_session_v1'), false);
+  assert.match(app.node('#syncStatus').textContent, /密碼不正確/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /題在庫/);
+});
+
+test('an existing owner connection upgrades automatically before reading private data', async () => {
+  const calls = [], sessionId = 'n'.repeat(43);
+  const app = boot('', async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/auth/upgrade')) return { ok: true, json: async () => ({ sessionId }) };
+    if (url.endsWith('/bank')) return { ok: true, json: async () => app.context.QUIZ_DATA };
+    return { ok: true, json: async () => ({ data: null }) };
+  }, { dse_quiz_sync_session_v1: 'old-owner-session' }, true, true);
+  await settle();
+  assert.ok(calls[0].url.endsWith('/auth/upgrade'));
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer old-owner-session');
+  assert.equal(app.saved.get('dse_quiz_sync_session_v1'), sessionId);
+  assert.equal(app.saved.get('dse_quiz_auth_mode_v1'), 'password');
+  assert.equal(calls.find(call => call.url.endsWith('/bank')).options.headers.Authorization, 'Bearer ' + sessionId);
+  assert.match(app.node('#app').innerHTML, /題在庫/);
+});
+
+test('automatic polling skips unchanged uploads, and logout retains local records', async () => {
+  const calls = [];
+  const app = boot('', async (url, options) => {
+    calls.push({ url, method: options.method });
+    const backup = { app: 'kyle-dse-quiz', sessions: [], archive: [], drafts: {}, reviewPlan: {}, cycle: app.saved.get('dse_quiz_cycle_v1') };
+    return { ok: true, json: async () => ({ data: backup }) };
+  }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password' }, false, true);
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.intervals.find(timer => timer.delay === 60000).fn();
+  await settle();
+  assert.deepEqual(calls.map(call => call.method), ['GET']);
+  assert.match(app.node('#app').innerHTML, /退出登入/);
+  app.node('#syncDisconnectBtn').listeners.click();
+  await settle();
+  assert.equal(app.saved.has('dse_quiz_sync_session_v1'), false);
+  assert.equal(app.saved.get('dse_quiz_sessions_v2'), '[]');
+  assert.ok(calls.some(call => call.url.endsWith('/auth/logout')));
+  assert.match(app.node('#app').innerHTML, /passwordLoginForm/);
+});
 
 test('an expired session offers reconnection without deleting local records or uploading', async () => {
   const records = [{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }];

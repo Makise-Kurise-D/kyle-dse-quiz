@@ -17,7 +17,10 @@
   var LS_REVIEW = 'dse_quiz_review_v1';
   var LS_SYNC_SESSION = 'dse_quiz_sync_session_v1';
   var LS_SYNCED_AT = 'dse_quiz_sync_at_v1';
+  var LS_AUTH_MODE = 'dse_quiz_auth_mode_v1';
   var SYNC_API = String(window.QUIZ_SYNC_API || '').replace(/\/+$/, '');
+  var PASSWORD_AUTH = window.QUIZ_PASSWORD_AUTH === true;
+  var passwordLoginBusy = false;
   var syncTimer = null, syncBusy = false;
   var syncMessage = '';
   var startupHash = location.hash;
@@ -98,10 +101,13 @@
       if (r.ok) return data;
       var detail = data.error || '服務未回傳有效回應';
       var message = detail;
-      if (r.status === 401) message = 'GitHub 連接已失效，請重新連接；本機記錄已保留';
+      if (detail === 'invalid_password') message = '密碼不正確，請再試一次';
+      else if (r.status === 401) message = PASSWORD_AUTH ? '登入連接已失效，請重新輸入密碼；本機記錄已保留' : 'GitHub 連接已失效，請重新連接；本機記錄已保留';
       else if (r.status === 403) message = 'GitHub 授權或存取被拒絕，請重新連接並檢查授權（' + detail + '）';
       else if (detail === 'service_not_configured') message = '同步服務設定不完整';
-      throw Object.assign(new Error(message + ' [HTTP ' + r.status + ']'), { status: r.status });
+      else if (detail === 'owner_connection_required') message = '資料儲存需要重新連接，請開啟儲存設定';
+      else if (detail === 'too_many_attempts') message = '密碼嘗試次數過多，請於 15 分鐘後再試';
+      throw Object.assign(new Error(message + ' [HTTP ' + r.status + ']'), { status: r.status, code: detail });
     });
   }
   function expireConnection(err, session) {
@@ -127,7 +133,12 @@
     setSyncStatus('同步中…');
     return syncRequest('GET').then(function (remote) {
       if (remote.data) mergeData(remote.data);
-      return syncRequest('PUT', { data: backupData() });
+      var backup = backupData();
+      function state(data) {
+        return JSON.stringify([data.sessions || [], data.archive || [], data.drafts || {}, data.reviewPlan || {}, String(data.cycle || '')]);
+      }
+      if (remote.data && state(remote.data) === state(backup)) return { savedAt: remote.data.exportedAt || new Date().toISOString() };
+      return syncRequest('PUT', { data: backup });
     }).then(function (result) {
       localStorage.setItem(LS_SYNCED_AT, result.savedAt || new Date().toISOString());
       setSyncStatus('已自動同步 · ' + new Date(result.savedAt || Date.now()).toLocaleString());
@@ -153,6 +164,41 @@
     imageUrls.forEach(function (url) { URL.revokeObjectURL(url); });
     imageUrls.clear();
     if (PRIVATE_BANK) { DATA = emptyBank(); bankLoaded = false; }
+  }
+  function passwordForm() {
+    return '<form id="passwordLoginForm" class="sync-login"><label for="syncPassword">網站密碼</label>' +
+      '<input id="syncPassword" type="password" autocomplete="current-password" maxlength="256" required placeholder="輸入密碼" aria-describedby="syncStatus">' +
+      '<button id="passwordLoginBtn" class="btn btn-primary" type="submit">登入並自動同步</button></form>' +
+      '<p class="review-note">登入後，做題記錄會自動同步；本機記錄會保留。</p>' +
+      '<details class="sync-storage"><summary>儲存設定</summary><p class="review-note">首次設定或儲存授權失效時，由帳戶擁有人連接一次。日常使用只需輸入密碼。</p>' +
+      '<a class="btn btn-ghost" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">連接資料儲存</a></details>';
+  }
+  function bindPasswordForm() {
+    var form = $('#passwordLoginForm');
+    if (!form || !PASSWORD_AUTH) return;
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      if (passwordLoginBusy) return;
+      var input = $('#syncPassword'), button = $('#passwordLoginBtn');
+      var password = input.value;
+      if (!password) { setSyncStatus('請輸入密碼'); return; }
+      input.value = ''; button.disabled = true; passwordLoginBusy = true;
+      setSyncStatus('正在登入並同步…');
+      var headers = { 'Content-Type': 'application/json' };
+      var existing = localStorage.getItem(LS_SYNC_SESSION);
+      if (existing) headers.Authorization = 'Bearer ' + existing;
+      syncFetch('/auth/password', { method: 'POST', headers: headers, body: JSON.stringify({ password: password }), cache: 'no-store' })
+        .then(readSyncResponse).then(function (data) {
+          if (!data || !/^[A-Za-z0-9_-]{40,80}$/.test(data.sessionId || '')) throw new Error('登入服務未回傳有效連接');
+          var previous = bankPromise || Promise.resolve();
+          localStorage.setItem(LS_AUTH_MODE, 'password');
+          localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
+          forgetBank(); bankMessage = '';
+          return previous.catch(function () {}).then(function () { return loadBank(); }).then(function () { return syncNow(true); });
+        }).catch(function (err) {
+          setSyncStatus('登入失敗：' + err.message);
+        }).finally(function () { passwordLoginBusy = false; button.disabled = false; });
+    });
   }
   function loadBank() {
     if (!PRIVATE_BANK || bankLoaded) return Promise.resolve(true);
@@ -185,11 +231,12 @@
   function renderBankGate() {
     $('#app').innerHTML = '<section class="home"><div class="hero">' +
       '<div class="hero-kicker">DSE · 化學 / 生物</div><h1 class="hero-title">Kyle 嘅錯題本</h1>' +
-      '<p class="hero-sub">連接 GitHub 後即可讀取你的錯題庫和原題圖片。</p>' +
+      '<p class="hero-sub">' + (PASSWORD_AUTH ? '輸入密碼即可讀取你的錯題庫、原題圖片和做題記錄。' : '連接 GitHub 後即可讀取你的錯題庫和原題圖片。') + '</p>' +
       '<p class="review-note" id="syncStatus" role="status" aria-live="polite">' + esc(bankMessage || syncMessage || '你的做題記錄會保留。') + '</p>' +
-      (SYNC_API ? '<a class="btn btn-primary" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">連接 GitHub</a>' : '') +
+      (SYNC_API ? (PASSWORD_AUTH ? passwordForm() : '<a class="btn btn-primary" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">連接 GitHub</a>') : '') +
       (localStorage.getItem(LS_SYNC_SESSION) ? '<button class="btn btn-ghost" id="bankRetryBtn" type="button">重新載入</button>' : '') +
       '<a class="btn btn-ghost" href="#/records">做題記錄</a></div></section>';
+    bindPasswordForm();
     var retry = $('#bankRetryBtn');
     if (retry) retry.addEventListener('click', function () { loadBank(); });
   }
@@ -221,14 +268,27 @@
         body: JSON.stringify({ handoff: handoff })
       }).then(function (r) { if (!r.ok) throw new Error('授权会话已失效'); return r.json(); })
         .then(function (data) {
+          if (PASSWORD_AUTH) localStorage.setItem(LS_AUTH_MODE, 'password');
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
           return loadBank().then(function () { return syncNow(true); });
         }).catch(function (err) { setSyncStatus('连接失败：' + err.message); });
     } else if (hash.indexOf('sync=cancelled') >= 0) {
       setSyncStatus('已取消 GitHub 授权');
     } else if (localStorage.getItem(LS_SYNC_SESSION)) {
-      loadBank();
-      setTimeout(function () { syncNow(true); }, 600);
+      if (PASSWORD_AUTH && localStorage.getItem(LS_AUTH_MODE) !== 'password') {
+        var existing = localStorage.getItem(LS_SYNC_SESSION);
+        syncFetch('/auth/upgrade', { method: 'POST', headers: { Authorization: 'Bearer ' + existing }, cache: 'no-store' })
+          .then(readSyncResponse).then(function (data) {
+            if (!/^[A-Za-z0-9_-]{40,80}$/.test(data.sessionId || '')) throw new Error('登入服務未回傳有效連接');
+            if (localStorage.getItem(LS_SYNC_SESSION) !== existing) return;
+            localStorage.setItem(LS_AUTH_MODE, 'password');
+            localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
+          }).catch(function (err) { expireConnection(err, existing); setSyncStatus('連接更新失敗：' + err.message); })
+          .then(function () { return loadBank(); }).then(function () { return syncNow(true); });
+      } else {
+        loadBank();
+        setTimeout(function () { syncNow(true); }, 600);
+      }
     }
   }
   window.addEventListener('online', function () { syncNow(true); });
@@ -241,6 +301,8 @@
       if (event.newValue) loadBank().then(function () { syncNow(true); });
     }
   });
+  // Also fetch updates made on another computer while this tab remains open.
+  setInterval(function () { if (PASSWORD_AUTH) syncNow(true); }, 60000);
 
   function cycleStartOf(ts) {
     return CYCLE_ANCHOR + Math.floor((ts - CYCLE_ANCHOR) / CYCLE_MS) * CYCLE_MS;
@@ -810,6 +872,7 @@
           if (k.indexOf(pfx) === 0) delete drafts[k];
         });
         localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
+        scheduleSync();
         renderSession(code, topic, sessState.mcOnly);
         toast('🎲 已換一組新題');
       });
@@ -1061,6 +1124,10 @@
 
   /* ---------------- 記錄頁 ---------------- */
   function renderRecords() {
+    var connected = !!localStorage.getItem(LS_SYNC_SESSION);
+    var passwordTools = connected
+      ? '<button class="btn btn-ghost" id="syncNowBtn" type="button">立即同步</button><button class="btn btn-ghost" id="syncDisconnectBtn" type="button">退出登入</button>'
+      : '';
     var latest = latestMap();
     var totalQ = SUBJECT_ORDER.reduce(function (n, c) { return n + itemsOf(c).length; }, 0);
     var totalDone = allSessions().reduce(function (n, s) {
@@ -1090,15 +1157,16 @@
           '<input id="importDataFile" type="file" accept="application/json,.json" hidden></div>' +
           '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
 
-        '<div class="panel sync-panel"><div class="panel-h-row"><h2 class="panel-h">☁️ GitHub 私有仓库自动同步</h2>' +
+        '<div class="panel sync-panel"><div class="panel-h-row"><h2 class="panel-h">☁️ ' + (PASSWORD_AUTH ? '做題記錄自動同步' : 'GitHub 私有仓库自动同步') + '</h2>' +
           '<div class="record-tools">' +
-            (!SYNC_API ? '<button class="btn btn-ghost" id="syncConnectBtn" type="button" disabled>同步服务待部署</button>' :
+            (!SYNC_API ? '<button class="btn btn-ghost" id="syncConnectBtn" type="button" disabled>同步服务待部署</button>' : (PASSWORD_AUTH ? passwordTools :
               (localStorage.getItem(LS_SYNC_SESSION)
                 ? '<button class="btn btn-ghost" id="syncNowBtn" type="button">立即同步</button><a class="btn btn-ghost" id="syncConnectBtn" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">重新连接 GitHub</a><button class="btn btn-ghost" id="syncDisconnectBtn" type="button">断开连接</button>'
-                : '<a class="btn btn-primary" id="syncConnectBtn" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">连接 GitHub</a>')) +
+                : '<a class="btn btn-primary" id="syncConnectBtn" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">连接 GitHub</a>'))) +
           '</div></div>' +
           '<p class="review-note" id="syncStatus" role="status" aria-live="polite">' + esc(syncMessage || (!SYNC_API ? '同步服务尚未部署。部署完成后，练习记录会自动备份到你的私有仓库。' :
-            (localStorage.getItem(LS_SYNC_SESSION) ? ('已连接 · 上次同步：' + (localStorage.getItem(LS_SYNCED_AT) ? new Date(localStorage.getItem(LS_SYNCED_AT)).toLocaleString() : '尚未同步')) : '在新分頁連接 GitHub，原頁面會保留。完成後會合併記錄並自動同步。'))) + '</p></div>' +
+            (connected ? ('已连接 · 上次同步：' + (localStorage.getItem(LS_SYNCED_AT) ? new Date(localStorage.getItem(LS_SYNCED_AT)).toLocaleString() : '尚未同步')) : (PASSWORD_AUTH ? '輸入密碼後，會合併本機與雲端記錄並自動同步。' : '在新分頁連接 GitHub，原頁面會保留。完成後會合併記錄並自動同步。')))) + '</p>' +
+          (PASSWORD_AUTH && SYNC_API && !connected ? passwordForm() : '') + '</div>' +
 
         '<div class="stat-cards">' +
           statCard('✍️', '累計作答', totalDone + ' 題') +
@@ -1136,6 +1204,7 @@
     $('#exportDataBtn').addEventListener('click', exportData);
     $('#importDataBtn').addEventListener('click', function () { $('#importDataFile').click(); });
     $('#importDataFile').addEventListener('change', importData);
+    bindPasswordForm();
     var connectBtn = $('#syncConnectBtn');
     if (connectBtn && SYNC_API) connectBtn.addEventListener('click', function () {
       setSyncStatus('已開啟 GitHub 連接分頁；授權完成後會自動返回主頁並同步。');
@@ -1144,8 +1213,11 @@
     if (nowBtn) nowBtn.addEventListener('click', function () { syncNow(true); });
     var disconnectBtn = $('#syncDisconnectBtn');
     if (disconnectBtn) disconnectBtn.addEventListener('click', function () {
-      if (confirm('断开 GitHub 自动同步？本机及私有仓库的记录不会被删除。')) {
+      if (confirm(PASSWORD_AUTH ? '退出登入？本機及雲端記錄會保留。' : '断开 GitHub 自动同步？本机及私有仓库的记录不会被删除。')) {
+        var session = localStorage.getItem(LS_SYNC_SESSION);
+        if (PASSWORD_AUTH && session) syncFetch('/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store' }).catch(function () {});
         localStorage.removeItem(LS_SYNC_SESSION);
+        localStorage.removeItem(LS_AUTH_MODE);
         forgetBank();
         syncMessage = ''; bankMessage = '';
         renderRecords();
@@ -1446,7 +1518,7 @@
   /* ---------------- 重設 ---------------- */
   document.addEventListener('click', function (e) {
     if (e.target.closest('#railReset')) {
-      if (confirm('確定清除所有做題記錄、雙週歸檔及未提交作答？如已連接 GitHub，私有倉庫備份亦會一併清除。（題庫本身唔會刪）')) {
+      if (confirm('確定清除所有做題記錄、雙週歸檔及未提交作答？如已登入同步，雲端備份亦會一併清除。（題庫本身唔會刪）')) {
         localStorage.removeItem(LS_SESS);
         localStorage.removeItem(LS_ARCHIVE);
         localStorage.removeItem(LS_DRAFT);
