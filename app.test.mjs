@@ -112,6 +112,7 @@ test('automatic polling skips unchanged uploads, and logout retains local record
   await settle();
   assert.deepEqual(calls.map(call => call.method), ['GET']);
   assert.match(app.node('#app').innerHTML, /退出登入/);
+  app.context.confirm = () => { throw new Error('Password logout must not depend on a browser dialog'); };
   app.node('#syncDisconnectBtn').listeners.click();
   await settle();
   assert.equal(app.saved.has('dse_quiz_sync_session_v1'), false);

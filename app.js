@@ -1213,7 +1213,7 @@
     if (nowBtn) nowBtn.addEventListener('click', function () { syncNow(true); });
     var disconnectBtn = $('#syncDisconnectBtn');
     if (disconnectBtn) disconnectBtn.addEventListener('click', function () {
-      if (confirm(PASSWORD_AUTH ? '退出登入？本機及雲端記錄會保留。' : '断开 GitHub 自动同步？本机及私有仓库的记录不会被删除。')) {
+      if (PASSWORD_AUTH || confirm('断开 GitHub 自动同步？本机及私有仓库的记录不会被删除。')) {
         var session = localStorage.getItem(LS_SYNC_SESSION);
         if (PASSWORD_AUTH && session) syncFetch('/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store' }).catch(function () {});
         localStorage.removeItem(LS_SYNC_SESSION);
