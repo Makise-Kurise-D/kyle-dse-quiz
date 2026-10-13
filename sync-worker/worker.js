@@ -3,10 +3,15 @@ const SITE_HOME = `${SITE_ORIGIN}/kyle-dse-quiz/`;
 const REPO = 'Makise-Kurisu-D/kyle-dse-quiz-data';
 const DATA_PATH = 'records.json';
 const BANK_PATH = 'question-bank/bank.json';
+const BOOK_REPO = 'Makise-Kurisu-D/kyle-codex-workspace';
+const BOOK_PATHS = {
+  chem: 'workspace/DSE/错题集/Kyle_化学错题集.pdf',
+  bio: 'workspace/DSE/错题集/Kyle_生物错题集.pdf',
+};
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'draft-sync-20261013';
+const SERVICE_VERSION = 'pdf-reader-20261013';
 const refreshes = new Map();
 
 function json(data, status = 200, headers = {}) {
@@ -167,6 +172,30 @@ async function github(path, token, init = {}) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw Object.assign(new Error(body.message || `GitHub returned ${response.status}`), { status: response.status });
   return body;
+}
+
+async function githubPdf(path, token) {
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+  const headers = {
+    accept: 'application/vnd.github.raw+json',
+    'user-agent': 'kyle-dse-quiz-sync',
+    authorization: `Bearer ${token}`,
+    'x-github-api-version': '2022-11-28',
+  };
+  let response = await fetch(`https://api.github.com/repos/${BOOK_REPO}/contents/${encodedPath}?ref=main`, { headers });
+  if (!response.ok) throw Object.assign(new Error('book_unavailable'), { status: response.status });
+  // GitHub can return metadata for larger files instead of the requested raw body.
+  if ((response.headers.get('content-type') || '').includes('json')) {
+    const file = await response.json();
+    if (!file.download_url || file.size > 60_000_000) throw new Error('book_unavailable');
+    const raw = new URL(file.download_url);
+    if (raw.protocol !== 'https:' || raw.hostname !== 'raw.githubusercontent.com') throw new Error('book_unavailable');
+    response = await fetch(raw, { headers: { authorization: `Bearer ${token}`, 'user-agent': 'kyle-dse-quiz-sync' } });
+    if (!response.ok) throw Object.assign(new Error('book_unavailable'), { status: response.status });
+  }
+  const length = Number(response.headers.get('content-length') || 0);
+  if (length > 60_000_000 || !response.body) throw new Error('book_unavailable');
+  return response.body;
 }
 
 async function passwordVersion(env) {
@@ -401,6 +430,28 @@ const worker = {
         });
       } catch (error) {
         return json({ error: error.status === 503 ? error.message : 'bank_unavailable' }, [401, 403, 404, 503].includes(error.status) ? error.status : 502, cors(request));
+      }
+    }
+    if (url.pathname === '/books' || url.pathname.startsWith('/books/')) {
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
+      const book = url.pathname.match(/^\/books\/(chem|bio)$/);
+      if (!book) return json({ error: 'not_found' }, 404, cors(request));
+      const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
+      if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
+      if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
+      try {
+        const auth = await tokenFor(request, env);
+        if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
+        const user = await github('/user', auth.token);
+        if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return json({ error: 'owner_only' }, 403, cors(request));
+        const body = await githubPdf(BOOK_PATHS[book[1]], auth.token);
+        return new Response(body, { headers: cors(request, {
+          'content-type': 'application/pdf', 'content-disposition': 'inline',
+          'x-content-type-options': 'nosniff',
+        }) });
+      } catch (error) {
+        const status = error.status === 404 ? 404 : error.status === 503 ? 503 : 502;
+        return json({ error: status === 404 ? 'book_not_accessible' : 'book_unavailable' }, status, cors(request));
       }
     }
     if (url.pathname === '/sync' && ['GET', 'PUT', 'DELETE'].includes(request.method)) {
