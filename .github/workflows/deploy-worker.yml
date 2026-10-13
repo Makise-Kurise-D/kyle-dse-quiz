@@ -36,3 +36,39 @@ jobs:
           workingDirectory: sync-worker
           wranglerVersion: '4'
           command: deploy --keep-vars
+      - name: Verify deployed Worker health
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+
+          const source = readFileSync('sync-worker/worker.js', 'utf8');
+          const expectedVersion = source.match(/^const SERVICE_VERSION = ['"]([^'"]+)['"];?$/m)?.[1];
+          if (!expectedVersion) throw new Error('SERVICE_VERSION missing from Worker source');
+
+          const url = 'https://snowy-cake-a0a7.3355718646.workers.dev/health';
+          let lastError;
+          for (let attempt = 1; attempt <= 6; attempt++) {
+            try {
+              const response = await fetch(url, {
+                headers: { 'cache-control': 'no-cache' },
+                signal: AbortSignal.timeout(10000),
+              });
+              if (!response.ok) throw new Error(`Health endpoint returned HTTP ${response.status}`);
+              const health = await response.json();
+              if (health.ok !== true || health.service !== 'kyle-dse-quiz-sync'
+                  || health.version !== expectedVersion || health.passwordConfigured !== true) {
+                throw new Error(`Unexpected /health response: ${JSON.stringify(health)}`);
+              }
+              console.log(`Verified ${health.service} ${health.version}; password configured`);
+              lastError = null;
+              break;
+            } catch (error) {
+              lastError = error;
+              if (attempt < 6) {
+                console.warn(`Health check ${attempt}/6 failed: ${error.message}`);
+                await new Promise(resolve => setTimeout(resolve, 3000));
+              }
+            }
+          }
+          if (lastError) throw lastError;
+          NODE
