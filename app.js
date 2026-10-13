@@ -28,6 +28,7 @@
   var paperSubject = '', paperYear = '', paperPage = 1, paperManifest = null;
   var paperUrl = null, paperController = null, paperRequest = 0;
   var readerPages = new Map();
+  var paperCatalogSnapshot = null;
   var startupHash = location.hash;
   // 所有網頁日期及雙週週期均以北京時間（UTC+8）為準；儲存的時間戳仍使用 UTC。
   var DAY_MS = 24 * 3600 * 1000;
@@ -724,16 +725,125 @@
         if (parts.length === 3 && /^\d{4}$/.test(parts[2])) return renderPaperReader(parts[1], parts[2]);
       }
     }
-    $('#app').innerHTML = '<section class="page library-page">' +
+    var latest = latestMap(), total = 0, pending = 0;
+    SUBJECT_ORDER.forEach(function (code) {
+      itemsOf(code).forEach(function (item) {
+        total++;
+        var result = latest[item.id];
+        if (!result || result.ok !== true || result.ratio < 0.99) pending++;
+      });
+    });
+    $('#app').innerHTML = '<section class="page library-page library-hub">' +
       '<header class="page-head"><div><h1 class="page-title">📖 在線閱讀</h1>' +
-      '<p class="page-sub">選擇要閱讀的資料；內容從私人倉庫按頁載入。</p></div>' +
+      '<p class="page-sub">從錯因複習到整卷回顧，選擇今天的閱讀方向。</p></div>' +
       '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
-      '<div class="library-choices">' +
-        '<a class="library-choice" href="#/library/books"><span class="library-choice-icon">📚</span>' +
-          '<span><strong>錯題集</strong><small>按科目翻閱化學與生物錯題集</small></span><span aria-hidden="true">→</span></a>' +
-        '<a class="library-choice" href="#/library/papers"><span class="library-choice-icon">🖊️</span>' +
-          '<span><strong>紅筆批改卷</strong><small>按科目和年份閱讀歷屆試題批改版本</small></span><span aria-hidden="true">→</span></a>' +
+      '<div class="library-hub-grid">' +
+        '<a class="library-hub-card library-hub-books" href="#/library/books">' +
+          '<span class="library-hub-icon" aria-hidden="true">📚</span><span class="library-hub-kicker">按課題複習</span>' +
+          '<h2>錯題集</h2><p class="library-hub-description">把做錯的題、錯因與得分要點放在一起，逐個知識點讀懂。</p>' +
+          '<div class="library-hub-stats"><span><b>' + total + '</b><small>收錄題目</small></span>' +
+            '<span><b>' + pending + '</b><small>本輪待複習</small></span>' +
+            '<span><b>' + (total - pending) + '</b><small>本輪已全對</small></span></div>' +
+          '<div class="library-hub-tags">' + SUBJECT_ORDER.map(function (code) {
+            return '<span>' + SUBJECT_META[code].icon + ' ' + SUBJECT_META[code].name + ' · ' + itemsOf(code).length + ' 題</span>';
+          }).join('') + '</div><p class="library-hub-note">未練過或最新未全對的題目列為待複習。</p>' +
+          '<span class="library-hub-action">翻閱完整錯題集 <span aria-hidden="true">↗</span></span></a>' +
+        '<a class="library-hub-card library-hub-papers" href="#/library/papers">' +
+          '<span class="library-hub-icon" aria-hidden="true">🖊️</span><span class="library-hub-kicker">按年份回顧</span>' +
+          '<h2>紅筆批改卷</h2><p class="library-hub-description">回到原卷看批注，再用成績與等級差距找到下一步的目標。</p>' +
+          '<div class="library-hub-stats"><span><b id="libraryPaperCount">—</b><small>已發布批改卷</small></span>' +
+            '<span><b id="libraryPaperSubjects">—</b><small>收錄科目</small></span>' +
+            '<span><b id="libraryNewestYear">—</b><small>最新試題年份</small></span></div>' +
+          '<div class="library-hub-tags"><span>原卷紅筆批注</span><span>成績與參考等級</span><span>升級／保級差距</span></div>' +
+          '<p class="library-hub-note" id="libraryPaperMeta" role="status" aria-live="polite">正在核對卷庫…</p>' +
+          '<span class="library-hub-action">按科目與年份選卷 <span aria-hidden="true">↗</span></span></a>' +
       '</div></section>';
+    loadLibraryOverview();
+  }
+  function fetchPaperCatalog(session, signal) {
+    if (paperCatalogSnapshot && paperCatalogSnapshot.session === session && Date.now() - paperCatalogSnapshot.at < 30000) {
+      return Promise.resolve(paperCatalogSnapshot.data);
+    }
+    return fetch(SYNC_API + '/papers/catalog', {
+      method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store', signal: signal,
+    }).then(readSyncResponse).then(function (catalog) {
+      if (!catalog || !catalog.subjects || !SUBJECT_ORDER.every(function (code) {
+        return Array.isArray(catalog.subjects[code]) && catalog.subjects[code].every(function (year) { return /^20\d{2}$/.test(year); });
+      })) throw new Error('批改卷年份清單無效');
+      if (localStorage.getItem(LS_SYNC_SESSION) === session) paperCatalogSnapshot = { session: session, at: Date.now(), data: catalog };
+      return catalog;
+    });
+  }
+  function loadLibraryOverview() {
+    var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++paperRequest;
+    var status = $('#libraryPaperMeta');
+    if (!session || !SYNC_API) { status.textContent = '登入後可查看卷庫數量與年份。'; return; }
+    var controller = new AbortController();
+    paperController = controller;
+    var timeout = setTimeout(function () { controller.abort(); }, 15000);
+    fetchPaperCatalog(session, controller.signal).then(function (catalog) {
+      if (requestId !== paperRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
+      var years = [], count = 0, subjects = 0;
+      SUBJECT_ORDER.forEach(function (code) {
+        count += catalog.subjects[code].length;
+        if (catalog.subjects[code].length) subjects++;
+        years = years.concat(catalog.subjects[code]);
+      });
+      $('#libraryPaperCount').textContent = String(count);
+      $('#libraryPaperSubjects').textContent = String(subjects);
+      $('#libraryNewestYear').textContent = years.sort().reverse()[0] || '—';
+      status.textContent = count ? '先選科目，再比較各年份的得分與升級空間。' : '批改完成並發布後，卷子會出現在這裡。';
+    }).catch(function (err) {
+      if (requestId !== paperRequest) return;
+      expireConnection(err, session);
+      status.textContent = '卷庫數量暫未能核對，可進入選卷頁重試。';
+    }).finally(function () {
+      clearTimeout(timeout);
+      if (requestId === paperRequest) paperController = null;
+    });
+  }
+  function paperGradeMetrics(assessment) {
+    var levels = ['U', '1', '2', '3', '4', '5', '5*', '5**'];
+    if (!assessment || !Number.isInteger(assessment.earned) || !Number.isInteger(assessment.total) ||
+      assessment.total <= 0 || assessment.earned < 0 || assessment.earned > assessment.total) return null;
+    var score = assessment.earned / assessment.total * 100;
+    var boundaries = Array.isArray(assessment.boundaries) ? assessment.boundaries.filter(function (b) {
+      return b && levels.indexOf(b.level) >= 0 && Number.isFinite(b.minimumPercent) && b.minimumPercent >= 0 && b.minimumPercent <= 100;
+    }).sort(function (a, b) { return a.minimumPercent - b.minimumPercent; }) : [];
+    var currentIndex = -1;
+    boundaries.forEach(function (b, index) { if (score + 1e-9 >= b.minimumPercent) currentIndex = index; });
+    var current = boundaries[currentIndex], next = boundaries[currentIndex + 1], previous = boundaries[currentIndex - 1];
+    var floor = current ? Math.ceil(assessment.total * current.minimumPercent / 100 - 1e-9) : null;
+    return { score: score, current: current, next: next, previous: previous,
+      upMarks: next ? Math.ceil(assessment.total * next.minimumPercent / 100 - 1e-9) - assessment.earned : null,
+      dropMarks: current ? assessment.earned - floor + 1 : null };
+  }
+  function renderPaperYear(subject, year, detail) {
+    detail = detail || {};
+    var assessment = detail.assessment, metrics = paperGradeMetrics(assessment);
+    var tone = metrics && metrics.current ? ({ U: 'red', 1: 'red', 2: 'red', 3: 'amber', 4: 'blue', 5: 'green', '5*': 'gold', '5**': 'purple' })[metrics.current.level] : 'neutral';
+    var score = '<span class="paper-score-empty">成績待補</span>', gaps = '<span class="paper-gap-empty">發布成績與參考分界後，顯示升級及保級差距。</span>';
+    if (metrics) {
+      score = '<span class="paper-grade grade-' + tone + '">' + (metrics.current ? esc(metrics.current.level) + ' · 估算' : '等級待確認') + '</span>' +
+        '<b class="paper-score-value grade-text-' + tone + '">' + assessment.earned + ' <small>/ ' + assessment.total + ' 分</small></b>' +
+        '<span class="paper-score-percent">' + metrics.score.toFixed(1) + '%</span>';
+      var up = metrics.next ? '<b>升至 ' + esc(metrics.next.level) + ' 尚欠 ' + metrics.upMarks + ' 分</b><small>距 ' +
+        metrics.next.minimumPercent + '% 分界 ' + (metrics.next.minimumPercent - metrics.score).toFixed(1) + ' 個百分點</small>' :
+        '<b>' + (metrics.current && metrics.current.level === '5**' ? '已達最高參考等級' : '上級分界待補') + '</b>';
+      var down = metrics.current && metrics.dropMarks <= assessment.earned ? '<b>再失 ' + metrics.dropMarks + ' 分' +
+        (metrics.previous ? '跌至 ' + esc(metrics.previous.level) : '跌出 ' + esc(metrics.current.level)) + '</b><small>保級餘量 ' + (metrics.dropMarks - 1) +
+        ' 分 · ' + metrics.current.minimumPercent + '% 分界</small>' : '<b>下級分界待補</b>';
+      gaps = '<span class="paper-gap paper-gap-up">' + up + '</span><span class="paper-gap paper-gap-down">' + down + '</span>';
+    }
+    var components = metrics && Array.isArray(assessment.components) ? assessment.components.map(function (c) {
+      return esc(c.label) + ' ' + c.earned + '/' + c.total;
+    }).join(' · ') : '';
+    return '<a class="paper-year" href="#/library/papers/' + subject + '/' + year + '">' +
+      '<span class="paper-year-heading"><strong>' + year + '</strong><small>' + esc(metrics ? assessment.scope : '紅筆批改卷') + '</small></span>' +
+      '<span class="paper-year-score">' + score + '</span><span class="paper-grade-gaps">' + gaps + '</span>' +
+      '<span class="paper-year-arrow" aria-hidden="true">→</span>' +
+      '<span class="paper-year-foot">' + (components ? components + ' · ' : '') + (Number.isInteger(detail.pages) ? detail.pages + ' 頁 · ' : '') +
+        (metrics ? '等級按原批改總結的民間參考分界估算' : '可先閱讀完整批改卷') + '</span></a>';
   }
   function releaseBook() {
     bookRequest++;
@@ -905,30 +1015,26 @@
     $('#app').innerHTML = '<section class="page library-page">' +
       '<header class="page-head"><div><h1 class="page-title">' + SUBJECT_META[subject].icon + ' ' +
         SUBJECT_META[subject].name + '紅筆批改卷</h1>' +
-      '<p class="page-sub">選擇已發布的年份。</p></div>' +
+      '<p class="page-sub">比較各年得分、參考等級與升級空間，再打開批改卷。</p></div>' +
       '<a class="btn btn-ghost" href="#/library/papers">← 返回科目</a></header>' +
       '<div class="panel"><p class="review-note" id="paperYearsStatus" role="status" aria-live="polite">正在載入年份…</p>' +
-        '<div class="paper-years" id="paperYears"></div></div></section>';
+        '<div class="paper-years" id="paperYears"></div><p class="library-note">參考等級不是官方成績；分差按整數卷面分計算，百分點表示與分界的距離。僅卷一的成績不代表全科。</p></div></section>';
     var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++paperRequest;
     var status = $('#paperYearsStatus');
     if (!session || !SYNC_API) { status.textContent = '請先登入網站，再閱讀私人批改卷。'; return; }
     var controller = new AbortController();
     paperController = controller;
     var timeout = setTimeout(function () { controller.abort(); }, 15000);
-    fetch(SYNC_API + '/papers/catalog', {
-      method: 'GET', headers: { Authorization: 'Bearer ' + session },
-      cache: 'no-store', signal: controller.signal,
-    }).then(readSyncResponse).then(function (catalog) {
+    fetchPaperCatalog(session, controller.signal).then(function (catalog) {
       if (requestId !== paperRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
       if (!catalog || !catalog.subjects || !Array.isArray(catalog.subjects[subject])) {
         throw new Error('批改卷年份清單無效');
       }
-      var years = catalog.subjects[subject].filter(function (year) { return /^\d{4}$/.test(year); });
+      var years = catalog.subjects[subject].filter(function (year) { return /^20\d{2}$/.test(year); }).sort().reverse();
       if (!years.length) { status.textContent = '此科目尚無已發布的批改卷。'; return; }
       status.textContent = '已發布 ' + years.length + ' 個年份的批改卷。';
       $('#paperYears').innerHTML = years.map(function (year) {
-        return '<a class="paper-year" href="#/library/papers/' + subject + '/' + year + '">' +
-          '<strong>' + year + ' 年</strong><span>閱讀批改卷 →</span></a>';
+        return renderPaperYear(subject, year, catalog.papers && catalog.papers[subject] && catalog.papers[subject][year]);
       }).join('');
     }).catch(function (err) {
       paperError(err, session, requestId, status, false);

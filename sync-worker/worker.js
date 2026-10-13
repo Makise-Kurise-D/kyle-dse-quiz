@@ -6,7 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'reader-sync-20261013';
+const SERVICE_VERSION = 'library-grades-20261013';
 const refreshes = new Map();
 
 function json(data, status = 200, headers = {}) {
@@ -181,6 +181,33 @@ async function githubBookManifest(subject, token) {
   return { version: manifest.version, pages: manifest.pages, format: 'jpeg', source_sha256: sha };
 }
 
+function paperSummary(value) {
+  if (!value || !Number.isInteger(value.pages) || value.pages < 1 || value.pages > 9999 ||
+      typeof value.source_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.source_sha256)) return null;
+  const summary = { pages: value.pages, source_sha256: value.source_sha256 };
+  const a = value.assessment;
+  const levels = ['U', '1', '2', '3', '4', '5', '5*', '5**'];
+  const shortText = (text, max) => typeof text === 'string' && text.trim().length > 0 && text.length <= max;
+  if (!a || a.source_sha256 !== value.source_sha256 || !Number.isInteger(a.earned) ||
+      !Number.isInteger(a.total) || a.total < 1 || a.total > 10000 || a.earned < 0 || a.earned > a.total ||
+      !shortText(a.scope, 80) || !shortText(a.basis, 160) || !Array.isArray(a.components) || a.components.length > 8 ||
+      !a.components.every(c => c && shortText(c.label, 80) && Number.isInteger(c.earned) && Number.isInteger(c.total) &&
+        c.total > 0 && c.earned >= 0 && c.earned <= c.total) ||
+      (a.components.length && (a.components.reduce((n, c) => n + c.earned, 0) !== a.earned ||
+        a.components.reduce((n, c) => n + c.total, 0) !== a.total)) ||
+      !Array.isArray(a.boundaries) || a.boundaries.length > levels.length ||
+      !a.boundaries.every((b, i) => b && levels.includes(b.level) && Number.isFinite(b.minimumPercent) &&
+        b.minimumPercent >= 0 && b.minimumPercent <= 100 && (!i ||
+          (levels.indexOf(b.level) > levels.indexOf(a.boundaries[i - 1].level) &&
+            b.minimumPercent > a.boundaries[i - 1].minimumPercent)))) return summary;
+  summary.assessment = {
+    source_sha256: a.source_sha256, earned: a.earned, total: a.total, scope: a.scope, basis: a.basis,
+    components: a.components.map(c => ({ label: c.label, earned: c.earned, total: c.total })),
+    boundaries: a.boundaries.map(b => ({ level: b.level, minimumPercent: b.minimumPercent })),
+  };
+  return summary;
+}
+
 async function githubPaperCatalog(token) {
   const file = await github(`/repos/${REPO}/contents/papers/catalog.json`, token);
   if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_paper_catalog');
@@ -193,7 +220,17 @@ async function githubPaperCatalog(token) {
         new Set(subjects[subject]).size === subjects[subject].length)) {
     throw new Error('invalid_paper_catalog');
   }
-  return { subjects: { chem: subjects.chem, bio: subjects.bio } };
+  const result = { subjects: { chem: subjects.chem, bio: subjects.bio } };
+  if (catalog.papers && typeof catalog.papers === 'object' && !Array.isArray(catalog.papers)) {
+    result.papers = { chem: {}, bio: {} };
+    for (const subject of ['chem', 'bio']) {
+      for (const year of subjects[subject]) {
+        const summary = paperSummary(catalog.papers[subject]?.[year]);
+        if (summary) result.papers[subject][year] = summary;
+      }
+    }
+  }
+  return result;
 }
 
 async function githubPaperManifest(subject, year, token) {
