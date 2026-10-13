@@ -299,6 +299,26 @@ test('password login fetches the private bank, merges records, and automatically
   assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
 });
 
+test('password login starts cloud sync while the private bank is still loading', async () => {
+  const calls = [], sessionId = 'p'.repeat(43);
+  let finishBank;
+  const app = boot('', async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/auth/password')) return { ok: true, json: async () => ({ sessionId }) };
+    if (url.endsWith('/bank')) return new Promise(resolve => { finishBank = resolve; });
+    return { ok: true, json: async () => ({ data: null }) };
+  }, {}, true, true);
+  app.node('#syncPassword').value = 'test-password';
+  app.node('#passwordLoginForm').listeners.submit({ preventDefault() {} });
+  await settle();
+  assert.equal(typeof finishBank, 'function');
+  assert.ok(calls.some(call => call.url.endsWith('/sync') && call.options.method === 'GET'),
+    'records begin downloading before the bank finishes');
+  finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
+  await settle();
+  assert.match(app.node('#app').innerHTML, /題在庫/);
+});
+
 test('wrong passwords cannot load questions or overwrite progress', async () => {
   const calls = [];
   const app = boot('', async url => {
@@ -359,20 +379,23 @@ test('sync combines answers from two computers and reports an upload only when o
   const localDraft = { pick: { a: 'A' }, text: {}, paper: {}, changedAt: { 'pick:a': 110 }, deletedAt: 0 };
   const remoteDraft = { pick: { b: 'B' }, text: {}, paper: {}, changedAt: { 'pick:b': 120 }, deletedAt: 0 };
   const remote = { app: 'kyle-dse-quiz', sessions: [], archive: [], drafts: { [key]: remoteDraft }, reviewPlan: {}, cycle };
-  let uploaded, puts = 0;
+  let uploaded, sentSha, puts = 0;
   const app = boot('', async (_, options) => {
     if (options.method === 'PUT') {
       puts++;
-      uploaded = JSON.parse(options.body).data;
+      const body = JSON.parse(options.body);
+      uploaded = body.data;
+      sentSha = body.sha;
       return { ok: true, json: async () => ({ savedAt: '2026-10-12T16:00:00Z' }) };
     }
-    return { ok: true, json: async () => ({ data: remote }) };
+    return { ok: true, json: async () => ({ data: remote, sha: 'a'.repeat(40) }) };
   }, { dse_quiz_sync_session_v1: 'valid-session', dse_quiz_cycle_v1: cycle,
     dse_quiz_draft_v2: JSON.stringify({ [key]: localDraft }) }, false, true);
   app.location.hash = '#/records'; app.events.hashchange();
   app.node('#syncNowBtn').listeners.click();
   await settle();
   assert.equal(puts, 1);
+  assert.equal(sentSha, 'a'.repeat(40), 'the upload reuses the version just read');
   assert.deepEqual(uploaded.drafts[key].pick, { a: 'A', b: 'B' });
   assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
 });
@@ -495,6 +518,24 @@ test('a delayed failure from an old session does not discard a new connection', 
   rejectOld({ ok: false, status: 401, json: async () => ({ error: 'not_connected' }) });
   await settle();
   assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'new-session');
+});
+
+test('a delayed successful read from an old session cannot merge or upload records', async () => {
+  let finishOld, puts = 0;
+  const app = boot('', (_, options) => {
+    if (options.method === 'PUT') { puts++; return { ok: true, json: async () => ({}) }; }
+    return new Promise(resolve => { finishOld = resolve; });
+  }, { dse_quiz_sync_session_v1: 'old-session', dse_quiz_sessions_v2: '[]' });
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.node('#syncNowBtn').listeners.click();
+  app.saved.set('dse_quiz_sync_session_v1', 'new-session');
+  finishOld({ ok: true, json: async () => ({ data: { app: 'kyle-dse-quiz',
+    sessions: [{ t: 1, subj: 'bio', topic: 'I', results: {} }], archive: [], drafts: {}, reviewPlan: {} },
+    sha: 'a'.repeat(40) }) });
+  await settle();
+  assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'new-session');
+  assert.equal(app.saved.get('dse_quiz_sessions_v2'), '[]');
+  assert.equal(puts, 0);
 });
 
 test('existing correct answers without a review plan do not break startup or OAuth sync', async () => {

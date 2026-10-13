@@ -196,16 +196,18 @@
     var before = state(backupData());
     var sentRevision = syncRevision;
     return syncRequest('GET').then(function (remote) {
+      if (localStorage.getItem(LS_SYNC_SESSION) !== session) return null;
       if (remote.data) mergeData(remote.data);
       var backup = backupData();
       sentRevision = syncRevision;
       if (remote.data && state(remote.data) === state(backup)) {
         return { savedAt: new Date().toISOString(), kind: before === state(backup) ? 'checked' : 'downloaded' };
       }
-      return syncRequest('PUT', { data: backup }).then(function (result) {
+      return syncRequest('PUT', { data: backup, sha: remote.sha || null }).then(function (result) {
         result.kind = 'uploaded'; return result;
       });
     }).then(function (result) {
+      if (!result || localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       var checkedAt = new Date().toISOString();
       localStorage.setItem(LS_SYNCED_AT, checkedAt);
       var label = result.kind === 'uploaded' ? '已上傳至雲端' : result.kind === 'downloaded' ? '已更新本機記錄' : '雲端已核對，無新記錄';
@@ -216,6 +218,7 @@
       if (location.hash.indexOf('/records') >= 0) renderRecords();
       return true;
     }).catch(function (err) {
+      if (localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       expireConnection(err, session);
       setSyncStatus('同步失敗：' + err.message);
       return false;
@@ -269,7 +272,9 @@
           localStorage.setItem(LS_AUTH_MODE, 'password');
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
           forgetBank(); bankMessage = '';
-          return previous.catch(function () {}).then(function () { return loadBank(); }).then(function () { return syncNow(true); });
+          return previous.catch(function () {}).then(function () {
+            return Promise.all([loadBank(), syncNow(true)]);
+          });
         }).catch(function (err) {
           setSyncStatus('登入失敗：' + err.message);
         }).finally(function () { passwordLoginBusy = false; button.disabled = false; });
@@ -345,7 +350,7 @@
         .then(function (data) {
           if (PASSWORD_AUTH) localStorage.setItem(LS_AUTH_MODE, 'password');
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
-          return loadBank().then(function () { return syncNow(true); });
+          return Promise.all([loadBank(), syncNow(true)]);
         }).catch(function (err) { setSyncStatus('连接失败：' + err.message); });
     } else if (hash.indexOf('sync=cancelled') >= 0) {
       setSyncStatus('已取消 GitHub 授权');
@@ -359,7 +364,7 @@
             localStorage.setItem(LS_AUTH_MODE, 'password');
             localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
           }).catch(function (err) { expireConnection(err, existing); setSyncStatus('連接更新失敗：' + err.message); })
-          .then(function () { return loadBank(); }).then(function () { return syncNow(true); });
+          .then(function () { return Promise.all([loadBank(), syncNow(true)]); });
       } else {
         loadBank();
         setTimeout(function () { syncNow(true); }, 600);
@@ -373,7 +378,7 @@
   window.addEventListener('storage', function (event) {
     if (event.key === LS_SYNC_SESSION) {
       forgetBank(); route();
-      if (event.newValue) loadBank().then(function () { syncNow(true); });
+      if (event.newValue) Promise.all([loadBank(), syncNow(true)]);
     }
   });
   // Also fetch updates made on another computer while this tab remains open.
