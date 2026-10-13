@@ -6,7 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'paper-pages-20261013';
+const SERVICE_VERSION = 'reader-sync-20261013';
 const refreshes = new Map();
 
 function json(data, status = 200, headers = {}) {
@@ -289,6 +289,14 @@ async function tokenFor(request, env) {
   return credential ? { token: credential.accessToken, sessionKey, credentialKey: sessionKey } : null;
 }
 
+async function isOwner(auth, env) {
+  // The stored owner credential was checked when it was connected. An explicitly
+  // configured token still gets checked because its account is not known here.
+  if (auth.credentialKey === OWNER_KEY && !env.GITHUB_TOKEN) return true;
+  const user = await github('/user', auth.token);
+  return String(user.login).toLowerCase() === OWNER.toLowerCase();
+}
+
 const worker = {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -432,8 +440,7 @@ const worker = {
       try {
         const auth = await tokenFor(request, env);
         if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
-        const user = await github('/user', auth.token);
-        if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return json({ error: 'owner_only' }, 403, cors(request));
+        if (!await isOwner(auth, env)) return json({ error: 'owner_only' }, 403, cors(request));
         const path = image ? `question-bank/images/${image[1]}` : BANK_PATH;
         const file = await github(`/repos/${REPO}/contents/${path}`, auth.token);
         if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_bank_file');
@@ -457,8 +464,7 @@ const worker = {
       try {
         const auth = await tokenFor(request, env);
         if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
-        const user = await github('/user', auth.token);
-        if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return json({ error: 'owner_only' }, 403, cors(request));
+        if (!await isOwner(auth, env)) return json({ error: 'owner_only' }, 403, cors(request));
         if (manifest) return json(await githubBookManifest(manifest[1], auth.token), 200, cors(request));
         if (page) {
           const [, subject, version, numberText] = page;
@@ -497,8 +503,7 @@ const worker = {
       try {
         const auth = await tokenFor(request, env);
         if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
-        const user = await github('/user', auth.token);
-        if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return json({ error: 'owner_only' }, 403, cors(request));
+        if (!await isOwner(auth, env)) return json({ error: 'owner_only' }, 403, cors(request));
         const available = await githubPaperCatalog(auth.token);
         if (catalog) return json(available, 200, cors(request));
         const subject = (manifest || page)[1], year = (manifest || page)[2];
@@ -552,19 +557,22 @@ const worker = {
         }
         const body = await request.json();
         if (!body.data || body.data.app !== 'kyle-dse-quiz') return json({ error: 'invalid_backup' }, 400, cors(request));
+        let optimisticSha = typeof body.sha === 'string' && /^[0-9a-f]{40}$/.test(body.sha) ? body.sha : null;
         let saved = null;
         for (let attempt = 0; attempt < 3; attempt++) {
-          const current = await github(path, auth.token).catch(error => error.status === 404 ? null : Promise.reject(error));
-          const merged = current
+          const current = optimisticSha ? null
+            : await github(path, auth.token).catch(error => error.status === 404 ? null : Promise.reject(error));
+          const merged = optimisticSha ? body.data : current
             ? mergeBackup(JSON.parse(decodeUtf8(current.content)), body.data)
             : body.data;
           const payload = { message: 'Sync practice records', content: encodeUtf8(JSON.stringify(merged, null, 2)) };
-          if (current) payload.sha = current.sha;
+          if (optimisticSha || current) payload.sha = optimisticSha || current.sha;
           try {
             saved = await github(path, auth.token, { method: 'PUT', body: JSON.stringify(payload) });
             break;
           } catch (error) {
             if (error.status !== 409 || attempt === 2) throw error;
+            optimisticSha = null;
           }
         }
         return json({ ok: true, sha: saved && saved.content && saved.content.sha, savedAt: new Date().toISOString() }, 200, cors(request));
