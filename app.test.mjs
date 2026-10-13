@@ -10,7 +10,7 @@ const data = 'window.QUIZ_DATA = ' + JSON.stringify({ subjects: {
     { id: 'example-mc', kind: 'mc', topic: 'T3', year: '2022', paper: '卷一', qref: '示例 1', stem: '示例題', correctOpt: 'A', img: 'images/chem-2022-mc-01.jpg' }
   ] }, bio: { name: '生物', topics: [], items: [] }
 } });
-function boot(hash = '', fetch = async () => { throw new Error('offline'); }, initialStorage = {}, privateBank = false, passwordAuth = false) {
+function boot(hash = '', fetch = async () => { throw new Error('offline'); }, initialStorage = {}, privateBank = false, passwordAuth = false, now = null) {
   const nodes = new Map(), events = {}, timers = [], intervals = [], saved = new Map(Object.entries(initialStorage));
   function node(selector) {
     if (!nodes.has(selector)) nodes.set(selector, {
@@ -22,8 +22,12 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
     return nodes.get(selector);
   }
   const location = { hash, pathname: '/kyle-dse-quiz/', search: '', href: 'original-page' };
+  const Clock = now == null ? Date : class extends Date {
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
+  };
   const context = {
-    console, AbortController, fetch, location,
+    console, AbortController, fetch, location, Date: Clock,
     document: { querySelector: node, querySelectorAll: () => [], addEventListener() {} },
     localStorage: { getItem: k => saved.get(k) ?? null, setItem: (k, v) => saved.set(k, v), removeItem: k => saved.delete(k) },
     history: { replaceState(_, __, url) { location.hash = url.slice(url.indexOf('#')); } },
@@ -41,6 +45,139 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
   return { context, location, nodes, node, saved, timers, intervals, events };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('library reads private page images on demand and releases each temporary URL', async () => {
+  const calls = [], revoked = [];
+  const app = boot('', async (url, options) => {
+    calls.push({ url, authorization: options.headers.Authorization });
+    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
+      version: 'a'.repeat(16), pages: 2, format: 'jpeg', source_sha256: 'a'.repeat(64),
+    }) };
+    return { ok: true, blob: async () => new Blob(['synthetic-jpeg'], { type: 'image/jpeg' }) };
+  }, { dse_quiz_sync_session_v1: 'valid-session' });
+  let serial = 0;
+  app.context.URL = { createObjectURL: () => 'blob:synthetic-' + (++serial),
+    revokeObjectURL: url => revoked.push(url) };
+  assert.match(app.node('#app').innerHTML, /href="#\/library".*閱讀錯題集/s);
+  app.location.hash = '#/library'; app.events.hashchange();
+  await settle();
+  assert.equal(app.node('#bookImage').src, 'blob:synthetic-1');
+  assert.equal(app.node('#bookReader').hidden, false);
+  assert.equal(app.node('#bookImage').hidden, false);
+  assert.equal(app.node('#bookOpen').href, 'blob:synthetic-1');
+  assert.deepEqual(calls.map(call => call.url), [
+    'https://sync.example.workers.dev/books/chem/manifest',
+    'https://sync.example.workers.dev/books/chem/pages/aaaaaaaaaaaaaaaa/1',
+  ]);
+  assert.ok(calls.every(call => call.authorization === 'Bearer valid-session'));
+  app.node('#bookNext').listeners.click();
+  await settle();
+  assert.equal(app.node('#bookImage').src, 'blob:synthetic-2');
+  assert.equal(calls[2].url, 'https://sync.example.workers.dev/books/chem/pages/aaaaaaaaaaaaaaaa/2');
+  assert.deepEqual(revoked, ['blob:synthetic-1']);
+  app.node('#bookSubjects').listeners.click({ target: { closest: () => ({ dataset: { subject: 'bio' } }) } });
+  await settle();
+  assert.equal(app.node('#bookImage').src, 'blob:synthetic-3');
+  assert.deepEqual(revoked, ['blob:synthetic-1', 'blob:synthetic-2']);
+  assert.equal(calls[3].url, 'https://sync.example.workers.dev/books/bio/manifest');
+  assert.equal(calls[4].url, 'https://sync.example.workers.dev/books/bio/pages/aaaaaaaaaaaaaaaa/1');
+  app.location.hash = '#/records'; app.events.hashchange();
+  assert.deepEqual(revoked, ['blob:synthetic-1', 'blob:synthetic-2', 'blob:synthetic-3']);
+  assert.ok([...app.saved.values()].every(value => !value.includes('synthetic-jpeg')));
+});
+
+test('library stays behind the private-bank login and explains inaccessible page images', async () => {
+  const calls = [];
+  const locked = boot('', async url => { calls.push(url); throw new Error('unexpected fetch'); }, {}, true, true);
+  locked.location.hash = '#/library'; locked.events.hashchange();
+  assert.equal(calls.length, 0);
+  assert.match(locked.node('#app').innerHTML, /登入並自動同步/);
+
+  const failed = boot('', async () => ({ ok: false, status: 404,
+    json: async () => ({ error: 'book_not_accessible' }) }),
+  { dse_quiz_sync_session_v1: 'valid-session' });
+  failed.location.hash = '#/library'; failed.events.hashchange();
+  await settle();
+  assert.match(failed.node('#bookStatus').textContent, /私人資料倉庫/);
+  assert.equal(failed.node('#bookImage').hidden, true);
+});
+
+test('reloading a revised book discards its previous browser image and requests the new version', async () => {
+  const urls = [], revoked = [];
+  let version = 'a'.repeat(16), serial = 0;
+  const app = boot('', async url => {
+    urls.push(url);
+    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
+      version, pages: 1, format: 'jpeg', source_sha256: version.repeat(4),
+    }) };
+    return { ok: true, blob: async () => new Blob(['page-image'], { type: 'image/jpeg' }) };
+  }, { dse_quiz_sync_session_v1: 'valid-session' });
+  app.context.URL = { createObjectURL: () => 'blob:page-' + (++serial), revokeObjectURL: url => revoked.push(url) };
+  app.location.hash = '#/library'; app.events.hashchange();
+  await settle();
+  assert.equal(app.node('#bookImage').src, 'blob:page-1');
+  version = 'b'.repeat(16);
+  app.node('#bookReload').listeners.click();
+  await settle();
+  assert.deepEqual(revoked, ['blob:page-1']);
+  assert.equal(app.node('#bookImage').src, 'blob:page-2');
+  assert.equal(urls.at(-1), 'https://sync.example.workers.dev/books/chem/pages/bbbbbbbbbbbbbbbb/1');
+});
+
+test('fortnight report counts latest full answers, first-time solves and regressions by unique question', () => {
+  const start = Date.UTC(2026, 9, 4, 16); // 2026/10/05 00:00 Beijing time
+  const day = 864e5;
+  const result = ok => ({ kind: 'mc', ok, marks: ok ? 1 : 0, tot: 1 });
+  const previous = { t: start - day, subj: 'chem', topic: 'T3', results: {
+    'example-mc': result(true), e: result(true)
+  } };
+  const first = { t: start + day, subj: 'chem', topic: 'T3', results: {
+    'example-mc': result(false), b: result(true), c: result(true), d: result(false), e: result(false)
+  } };
+  const last = { t: start + 2 * day, subj: 'chem', topic: 'T3', results: {
+    b: result(true), c: result(false), d: result(true), e: result(true)
+  } };
+  const app = boot('', undefined, {
+    dse_quiz_archive_v1: JSON.stringify([previous, first]),
+    dse_quiz_sessions_v2: JSON.stringify([first, last]) // one session also appears in archive
+  }, false, false, start + 8 * day);
+  for (const id of ['b', 'c', 'd', 'e']) app.context.QUIZ_DATA.subjects.chem.items.push({
+    id, kind: 'mc', topic: 'T3', year: '2022', qref: `示例 ${id}`
+  });
+  app.location.hash = '#/records'; app.events.hashchange();
+  const current = app.node('#app').innerHTML;
+  assert.match(current, /<b>5<\/b><span>本期做過的不同題目/);
+  assert.match(current, /<b>3 \/ 5<\/b><span>本期最後一次答對/);
+  assert.match(current, /<b>60%<\/b><span>佔目前題庫/);
+  assert.match(current, /首次解決（2）/);
+  assert.match(current, /答對後再錯（2）/);
+  assert.match(current, /2026\/10\/05—2026\/10\/18（北京時間）/);
+  app.node('#cycleReportPeriod').listeners.change({ target: { value: String(start - 14 * day) } });
+  const earlier = app.node('#app').innerHTML;
+  assert.match(earlier, /<b>2 \/ 5<\/b><span>該期最後一次答對/);
+  assert.match(earlier, /首次解決（2）/);
+  assert.match(earlier, /答對後再錯（0）/);
+});
+
+test('fortnight report survives rollover and waits for the private bank before calculating coverage', () => {
+  const start = Date.UTC(2026, 9, 4, 16), day = 864e5;
+  const records = [{ t: start + day, subj: 'chem', topic: 'T3', results: {
+    'example-mc': { kind: 'mc', ok: true, marks: 1, tot: 1 }
+  } }];
+  const now = start + 15 * day;
+  const app = boot('', undefined, { dse_quiz_sessions_v2: JSON.stringify(records),
+    dse_quiz_cycle_v1: String(start) }, false, false, now);
+  app.location.hash = '#/records'; app.events.hashchange();
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_archive_v1')).length, 1);
+  assert.match(app.node('#app').innerHTML, /<b>0 \/ 1<\/b><span>本期最後一次答對/);
+  app.node('#cycleReportPeriod').listeners.change({ target: { value: String(start) } });
+  assert.match(app.node('#app').innerHTML, /<b>1 \/ 1<\/b><span>該期最後一次答對/);
+
+  const locked = boot('', undefined, { dse_quiz_sessions_v2: JSON.stringify(records) }, true, true, now);
+  locked.location.hash = '#/records'; locked.events.hashchange();
+  assert.match(locked.node('#app').innerHTML, /登入並載入私人題庫後/);
+  assert.doesNotMatch(locked.node('#app').innerHTML, /佔目前題庫/);
+});
 
 test('password login fetches the private bank, merges records, and automatically uploads without persisting the password', async () => {
   const local = { t: Date.now() - 2000, subj: 'chem', topic: 'T3', results: {} };

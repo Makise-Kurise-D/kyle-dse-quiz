@@ -294,11 +294,19 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   font-weight:700;cursor:pointer;color:var(--gray);font-family:inherit}
 .seg.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.1)}
 
-/* 私人 PDF 閱讀器 */
+/* 私人錯題集逐頁閱讀器 */
 .library-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
-.book-frame{display:block;width:100%;height:min(78vh,900px);min-height:540px;border:1px solid var(--line);
-  border-radius:12px;background:#f2f1ed}
-.book-frame[hidden],#bookOpen[hidden]{display:none}
+.book-reader{max-width:850px;margin:0 auto}
+.book-reader[hidden],.book-image[hidden],#bookOpen[hidden]{display:none}
+.book-page-controls{position:sticky;top:8px;z-index:3;display:flex;align-items:center;
+  justify-content:space-between;gap:12px;margin:0 0 14px;padding:8px;flex-wrap:wrap;
+  background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:12px}
+.book-page-controls label{font-size:14px;color:var(--ink2);font-weight:700}
+.book-page-controls select{padding:6px 8px;border:1px solid var(--line);border-radius:8px;
+  background:#fff;color:var(--ink);font:inherit}
+.book-page-controls .btn:disabled{opacity:.45;cursor:default}
+.book-image{display:block;width:100%;height:auto;border:1px solid var(--line);
+  border-radius:12px;background:#f2f1ed;box-shadow:var(--shadow)}
 .library-note{font-size:12px;color:var(--gray);margin:12px 0 0}
 @media(max-width:1100px) and (min-width:861px){.tile-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .cycle-report-period{margin:5px 0 0;color:var(--gray);font-size:12.5px}
@@ -431,7 +439,7 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   .cycle-report-lists{grid-template-columns:1fr}
   .cycle-report-picker{width:100%;justify-content:space-between}
   .cycle-report-picker select{max-width:72%}
-  .book-frame{height:72vh;min-height:430px}
+  .book-page-controls{justify-content:center}
   .rand-grid{grid-template-columns:1fr}
   .rp-head{position:static}
   .toast{bottom:82px}

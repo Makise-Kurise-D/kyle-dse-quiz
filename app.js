@@ -23,7 +23,8 @@
   var passwordLoginBusy = false;
   var syncTimer = null, syncBusy = false, syncAgain = false, syncRevision = 0;
   var syncMessage = '';
-  var bookSubject = 'chem', bookUrl = null, bookController = null, bookRequest = 0;
+  var bookSubject = 'chem', bookPage = 1, bookManifest = null;
+  var bookUrl = null, bookController = null, bookRequest = 0;
   var startupHash = location.hash;
   // 所有網頁日期及雙週週期均以北京時間（UTC+8）為準；儲存的時間戳仍使用 UTC。
   var DAY_MS = 24 * 3600 * 1000;
@@ -158,8 +159,8 @@
       else if (detail === 'service_unavailable') message = '同步服務暫時無法使用，請稍後重試';
       else if (detail === 'owner_connection_required') message = '資料儲存需要重新連接，請開啟儲存設定';
       else if (detail === 'too_many_attempts') message = '密碼嘗試次數過多，請於 15 分鐘後再試';
-      else if (detail === 'book_not_accessible') message = '私人錯題集未能讀取，請檢查工作倉庫授權與 PDF 是否存在';
-      else if (detail === 'book_unavailable') message = '錯題集 PDF 暫時無法讀取，請稍後重試';
+      else if (detail === 'book_not_accessible') message = '錯題集頁面圖片未能讀取，請檢查私人資料倉庫或重新生成圖片';
+      else if (detail === 'book_unavailable') message = '錯題集頁面暫時無法讀取，請稍後重試';
       throw Object.assign(new Error(message + ' [HTTP ' + r.status + ']'), { status: r.status, code: detail });
     });
   }
@@ -663,37 +664,98 @@
     bookRequest++;
     if (bookController) { bookController.abort(); bookController = null; }
     if (bookUrl) { URL.revokeObjectURL(bookUrl); bookUrl = null; }
+    bookManifest = null;
+  }
+  function bookError(err, session, requestId, status) {
+    if (requestId !== bookRequest) return;
+    expireConnection(err, session);
+    if (err.name === 'AbortError') status.textContent = '載入逾時，請按「重新載入」再試。';
+    else if (err.code === 'not_found') status.textContent = '閱讀服務尚未更新，請稍後再試。';
+    else if (err.code === 'book_not_accessible' && bookManifest) {
+      status.textContent = '錯題集可能已更新，請按「重新載入」取得新版頁面。';
+    }
+    else status.textContent = '讀取失敗：' + err.message;
+  }
+  function updateBookControls() {
+    if (!bookManifest) return;
+    $('#bookPageSelect').innerHTML = Array.from({ length: bookManifest.pages }, function (_, index) {
+      return '<option value="' + (index + 1) + '">' + (index + 1) + '</option>';
+    }).join('');
+    $('#bookPageSelect').value = String(bookPage);
+    $('#bookPageCount').textContent = String(bookManifest.pages);
+    $('#bookPrev').disabled = bookPage <= 1;
+    $('#bookNext').disabled = bookPage >= bookManifest.pages;
+  }
+  function loadBookPage() {
+    if (!bookManifest) return;
+    if (bookController) { bookController.abort(); bookController = null; }
+    if (bookUrl) { URL.revokeObjectURL(bookUrl); bookUrl = null; }
+    var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++bookRequest;
+    var subject = bookSubject, manifest = bookManifest, page = bookPage;
+    var status = $('#bookStatus'), image = $('#bookImage'), open = $('#bookOpen');
+    image.hidden = true;
+    image.src = '';
+    open.hidden = true;
+    open.href = '';
+    updateBookControls();
+    if (!session) { status.textContent = '請先登入網站，再閱讀錯題集。'; return; }
+    var controller = new AbortController();
+    bookController = controller;
+    var timeout = setTimeout(function () { controller.abort(); }, 30000);
+    status.textContent = '正在載入' + (subject === 'chem' ? '化學' : '生物') + '錯題集第 ' + page + ' 頁…';
+    fetch(SYNC_API + '/books/' + subject + '/pages/' + manifest.version + '/' + page, {
+      method: 'GET', headers: { Authorization: 'Bearer ' + session },
+      cache: 'no-store', signal: controller.signal,
+    }).then(function (response) {
+      return response.ok ? response.blob() : readSyncResponse(response);
+    }).then(function (blob) {
+      if (requestId !== bookRequest || localStorage.getItem(LS_SYNC_SESSION) !== session || bookSubject !== subject) return;
+      bookUrl = URL.createObjectURL(blob);
+      image.alt = (subject === 'chem' ? '化學' : '生物') + '錯題集第 ' + page + ' 頁';
+      image.onerror = function () {
+        if (requestId === bookRequest) status.textContent = '頁面圖片未能顯示，請按「重新載入」再試。';
+      };
+      image.src = bookUrl;
+      image.hidden = false;
+      open.href = bookUrl;
+      open.hidden = false;
+      status.textContent = '第 ' + page + ' / ' + manifest.pages + ' 頁，可用上方按鈕翻頁。';
+    }).catch(function (err) {
+      bookError(err, session, requestId, status);
+    }).finally(function () {
+      clearTimeout(timeout);
+      if (requestId === bookRequest) bookController = null;
+    });
+  }
+  function goBookPage(page) {
+    if (!bookManifest || !Number.isInteger(page) || page < 1 || page > bookManifest.pages || page === bookPage) return;
+    bookPage = page;
+    loadBookPage();
   }
   function loadBook() {
     var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++bookRequest;
-    var status = $('#bookStatus'), frame = $('#bookFrame'), open = $('#bookOpen');
+    var status = $('#bookStatus');
     if (!session || !SYNC_API) {
       status.textContent = '請先登入網站，然後再閱讀私人錯題集。';
       return;
     }
     var controller = new AbortController();
     bookController = controller;
-    var timeout = setTimeout(function () { controller.abort(); }, 120000);
-    status.textContent = '正在載入' + (bookSubject === 'chem' ? '化學' : '生物') + '錯題集，檔案約 25–30 MB…';
-    fetch(SYNC_API + '/books/' + bookSubject, {
+    var timeout = setTimeout(function () { controller.abort(); }, 15000);
+    status.textContent = '正在查看' + (bookSubject === 'chem' ? '化學' : '生物') + '錯題集頁數…';
+    fetch(SYNC_API + '/books/' + bookSubject + '/manifest', {
       method: 'GET', headers: { Authorization: 'Bearer ' + session },
       cache: 'no-store', signal: controller.signal,
-    }).then(function (response) {
-      return response.ok ? response.blob() : readSyncResponse(response);
-    }).then(function (blob) {
+    }).then(readSyncResponse).then(function (manifest) {
       if (requestId !== bookRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
-      bookUrl = URL.createObjectURL(blob);
-      frame.src = bookUrl;
-      frame.hidden = false;
-      open.href = bookUrl;
-      open.hidden = false;
-      status.textContent = '已載入，可在下方直接翻頁閱讀。';
+      if (!manifest || !/^[a-f0-9]{16}$/.test(manifest.version) ||
+        !Number.isInteger(manifest.pages) || manifest.pages < 1) throw new Error('錯題集頁面清單無效');
+      bookManifest = manifest;
+      if (bookPage > manifest.pages) bookPage = 1;
+      $('#bookReader').hidden = false;
+      loadBookPage();
     }).catch(function (err) {
-      if (requestId !== bookRequest) return;
-      expireConnection(err, session);
-      if (err.name === 'AbortError') status.textContent = '載入逾時，請按「重新載入」再試。';
-      else if (err.code === 'not_found') status.textContent = '閱讀服務尚未更新，請稍後再試。';
-      else status.textContent = '讀取失敗：' + err.message;
+      bookError(err, session, requestId, status);
     }).finally(function () {
       clearTimeout(timeout);
       if (requestId === bookRequest) bookController = null;
@@ -713,19 +775,29 @@
         }).join('') + '</div><div class="record-tools"><button class="btn btn-ghost" id="bookReload" type="button">重新載入</button>' +
         '<a class="btn btn-ghost" id="bookOpen" target="_blank" rel="noopener" hidden>在新分頁開啟</a></div></div>' +
       '<p class="review-note" id="bookStatus" role="status" aria-live="polite"></p>' +
-      '<iframe class="book-frame" id="bookFrame" title="錯題集 PDF 閱讀器" hidden></iframe>' +
-      '<p class="library-note">PDF 僅在本次閱讀時載入；退出登入或離開此頁後會釋放暫存檔案。</p></div></section>';
-    $('#bookFrame').hidden = true;
-    $('#bookFrame').src = 'about:blank';
+      '<div class="book-reader" id="bookReader" hidden><div class="book-page-controls">' +
+        '<button class="btn btn-ghost" id="bookPrev" type="button">← 上一頁</button>' +
+        '<label>第 <select id="bookPageSelect" aria-label="選擇錯題集頁碼"></select> / ' +
+        '<span id="bookPageCount">—</span> 頁</label>' +
+        '<button class="btn btn-ghost" id="bookNext" type="button">下一頁 →</button></div>' +
+        '<img class="book-image" id="bookImage" alt="錯題集頁面" hidden></div>' +
+      '<p class="library-note">每次只載入目前頁面；更新錯題集後按「重新載入」可取得新版。</p></div></section>';
+    $('#bookReader').hidden = true;
+    $('#bookImage').hidden = true;
+    $('#bookImage').src = '';
     $('#bookOpen').hidden = true;
     $('#bookOpen').href = '';
     $('#bookSubjects').addEventListener('click', function (event) {
       var button = event.target.closest('[data-subject]');
       if (!button || button.dataset.subject === bookSubject) return;
       bookSubject = button.dataset.subject;
+      bookPage = 1;
       renderLibrary();
     });
     $('#bookReload').addEventListener('click', renderLibrary);
+    $('#bookPrev').addEventListener('click', function () { goBookPage(bookPage - 1); });
+    $('#bookNext').addEventListener('click', function () { goBookPage(bookPage + 1); });
+    $('#bookPageSelect').addEventListener('change', function (event) { goBookPage(Number(event.target.value)); });
     loadBook();
   }
 
