@@ -32,7 +32,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'draft-sync-20261013');
+  assert.equal(status.version, 'library-grades-20261013');
   assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
@@ -59,7 +59,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'draft-sync-20261013', passwordConfigured: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'library-grades-20261013', passwordConfigured: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -96,8 +96,12 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   const originalFetch = globalThis.fetch;
   const empty = { app: 'kyle-dse-quiz', version: 1, sessions: [], archive: [], drafts: {}, reviewPlan: {}, cycle: null };
   let file = { content: b64json(empty), sha: 'sha-1' };
-  let putAttempts = 0;
-  let login = 'Makise-Kurisu-D', githubCalls = 0;
+  let putAttempts = 0, recordGets = 0, conflictNext = false;
+  let login = 'Makise-Kurisu-D', githubCalls = 0, userCalls = 0;
+  let pageAccess = true, bookPageCalls = 0, paperPageCalls = 0;
+  const bookSha = 'a'.repeat(64), bookVersion = bookSha.slice(0, 16);
+  const paperSha = 'c'.repeat(64), paperVersion = paperSha.slice(0, 16);
+  let catalogFile = { subjects: { chem: ['2022'], bio: [] } };
   const bank = { subjects: { chem: { name: '化學', topics: [], items: [] }, bio: { name: '生物', topics: [], items: [] } } };
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
@@ -105,9 +109,32 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
       githubCalls++;
       assert.equal(new Headers(init.headers).get('user-agent'), 'kyle-dse-quiz-sync');
     }
-    if (url.endsWith('/user')) return Response.json({ login });
+    if (url.endsWith('/user')) { userCalls++; return Response.json({ login }); }
     if (url.endsWith('/contents/question-bank/bank.json')) return Response.json({ encoding: 'base64', content: b64json(bank) });
     if (url.endsWith('/contents/question-bank/images/chem-2022-mc-01.jpg')) {
+      return Response.json({ encoding: 'base64', content: btoa(String.fromCharCode(255, 216, 255, 217)) });
+    }
+    if (url.endsWith('/contents/books/chem/manifest.json')) {
+      return Response.json({ encoding: 'base64', content: b64json({
+        version: bookVersion, pages: 2, format: 'jpeg', source_sha256: bookSha,
+      }) });
+    }
+    if (url.endsWith(`/contents/books/chem/${bookVersion}/page-0001.jpg`)) {
+      bookPageCalls++;
+      if (!pageAccess) return Response.json({ message: 'Not Found' }, { status: 404 });
+      return Response.json({ encoding: 'base64', content: btoa(String.fromCharCode(255, 216, 255, 217)) });
+    }
+    if (url.endsWith('/contents/papers/catalog.json')) {
+      return Response.json({ encoding: 'base64', content: b64json(catalogFile) });
+    }
+    if (url.endsWith('/contents/papers/chem/2022/manifest.json')) {
+      return Response.json({ encoding: 'base64', content: b64json({
+        version: paperVersion, pages: 2, format: 'jpeg', source_sha256: paperSha, dpi: 200, quality: 85,
+      }) });
+    }
+    if (url.endsWith(`/contents/papers/chem/2022/${paperVersion}/page-0001.jpg`)) {
+      paperPageCalls++;
+      if (!pageAccess) return Response.json({ message: 'Not Found' }, { status: 404 });
       return Response.json({ encoding: 'base64', content: btoa(String.fromCharCode(255, 216, 255, 217)) });
     }
     if (url === 'https://github.com/login/oauth/access_token') {
@@ -115,11 +142,18 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
         refresh_token: 'mock-refresh-token', expires_in: 28800, refresh_token_expires_in: 15897600 });
     }
     if (url.endsWith('/contents/records.json') && (!init.method || init.method === 'GET')) {
+      recordGets++;
       return Response.json(file);
     }
     if (url.endsWith('/contents/records.json') && init.method === 'PUT') {
       putAttempts++;
       if (putAttempts === 1) return Response.json({ message: 'sha conflict' }, { status: 409 });
+      if (conflictNext) {
+        conflictNext = false;
+        file = { content: b64json({ ...empty, sessions: [{ t: 3, subj: 'bio', topic: 'T1', results: {} }] }),
+          sha: 'b'.repeat(40) };
+        return Response.json({ message: 'sha conflict' }, { status: 409 });
+      }
       const payload = JSON.parse(init.body);
       assert.equal(payload.sha, file.sha);
       file = { content: payload.content, sha: `sha-${putAttempts}` };
@@ -168,6 +202,30 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   assert.equal(fromB64json(file.content).sessions.length, 1);
   assert.equal(saved.headers.get('access-control-allow-origin'), ORIGIN);
 
+  // A client that just fetched records can upload with that SHA without a
+  // redundant server GET; a concurrent write still falls back to merge/retry.
+  file.sha = 'a'.repeat(40);
+  const fastBackup = { ...backup, sessions: backup.sessions.concat({ t: 2, subj: 'chem', topic: 'T2', results: {} }) };
+  const readsBeforeFastPut = recordGets;
+  const fastSaved = await worker.fetch(new Request(`${BASE}/sync`, {
+    method: 'PUT', headers: { Origin: ORIGIN, Authorization: `Bearer ${sessionId}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: fastBackup, sha: file.sha }),
+  }), env);
+  assert.equal(fastSaved.status, 200);
+  assert.equal(recordGets, readsBeforeFastPut, 'matching SHA avoids a second records GET');
+  assert.equal(fromB64json(file.content).sessions.length, 2);
+
+  file.sha = 'a'.repeat(40);
+  conflictNext = true;
+  const readsBeforeConflict = recordGets;
+  const mergedSaved = await worker.fetch(new Request(`${BASE}/sync`, {
+    method: 'PUT', headers: { Origin: ORIGIN, Authorization: `Bearer ${sessionId}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: fastBackup, sha: file.sha }),
+  }), env);
+  assert.equal(mergedSaved.status, 200);
+  assert.equal(recordGets, readsBeforeConflict + 1, 'SHA conflict reads the new remote version');
+  assert.equal(fromB64json(file.content).sessions.length, 3, 'concurrent answers survive the retry');
+
   const privateHeaders = { Origin: ORIGIN, Authorization: `Bearer ${sessionId}` };
   const beforeDenied = githubCalls;
   for (const [path, headers, status] of [
@@ -177,6 +235,25 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
     ['/bank/images/records.json', privateHeaders, 404],
     ['/bank/images/chem-2022-mc-01.jpg/extra', privateHeaders, 404],
     ['/bank/images/%2e%2e%2frecords.json', privateHeaders, 404],
+    ['/books/chem/manifest', { Origin: ORIGIN }, 401],
+    [`/books/chem/pages/${bookVersion}/1`, { Origin: ORIGIN }, 401],
+    ['/books/chem/manifest', { ...privateHeaders, Origin: 'https://attacker.example' }, 403],
+    [`/books/chem/pages/${bookVersion}/1`, { ...privateHeaders, Origin: 'https://attacker.example' }, 403],
+    ['/books/chem', privateHeaders, 404],
+    ['/books/records.json', privateHeaders, 404],
+    ['/books/chem/extra', privateHeaders, 404],
+    ['/books/chem/pages/not-hex/1', privateHeaders, 404],
+    [`/books/chem/pages/${bookVersion}/0001`, privateHeaders, 404],
+    ['/papers/catalog', { Origin: ORIGIN }, 401],
+    ['/papers/chem/2022/manifest', { Origin: ORIGIN }, 401],
+    [`/papers/chem/2022/pages/${paperVersion}/1`, { Origin: ORIGIN }, 401],
+    ['/papers/catalog', { ...privateHeaders, Origin: 'https://attacker.example' }, 403],
+    [`/papers/chem/2022/pages/${paperVersion}/1`, { ...privateHeaders, Origin: 'https://attacker.example' }, 403],
+    ['/papers/records.json', privateHeaders, 404],
+    ['/papers/chem/2022/extra', privateHeaders, 404],
+    ['/papers/chem/2022/pages/not-hex/1', privateHeaders, 404],
+    [`/papers/chem/2022/pages/${paperVersion}/0001`, privateHeaders, 404],
+    ['/papers/chem/%2e%2e/manifest', privateHeaders, 404],
   ]) {
     const denied = await worker.fetch(new Request(BASE + path, { headers }), env);
     assert.equal(denied.status, status, path);
@@ -192,10 +269,71 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   assert.equal(image.headers.get('cache-control'), 'no-store');
   assert.equal(image.headers.get('x-content-type-options'), 'nosniff');
   assert.deepEqual([...new Uint8Array(await image.arrayBuffer())], [255, 216, 255, 217]);
+  const bookManifest = await worker.fetch(new Request(`${BASE}/books/chem/manifest`, { headers: privateHeaders }), env);
+  assert.equal(bookManifest.status, 200);
+  assert.equal(bookManifest.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await bookManifest.json(), { version: bookVersion, pages: 2, format: 'jpeg', source_sha256: bookSha });
+  const pageUrl = `${BASE}/books/chem/pages/${bookVersion}/1`;
+  const bookPage = await worker.fetch(new Request(pageUrl, { headers: privateHeaders }), env);
+  assert.equal(bookPage.status, 200);
+  assert.equal(bookPage.headers.get('content-type'), 'image/jpeg');
+  assert.equal(bookPage.headers.get('cache-control'), 'no-store');
+  assert.equal(bookPage.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual([...new Uint8Array(await bookPage.arrayBuffer())], [255, 216, 255, 217]);
+  const stalePage = await worker.fetch(new Request(`${BASE}/books/chem/pages/${'b'.repeat(16)}/1`, { headers: privateHeaders }), env);
+  assert.equal(stalePage.status, 404);
+  assert.equal(bookPageCalls, 1, 'stale versions cannot fetch archived page files');
+  const outOfRangePage = await worker.fetch(new Request(`${BASE}/books/chem/pages/${bookVersion}/3`, { headers: privateHeaders }), env);
+  assert.equal(outOfRangePage.status, 404);
+  assert.equal(bookPageCalls, 1, 'out-of-range pages never fetch image files');
+  pageAccess = false;
+  const missingPage = await worker.fetch(new Request(pageUrl, { headers: privateHeaders }), env);
+  assert.equal(missingPage.status, 404);
+  assert.deepEqual(await missingPage.json(), { error: 'book_not_accessible' });
+  pageAccess = true;
+  const paperCatalog = await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: privateHeaders }), env);
+  assert.equal(paperCatalog.status, 200);
+  assert.equal(paperCatalog.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await paperCatalog.json(), { subjects: { chem: ['2022'], bio: [] } });
+  catalogFile.papers = { chem: { '2022': { pages: 2, source_sha256: paperSha, ignored: 'private extra',
+    assessment: { source_sha256: paperSha, earned: 70, total: 100, scope: '兩卷練習', basis: '非官方練習參考',
+      components: [{ label: '卷一', earned: 70, total: 100 }],
+      boundaries: [{ level: '4', minimumPercent: 65 }, { level: '5', minimumPercent: 75 }], ignored: 'extra' } },
+    '2023': { pages: 2, source_sha256: paperSha } }, bio: {} };
+  const withGrades = await (await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: privateHeaders }), env)).json();
+  assert.equal(withGrades.papers.chem['2022'].assessment.earned, 70);
+  assert.equal(withGrades.papers.chem['2022'].assessment.ignored, undefined);
+  assert.equal(withGrades.papers.chem['2023'], undefined, 'unpublished years are never returned');
+  catalogFile.papers.chem['2022'].assessment.source_sha256 = 'd'.repeat(64);
+  const staleGrade = await (await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: privateHeaders }), env)).json();
+  assert.equal(staleGrade.papers.chem['2022'].assessment, undefined, 'stale grades are omitted while the paper remains readable');
+  catalogFile = { subjects: { chem: ['2022'], bio: [] } };
+  const paperManifest = await worker.fetch(new Request(`${BASE}/papers/chem/2022/manifest`, { headers: privateHeaders }), env);
+  assert.equal(paperManifest.status, 200);
+  assert.deepEqual(await paperManifest.json(), { version: paperVersion, pages: 2, format: 'jpeg',
+    source_sha256: paperSha, dpi: 200, quality: 85 });
+  const paperPageUrl = `${BASE}/papers/chem/2022/pages/${paperVersion}/1`;
+  const paperPage = await worker.fetch(new Request(paperPageUrl, { headers: privateHeaders }), env);
+  assert.equal(paperPage.status, 200);
+  assert.equal(paperPage.headers.get('content-type'), 'image/jpeg');
+  assert.equal(paperPage.headers.get('cache-control'), 'no-store');
+  assert.equal(paperPage.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual([...new Uint8Array(await paperPage.arrayBuffer())], [255, 216, 255, 217]);
+  assert.equal((await worker.fetch(new Request(`${BASE}/papers/chem/2023/manifest`, { headers: privateHeaders }), env)).status, 404);
+  assert.equal((await worker.fetch(new Request(`${BASE}/papers/chem/2022/pages/${'d'.repeat(16)}/1`, { headers: privateHeaders }), env)).status, 404);
+  assert.equal((await worker.fetch(new Request(`${BASE}/papers/chem/2022/pages/${paperVersion}/3`, { headers: privateHeaders }), env)).status, 404);
+  assert.equal(paperPageCalls, 1, 'unlisted, stale and out-of-range papers never fetch image files');
+  pageAccess = false;
+  const missingPaperPage = await worker.fetch(new Request(paperPageUrl, { headers: privateHeaders }), env);
+  assert.equal(missingPaperPage.status, 404);
+  assert.deepEqual(await missingPaperPage.json(), { error: 'paper_not_accessible' });
+  pageAccess = true;
   login = 'someone-else';
   const stranger = await worker.fetch(new Request(`${BASE}/bank`, { headers: privateHeaders }), env);
   assert.equal(stranger.status, 403);
   assert.equal((await stranger.json()).error, 'owner_only');
+  assert.equal((await worker.fetch(new Request(`${BASE}/books/chem/manifest`, { headers: privateHeaders }), env)).status, 403);
+  assert.equal((await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: privateHeaders }), env)).status, 403);
 
   // Upgrade an already connected owner's session; no new token is supplied by the user.
   env.SITE_PASSWORD = 'test-password';
@@ -219,6 +357,7 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   const secondId = (await newComputer.json()).sessionId;
   assert.notEqual(passwordId, secondId);
   const passwordHeaders = { Origin: ORIGIN, Authorization: `Bearer ${passwordId}` };
+  const userCallsBeforePasswordReads = userCalls;
   const bankViaPassword = await worker.fetch(new Request(`${BASE}/bank`, { headers: passwordHeaders }), env);
   assert.equal(bankViaPassword.status, 200);
   assert.deepEqual(await bankViaPassword.json(), bank);
@@ -228,6 +367,13 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   assert.equal(savedViaPassword.status, 200);
   const pictureViaPassword = await worker.fetch(new Request(`${BASE}/bank/images/chem-2022-mc-01.jpg`, { headers: passwordHeaders }), env);
   assert.equal(pictureViaPassword.status, 200);
+  const passwordBookManifest = await worker.fetch(new Request(`${BASE}/books/chem/manifest`, { headers: passwordHeaders }), env);
+  assert.equal(passwordBookManifest.status, 200);
+  assert.equal((await passwordBookManifest.json()).version, bookVersion);
+  assert.equal((await worker.fetch(new Request(pageUrl, { headers: passwordHeaders }), env)).status, 200);
+  assert.equal((await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: passwordHeaders }), env)).status, 200);
+  assert.equal((await worker.fetch(new Request(paperPageUrl, { headers: passwordHeaders }), env)).status, 200);
+  assert.equal(userCalls, userCallsBeforePasswordReads, 'verified owner sessions avoid repeated GitHub identity reads');
   const logout = await worker.fetch(new Request(`${BASE}/auth/logout`, { method: 'POST', headers: passwordHeaders }), env);
   assert.equal(logout.status, 200);
   assert.equal((await worker.fetch(new Request(`${BASE}/bank`, { headers: passwordHeaders }), env)).status, 401);

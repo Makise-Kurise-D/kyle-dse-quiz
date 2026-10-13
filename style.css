@@ -305,11 +305,60 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
 .library-choice small{font-size:13px;color:var(--gray);line-height:1.5}
 .library-choice-icon{font-size:28px;line-height:1}
 .library-choice>span:last-child{color:var(--gray);font-size:20px}
-.paper-years{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:11px}
-.paper-year{display:flex;flex-direction:column;gap:5px;padding:15px 17px;
-  border:1px solid var(--line);border-radius:12px;background:#f7f5ef;color:var(--ink);text-decoration:none}
-.paper-year:hover,.paper-year:focus-visible{border-color:var(--gold);background:#fff}
-.paper-year strong{font-size:18px}.paper-year span{font-size:12px;color:var(--gray)}
+.library-hub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;
+  min-height:clamp(440px,70vh,680px)}
+.library-hub-card{display:flex;flex-direction:column;min-width:0;padding:32px;border:1px solid var(--line);
+  border-radius:24px;box-shadow:var(--shadow);transition:transform .18s,box-shadow .18s,border-color .18s}
+.library-hub-books{background:linear-gradient(145deg,#fffdf6,#f7efd8);border-color:#e5d6a8}
+.library-hub-papers{background:linear-gradient(145deg,#f9fbff,#e8eef8);border-color:#cedaed}
+.library-hub-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-l)}
+.library-hub-card:focus-visible{outline:3px solid var(--blue);outline-offset:4px}
+.library-hub-icon{display:flex;align-items:center;justify-content:center;width:76px;height:76px;
+  background:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.9);border-radius:20px;font-size:40px;margin-bottom:24px}
+.library-hub-kicker{font-size:12px;font-weight:800;letter-spacing:2px;color:var(--gray)}
+.library-hub-card h2{font-size:32px;line-height:1.3;margin:8px 0 14px}
+.library-hub-description{font-size:15px;color:var(--ink2);line-height:1.8;max-width:32em}
+.library-hub-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;
+  padding:22px 0;margin:24px 0 18px;border-top:1px solid rgba(30,42,58,.12);border-bottom:1px solid rgba(30,42,58,.12)}
+.library-hub-stats b{display:block;font-size:30px;line-height:1.3;font-variant-numeric:tabular-nums}
+.library-hub-stats small{display:block;margin-top:6px;font-size:12px;color:var(--ink2)}
+.library-hub-tags{display:flex;flex-wrap:wrap;gap:8px}
+.library-hub-tags span{padding:5px 9px;border:1px solid rgba(30,42,58,.12);border-radius:8px;
+  background:rgba(255,255,255,.65);font-size:12px;color:var(--ink2)}
+.library-hub-note{margin:12px 0 25px;font-size:12px;color:var(--gray);line-height:1.7}
+.library-hub-action{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:auto;
+  padding-top:22px;border-top:1px solid rgba(30,42,58,.12);font-size:15px;font-weight:800}
+.library-hub-action>span{font-size:24px}
+.paper-years{display:grid;grid-template-columns:1fr;gap:14px}
+.paper-year{display:grid;grid-template-columns:90px minmax(130px,1fr) minmax(0,2fr) 22px;
+  align-items:center;gap:18px;padding:23px 22px;border:1px solid var(--line);border-radius:16px;
+  background:#fff;color:var(--ink);text-decoration:none;transition:border-color .15s,box-shadow .15s}
+.paper-year:hover{border-color:var(--gold);box-shadow:var(--shadow)}
+.paper-year:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+.paper-year-heading strong{display:block;font-size:28px;line-height:1.2;letter-spacing:.5px}
+.paper-year-heading small{display:block;margin-top:7px;font-size:12px;color:var(--gray)}
+.paper-year-score{display:flex;flex-wrap:wrap;align-items:baseline;gap:5px 8px;min-width:0}
+.paper-grade{display:inline-block;padding:3px 9px;border:1px solid currentColor;border-radius:7px;
+  font-size:12px;font-weight:800;line-height:1.5}
+.paper-score-value{display:block;width:100%;font-size:25px;line-height:1.4;font-variant-numeric:tabular-nums}
+.paper-score-value small{font-size:13px;font-weight:600;color:var(--gray)}
+.paper-score-percent{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink2)}
+.grade-red{color:#a72d35;background:#fff0f1}.grade-text-red{color:#a72d35}
+.grade-amber{color:#8b5a12;background:#fff5df}.grade-text-amber{color:#8b5a12}
+.grade-blue{color:#285c9d;background:#eef4ff}.grade-text-blue{color:#285c9d}
+.grade-green{color:#1e7047;background:#ebf8f0}.grade-text-green{color:#1e7047}
+.grade-gold{color:#805d07;background:#fff5ce}.grade-text-gold{color:#805d07}
+.grade-purple{color:#7345a1;background:#f5efff}.grade-text-purple{color:#7345a1}
+.grade-neutral{color:var(--gray);background:#f3f4f6}.grade-text-neutral{color:var(--ink)}
+.paper-grade-gaps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;min-width:0}
+.paper-gap{display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:10px;min-width:0}
+.paper-gap-up{background:var(--green-bg);color:var(--green)}
+.paper-gap-down{background:#fff2e8;color:#985323}
+.paper-gap b{font-size:13px;line-height:1.6}
+.paper-gap small{font-size:11.5px;line-height:1.6;color:var(--ink2)}
+.paper-year-arrow{font-size:23px;color:var(--gray)}
+.paper-year-foot{grid-column:2/4;font-size:11.5px;line-height:1.7;color:var(--gray)}
+.paper-score-empty,.paper-gap-empty{font-size:13px;color:var(--gray)}
 .library-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
 .book-reader{max-width:850px;margin:0 auto}
 .book-reader[hidden],.book-image[hidden],#bookOpen[hidden],#paperOpen[hidden]{display:none}
@@ -456,6 +505,16 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   .cycle-report-picker select{max-width:72%}
   .book-page-controls{justify-content:center}
   .library-choices{grid-template-columns:1fr}
+  .library-hub-grid{grid-template-columns:1fr;min-height:0;gap:18px}
+  .library-hub-card{padding:25px;min-height:420px;border-radius:20px}
+  .library-hub-icon{width:62px;height:62px;font-size:33px;margin-bottom:18px}
+  .library-hub-card h2{font-size:29px}
+  .library-hub-stats{margin-top:20px}
+  .library-hub-stats b{font-size:27px}
+  .paper-year{grid-template-columns:80px minmax(0,1fr) 22px;gap:16px;padding:19px 16px}
+  .paper-year-score{grid-column:2;grid-row:1}
+  .paper-year-arrow{grid-column:3;grid-row:1}
+  .paper-grade-gaps,.paper-year-foot{grid-column:1/-1}
   .rand-grid{grid-template-columns:1fr}
   .rp-head{position:static}
   .toast{bottom:82px}

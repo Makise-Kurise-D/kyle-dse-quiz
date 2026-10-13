@@ -172,16 +172,19 @@ test('library offers two entrances, then graded papers select subject and publis
     revokeObjectURL: url => revoked.push(url) };
 
   app.location.hash = '#/library'; app.events.hashchange();
+  await settle();
   const choices = app.node('#app').innerHTML;
   assert.match(choices, /href="#\/library\/books".*錯題集/s);
   assert.match(choices, /href="#\/library\/papers".*紅筆批改卷/s);
-  assert.equal((choices.match(/class="library-choice"/g) || []).length, 2);
-  assert.equal(calls.length, 0);
+  assert.equal((choices.match(/class="library-hub-card /g) || []).length, 2);
+  assert.equal(app.node('#libraryPaperCount').textContent, '3');
+  assert.equal(app.node('#libraryNewestYear').textContent, '2024');
+  assert.equal(calls.length, 1);
 
   app.location.hash = '#/library/papers'; app.events.hashchange();
   assert.match(app.node('#app').innerHTML, /href="#\/library\/papers\/chem"/);
   assert.match(app.node('#app').innerHTML, /href="#\/library\/papers\/bio"/);
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 1);
 
   app.location.hash = '#/library/papers/chem'; app.events.hashchange();
   await settle();
@@ -189,6 +192,7 @@ test('library offers two entrances, then graded papers select subject and publis
   assert.match(app.node('#paperYears').innerHTML, /href="#\/library\/papers\/chem\/2024"/);
   assert.match(app.node('#paperYears').innerHTML, /href="#\/library\/papers\/chem\/2022"/);
   assert.doesNotMatch(app.node('#paperYears').innerHTML, /2023/);
+  assert.equal(calls.length, 1, 'year selection reuses the recently loaded catalog');
 
   app.location.hash = '#/library/papers/chem/2024'; app.events.hashchange();
   await settle();
@@ -209,6 +213,36 @@ test('library offers two entrances, then graded papers select subject and publis
   assert.ok(calls.every(call => call.options.cache === 'no-store' &&
     call.options.headers.Authorization === 'Bearer valid-session'));
   assert.ok([...app.saved.values()].every(value => !value.includes('paper-page')));
+});
+
+test('paper year rows use integer marks at inclusive grade boundaries and distinguish missing scores', async () => {
+  const catalog = { subjects: { chem: ['2025', '2024', '2023', '2022'], bio: [] }, papers: { chem: {
+    '2025': { pages: 10, assessment: { earned: 31, total: 40, scope: '兩卷練習', components: [], boundaries: [
+      { level: '5', minimumPercent: 67 }, { level: '5*', minimumPercent: 77 }, { level: '5**', minimumPercent: 83 },
+    ] } },
+    '2024': { assessment: { earned: 65, total: 100, scope: '僅卷一', components: [], boundaries: [
+      { level: '3', minimumPercent: 50 }, { level: '4', minimumPercent: 65 }, { level: '5', minimumPercent: 75 },
+    ] } },
+    '2023': { assessment: { earned: 90, total: 100, scope: '<img onerror="alert(1)">', components: [], boundaries: [
+      { level: '5*', minimumPercent: 80 }, { level: '5**', minimumPercent: 85 },
+    ] } },
+    '2022': { pages: 12 },
+  }, bio: {} } };
+  const app = boot('', async () => ({ ok: true, json: async () => catalog }),
+    { dse_quiz_sync_session_v1: 'valid-session' });
+  app.location.hash = '#/library/papers/chem'; app.events.hashchange();
+  await settle();
+  const html = app.node('#paperYears').innerHTML;
+  assert.match(html, /5\* · 估算/);
+  assert.match(html, /升至 5\*\* 尚欠 3 分/);
+  assert.match(html, /再失 1 分跌至 5/);
+  assert.match(html, /保級餘量 0 分 · 77% 分界/);
+  assert.match(html, /升至 5 尚欠 10 分/);
+  assert.match(html, /再失 1 分跌至 3/);
+  assert.match(html, /僅卷一/);
+  assert.match(html, /已達最高參考等級/);
+  assert.match(html, /成績待補/);
+  assert.doesNotMatch(html, /<img onerror/);
 });
 
 test('graded-paper reader shares an in-flight next-page request with navigation', async () => {
