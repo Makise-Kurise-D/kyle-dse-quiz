@@ -293,6 +293,26 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
 .seg{border:0;background:transparent;padding:6px 15px;border-radius:8px;font-size:13px;
   font-weight:700;cursor:pointer;color:var(--gray);font-family:inherit}
 .seg.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.1)}
+.cycle-report-period{margin:5px 0 0;color:var(--gray);font-size:12.5px}
+.cycle-report-picker{display:flex;align-items:center;gap:8px;color:var(--gray);font-size:12.5px;font-weight:700}
+.cycle-report-picker select{max-width:240px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;
+  background:#fff;color:var(--ink);font:inherit}
+.cycle-report-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.cycle-report-stats>div{padding:12px 10px;background:#f7f5ef;border-radius:11px;min-width:0}
+.cycle-report-stats b{display:block;font-size:20px;line-height:1.3;color:var(--ink);font-variant-numeric:tabular-nums}
+.cycle-report-stats span{display:block;margin-top:2px;font-size:12px;color:var(--gray)}
+.cycle-report-progress{height:9px;margin:14px 0;background:#ece8df;border-radius:99px;overflow:hidden}
+.cycle-report-progress span{display:block;height:100%;background:var(--green);border-radius:inherit}
+.cycle-report-note{font-size:12.5px;line-height:1.7;color:var(--gray);margin:0 0 16px}
+.cycle-report-lists{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.cycle-report-lists h3{font-size:14px;margin:0 0 8px}
+.cycle-report-empty{font-size:12.5px;color:var(--gray);margin:0}
+.cycle-report-items{display:grid;gap:7px;max-height:250px;overflow:auto}
+.cycle-report-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;
+  border:1px solid var(--line);border-radius:9px;color:var(--ink);text-decoration:none}
+.cycle-report-item:hover{background:var(--blue-bg)}
+.cycle-report-item small{display:block;color:var(--gray);font-size:11.5px;margin-top:3px}
+@media(max-width:850px){.cycle-report-stats{grid-template-columns:repeat(3,minmax(0,1fr))}}
 
 /* 熱力圖（GitHub 式月份軸＋星期軸） */
 .heat-wrap{overflow-x:auto;padding-bottom:4px}
@@ -399,6 +419,10 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   .rq{padding:15px 14px}
   .opt{width:54px;height:46px;font-size:16px}
   .stat-cards{grid-template-columns:1fr;gap:10px}
+  .cycle-report-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cycle-report-lists{grid-template-columns:1fr}
+  .cycle-report-picker{width:100%;justify-content:space-between}
+  .cycle-report-picker select{max-width:72%}
   .rand-grid{grid-template-columns:1fr}
   .rp-head{position:static}
   .toast{bottom:82px}
