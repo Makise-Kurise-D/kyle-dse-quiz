@@ -59,7 +59,7 @@ test('library reads private page images on demand and releases each temporary UR
   app.context.URL = { createObjectURL: () => 'blob:synthetic-' + (++serial),
     revokeObjectURL: url => revoked.push(url) };
   assert.match(app.node('#app').innerHTML, /href="#\/library".*閱讀錯題集/s);
-  app.location.hash = '#/library'; app.events.hashchange();
+  app.location.hash = '#/library/books'; app.events.hashchange();
   await settle();
   assert.equal(app.node('#bookImage').src, 'blob:synthetic-1');
   assert.equal(app.node('#bookReader').hidden, false);
@@ -89,14 +89,14 @@ test('library reads private page images on demand and releases each temporary UR
 test('library stays behind the private-bank login and explains inaccessible page images', async () => {
   const calls = [];
   const locked = boot('', async url => { calls.push(url); throw new Error('unexpected fetch'); }, {}, true, true);
-  locked.location.hash = '#/library'; locked.events.hashchange();
+  locked.location.hash = '#/library/books'; locked.events.hashchange();
   assert.equal(calls.length, 0);
   assert.match(locked.node('#app').innerHTML, /登入並自動同步/);
 
   const failed = boot('', async () => ({ ok: false, status: 404,
     json: async () => ({ error: 'book_not_accessible' }) }),
   { dse_quiz_sync_session_v1: 'valid-session' });
-  failed.location.hash = '#/library'; failed.events.hashchange();
+  failed.location.hash = '#/library/books'; failed.events.hashchange();
   await settle();
   assert.match(failed.node('#bookStatus').textContent, /私人資料倉庫/);
   assert.equal(failed.node('#bookImage').hidden, true);
@@ -113,7 +113,7 @@ test('reloading a revised book discards its previous browser image and requests 
     return { ok: true, blob: async () => new Blob(['page-image'], { type: 'image/jpeg' }) };
   }, { dse_quiz_sync_session_v1: 'valid-session' });
   app.context.URL = { createObjectURL: () => 'blob:page-' + (++serial), revokeObjectURL: url => revoked.push(url) };
-  app.location.hash = '#/library'; app.events.hashchange();
+  app.location.hash = '#/library/books'; app.events.hashchange();
   await settle();
   assert.equal(app.node('#bookImage').src, 'blob:page-1');
   version = 'b'.repeat(16);
@@ -122,6 +122,100 @@ test('reloading a revised book discards its previous browser image and requests 
   assert.deepEqual(revoked, ['blob:page-1']);
   assert.equal(app.node('#bookImage').src, 'blob:page-2');
   assert.equal(urls.at(-1), 'https://sync.example.workers.dev/books/chem/pages/bbbbbbbbbbbbbbbb/1');
+});
+
+test('library offers two entrances, then graded papers select subject and published year', async () => {
+  const calls = [], revoked = [];
+  const app = boot('', async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/catalog')) return { ok: true, json: async () => ({ subjects: {
+      chem: ['2024', '2022'], bio: ['2023'],
+    } }) };
+    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
+      version: 'c'.repeat(16), pages: 2, format: 'jpeg', source_sha256: 'c'.repeat(64),
+    }) };
+    return { ok: true, blob: async () => new Blob(['paper-page'], { type: 'image/jpeg' }) };
+  }, { dse_quiz_sync_session_v1: 'valid-session' });
+  let serial = 0;
+  app.context.URL = { createObjectURL: () => 'blob:paper-' + (++serial),
+    revokeObjectURL: url => revoked.push(url) };
+
+  app.location.hash = '#/library'; app.events.hashchange();
+  const choices = app.node('#app').innerHTML;
+  assert.match(choices, /href="#\/library\/books".*錯題集/s);
+  assert.match(choices, /href="#\/library\/papers".*紅筆批改卷/s);
+  assert.equal((choices.match(/class="library-choice"/g) || []).length, 2);
+  assert.equal(calls.length, 0);
+
+  app.location.hash = '#/library/papers'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /href="#\/library\/papers\/chem"/);
+  assert.match(app.node('#app').innerHTML, /href="#\/library\/papers\/bio"/);
+  assert.equal(calls.length, 0);
+
+  app.location.hash = '#/library/papers/chem'; app.events.hashchange();
+  await settle();
+  assert.equal(calls[0].url, 'https://sync.example.workers.dev/papers/catalog');
+  assert.match(app.node('#paperYears').innerHTML, /href="#\/library\/papers\/chem\/2024"/);
+  assert.match(app.node('#paperYears').innerHTML, /href="#\/library\/papers\/chem\/2022"/);
+  assert.doesNotMatch(app.node('#paperYears').innerHTML, /2023/);
+
+  app.location.hash = '#/library/papers/chem/2024'; app.events.hashchange();
+  await settle();
+  assert.deepEqual(calls.slice(1).map(call => call.url), [
+    'https://sync.example.workers.dev/papers/chem/2024/manifest',
+    'https://sync.example.workers.dev/papers/chem/2024/pages/cccccccccccccccc/1',
+  ]);
+  assert.equal(app.node('#paperImage').src, 'blob:paper-1');
+  assert.equal(app.node('#paperReader').hidden, false);
+  assert.equal(app.node('#paperOpen').href, 'blob:paper-1');
+  app.node('#paperNext').listeners.click();
+  await settle();
+  assert.equal(app.node('#paperImage').src, 'blob:paper-2');
+  assert.equal(calls.at(-1).url, 'https://sync.example.workers.dev/papers/chem/2024/pages/cccccccccccccccc/2');
+  assert.deepEqual(revoked, ['blob:paper-1']);
+  app.location.hash = '#/library/papers/bio'; app.events.hashchange();
+  assert.deepEqual(revoked, ['blob:paper-1', 'blob:paper-2']);
+  assert.ok(calls.every(call => call.options.cache === 'no-store' &&
+    call.options.headers.Authorization === 'Bearer valid-session'));
+  assert.ok([...app.saved.values()].every(value => !value.includes('paper-page')));
+});
+
+test('graded-paper reload switches image version and empty subjects give a clear result', async () => {
+  const urls = [], revoked = [];
+  let version = 'd'.repeat(16), serial = 0;
+  const app = boot('', async url => {
+    urls.push(url);
+    if (url.endsWith('/catalog')) return { ok: true, json: async () => ({ subjects: { chem: ['2022'], bio: [] } }) };
+    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
+      version, pages: 1, format: 'jpeg', source_sha256: version.repeat(4),
+    }) };
+    return { ok: true, blob: async () => new Blob(['page'], { type: 'image/jpeg' }) };
+  }, { dse_quiz_sync_session_v1: 'valid-session' });
+  app.context.URL = { createObjectURL: () => 'blob:graded-' + (++serial),
+    revokeObjectURL: url => revoked.push(url) };
+  app.location.hash = '#/library/papers/bio'; app.events.hashchange();
+  await settle();
+  assert.match(app.node('#paperYearsStatus').textContent, /尚無已發布/);
+  assert.equal(app.node('#paperYears').innerHTML, '');
+  app.location.hash = '#/library/papers/chem/2022'; app.events.hashchange();
+  await settle();
+  assert.equal(app.node('#paperImage').src, 'blob:graded-1');
+  version = 'e'.repeat(16);
+  app.node('#paperReload').listeners.click();
+  await settle();
+  assert.deepEqual(revoked, ['blob:graded-1']);
+  assert.equal(app.node('#paperImage').src, 'blob:graded-2');
+  assert.equal(urls.at(-1), 'https://sync.example.workers.dev/papers/chem/2022/pages/eeeeeeeeeeeeeeee/1');
+});
+
+test('unpublished graded papers show an explanation and no image', async () => {
+  const app = boot('', async () => ({ ok: false, status: 404,
+    json: async () => ({ error: 'paper_not_accessible' }) }),
+  { dse_quiz_sync_session_v1: 'valid-session' });
+  app.location.hash = '#/library/papers/bio/2022'; app.events.hashchange();
+  await settle();
+  assert.match(app.node('#paperStatus').textContent, /暫未發布/);
+  assert.equal(app.node('#paperImage').hidden, true);
 });
 
 test('fortnight report counts latest full answers, first-time solves and regressions by unique question', () => {
