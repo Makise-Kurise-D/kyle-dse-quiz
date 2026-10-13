@@ -6,7 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'book-pages-20261013';
+const SERVICE_VERSION = 'paper-pages-20261013';
 const refreshes = new Map();
 
 function json(data, status = 200, headers = {}) {
@@ -179,6 +179,37 @@ async function githubBookManifest(subject, token) {
       !Number.isInteger(manifest.pages) || manifest.pages < 1 || manifest.pages > 9999 ||
       manifest.format !== 'jpeg') throw new Error('invalid_book_manifest');
   return { version: manifest.version, pages: manifest.pages, format: 'jpeg', source_sha256: sha };
+}
+
+async function githubPaperCatalog(token) {
+  const file = await github(`/repos/${REPO}/contents/papers/catalog.json`, token);
+  if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_paper_catalog');
+  const catalog = JSON.parse(decodeUtf8(file.content));
+  const subjects = catalog?.subjects;
+  if (!subjects || typeof subjects !== 'object' || Array.isArray(subjects) ||
+      Object.keys(subjects).some(subject => !['chem', 'bio'].includes(subject)) ||
+      !['chem', 'bio'].every(subject => Array.isArray(subjects[subject]) &&
+        subjects[subject].every(year => typeof year === 'string' && /^20\d{2}$/.test(year)) &&
+        new Set(subjects[subject]).size === subjects[subject].length)) {
+    throw new Error('invalid_paper_catalog');
+  }
+  return { subjects: { chem: subjects.chem, bio: subjects.bio } };
+}
+
+async function githubPaperManifest(subject, year, token) {
+  const file = await github(`/repos/${REPO}/contents/papers/${subject}/${year}/manifest.json`, token);
+  if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_paper_manifest');
+  const manifest = JSON.parse(decodeUtf8(file.content));
+  const sha = manifest.source_sha256;
+  if (typeof sha !== 'string' || !/^[0-9a-f]{64}$/.test(sha) ||
+      manifest.version !== sha.slice(0, 16) ||
+      !Number.isInteger(manifest.pages) || manifest.pages < 1 || manifest.pages > 9999 ||
+      manifest.format !== 'jpeg' || !Number.isInteger(manifest.dpi) || manifest.dpi < 72 || manifest.dpi > 600 ||
+      !Number.isInteger(manifest.quality) || manifest.quality < 1 || manifest.quality > 100) {
+    throw new Error('invalid_paper_manifest');
+  }
+  return { version: manifest.version, pages: manifest.pages, format: 'jpeg',
+    source_sha256: sha, dpi: manifest.dpi, quality: manifest.quality };
 }
 
 async function passwordVersion(env) {
@@ -452,6 +483,47 @@ const worker = {
       } catch (error) {
         const status = error.status === 404 ? 404 : error.status === 503 ? 503 : 502;
         return json({ error: status === 404 ? 'book_not_accessible' : 'book_unavailable' }, status, cors(request));
+      }
+    }
+    if (url.pathname === '/papers' || url.pathname.startsWith('/papers/')) {
+      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
+      const catalog = url.pathname === '/papers/catalog';
+      const manifest = url.pathname.match(/^\/papers\/(chem|bio)\/(20\d{2})\/manifest$/);
+      const page = url.pathname.match(/^\/papers\/(chem|bio)\/(20\d{2})\/pages\/([0-9a-f]{16})\/([1-9]\d{0,3})$/);
+      if (!catalog && !manifest && !page) return json({ error: 'not_found' }, 404, cors(request));
+      const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
+      if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
+      if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
+      try {
+        const auth = await tokenFor(request, env);
+        if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
+        const user = await github('/user', auth.token);
+        if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return json({ error: 'owner_only' }, 403, cors(request));
+        const available = await githubPaperCatalog(auth.token);
+        if (catalog) return json(available, 200, cors(request));
+        const subject = (manifest || page)[1], year = (manifest || page)[2];
+        if (!available.subjects[subject].includes(year)) return json({ error: 'paper_not_accessible' }, 404, cors(request));
+        const current = await githubPaperManifest(subject, year, auth.token);
+        if (manifest) return json(current, 200, cors(request));
+        const version = page[3], number = Number(page[4]);
+        if (version !== current.version || number > current.pages) {
+          return json({ error: 'paper_not_accessible' }, 404, cors(request));
+        }
+        const filename = `page-${String(number).padStart(4, '0')}.jpg`;
+        const file = await github(`/repos/${REPO}/contents/papers/${subject}/${year}/${version}/${filename}`, auth.token);
+        if (file.encoding !== 'base64' || typeof file.content !== 'string' || file.content.length > 1_400_000) {
+          throw new Error('invalid_paper_page');
+        }
+        const binary = atob(file.content.replace(/\n/g, ''));
+        if (binary.length > 1_000_000 || binary.charCodeAt(0) !== 255 || binary.charCodeAt(1) !== 216) {
+          throw new Error('invalid_paper_page');
+        }
+        return new Response(Uint8Array.from(binary, char => char.charCodeAt(0)), {
+          headers: cors(request, { 'content-type': 'image/jpeg', 'x-content-type-options': 'nosniff' }),
+        });
+      } catch (error) {
+        const status = error.status === 404 ? 404 : error.status === 503 ? 503 : 502;
+        return json({ error: status === 404 ? 'paper_not_accessible' : 'paper_unavailable' }, status, cors(request));
       }
     }
     if (url.pathname === '/sync' && ['GET', 'PUT', 'DELETE'].includes(request.method)) {
