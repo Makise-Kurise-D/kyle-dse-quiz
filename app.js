@@ -23,6 +23,7 @@
   var passwordLoginBusy = false;
   var syncTimer = null, syncBusy = false, syncAgain = false, syncRevision = 0;
   var syncMessage = '';
+  var bookSubject = 'chem', bookUrl = null, bookController = null, bookRequest = 0;
   var startupHash = location.hash;
   // 所有網頁日期及雙週週期均以北京時間（UTC+8）為準；儲存的時間戳仍使用 UTC。
   var DAY_MS = 24 * 3600 * 1000;
@@ -157,6 +158,8 @@
       else if (detail === 'service_unavailable') message = '同步服務暫時無法使用，請稍後重試';
       else if (detail === 'owner_connection_required') message = '資料儲存需要重新連接，請開啟儲存設定';
       else if (detail === 'too_many_attempts') message = '密碼嘗試次數過多，請於 15 分鐘後再試';
+      else if (detail === 'book_not_accessible') message = '私人錯題集未能讀取，請檢查工作倉庫授權與 PDF 是否存在';
+      else if (detail === 'book_unavailable') message = '錯題集 PDF 暫時無法讀取，請稍後重試';
       throw Object.assign(new Error(message + ' [HTTP ' + r.status + ']'), { status: r.status, code: detail });
     });
   }
@@ -227,6 +230,7 @@
     if (el) { el.textContent = message; el.hidden = false; }
   }
   function forgetBank() {
+    releaseBook();
     imageUrls.forEach(function (url) { URL.revokeObjectURL(url); });
     imageUrls.clear();
     if (PRIVATE_BANK) { DATA = emptyBank(); bankLoaded = false; }
@@ -554,6 +558,7 @@
     var h = location.hash.replace(/^#/, '').split('?')[0] || '/';
     var parts = h.split('/').filter(Boolean);
     var view = parts[0] || 'home';
+    if (view !== 'library') releaseBook();
     $all('.rail-item,.tab-item').forEach(function (a) {
       a.classList.toggle('active', a.dataset.route === view);
     });
@@ -561,6 +566,7 @@
     if (PRIVATE_BANK && !bankLoaded && view !== 'records') return renderBankGate();
     if (view === 'home') return renderHome();
     if (view === 'practice') return renderPractice(parts[1] || 'chem');
+    if (view === 'library') return renderLibrary();
     if (view === 'random') return renderRandomPicker();
     if (view === 'session') {
       renderSession(parts[1], decodeURIComponent(parts[2] || ''));
@@ -626,6 +632,7 @@
 
         '<div class="tile-grid">' +
           tile('#/practice/chem', '✏️', '開始練習', '按課題失分由高到低排，逐個擊破', 'tile-blue') +
+          tile('#/library', '📖', '閱讀錯題集', '在網站直接翻閱化學和生物錯題集', 'tile-gold') +
           tile('#/records', '📈', '做題記錄', '刷題熱力圖＋分數走勢', 'tile-gold') +
           tile('#/random', '🎲', '隨機十題', '化學／生物隨機抽 10 題速測', 'tile-green') +
         '</div>' +
@@ -649,6 +656,77 @@
         '</div>' +
       '</section>';
     startCycleTimer();
+  }
+
+  /* ---------------- 私人錯題集閱讀器 ---------------- */
+  function releaseBook() {
+    bookRequest++;
+    if (bookController) { bookController.abort(); bookController = null; }
+    if (bookUrl) { URL.revokeObjectURL(bookUrl); bookUrl = null; }
+  }
+  function loadBook() {
+    var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++bookRequest;
+    var status = $('#bookStatus'), frame = $('#bookFrame'), open = $('#bookOpen');
+    if (!session || !SYNC_API) {
+      status.textContent = '請先登入網站，然後再閱讀私人錯題集。';
+      return;
+    }
+    var controller = new AbortController();
+    bookController = controller;
+    var timeout = setTimeout(function () { controller.abort(); }, 120000);
+    status.textContent = '正在載入' + (bookSubject === 'chem' ? '化學' : '生物') + '錯題集，檔案約 25–30 MB…';
+    fetch(SYNC_API + '/books/' + bookSubject, {
+      method: 'GET', headers: { Authorization: 'Bearer ' + session },
+      cache: 'no-store', signal: controller.signal,
+    }).then(function (response) {
+      return response.ok ? response.blob() : readSyncResponse(response);
+    }).then(function (blob) {
+      if (requestId !== bookRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
+      bookUrl = URL.createObjectURL(blob);
+      frame.src = bookUrl;
+      frame.hidden = false;
+      open.href = bookUrl;
+      open.hidden = false;
+      status.textContent = '已載入，可在下方直接翻頁閱讀。';
+    }).catch(function (err) {
+      if (requestId !== bookRequest) return;
+      expireConnection(err, session);
+      if (err.name === 'AbortError') status.textContent = '載入逾時，請按「重新載入」再試。';
+      else if (err.code === 'not_found') status.textContent = '閱讀服務尚未更新，請稍後再試。';
+      else status.textContent = '讀取失敗：' + err.message;
+    }).finally(function () {
+      clearTimeout(timeout);
+      if (requestId === bookRequest) bookController = null;
+    });
+  }
+  function renderLibrary() {
+    releaseBook();
+    $('#app').innerHTML = '<section class="page library-page">' +
+      '<header class="page-head"><div><h1 class="page-title">📖 錯題集在線閱讀</h1>' +
+      '<p class="page-sub">直接在網站翻閱完整錯題集；閱讀時才從私人倉庫載入。</p></div>' +
+      '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
+      '<div class="panel"><div class="library-toolbar"><div class="filter-seg" id="bookSubjects">' +
+        SUBJECT_ORDER.map(function (code) {
+          return '<button class="seg' + (bookSubject === code ? ' on' : '') + '" data-subject="' + code +
+            '" type="button" aria-pressed="' + (bookSubject === code) + '">' +
+            SUBJECT_META[code].icon + ' ' + SUBJECT_META[code].name + '</button>';
+        }).join('') + '</div><div class="record-tools"><button class="btn btn-ghost" id="bookReload" type="button">重新載入</button>' +
+        '<a class="btn btn-ghost" id="bookOpen" target="_blank" rel="noopener" hidden>在新分頁開啟</a></div></div>' +
+      '<p class="review-note" id="bookStatus" role="status" aria-live="polite"></p>' +
+      '<iframe class="book-frame" id="bookFrame" title="錯題集 PDF 閱讀器" hidden></iframe>' +
+      '<p class="library-note">PDF 僅在本次閱讀時載入；退出登入或離開此頁後會釋放暫存檔案。</p></div></section>';
+    $('#bookFrame').hidden = true;
+    $('#bookFrame').src = 'about:blank';
+    $('#bookOpen').hidden = true;
+    $('#bookOpen').href = '';
+    $('#bookSubjects').addEventListener('click', function (event) {
+      var button = event.target.closest('[data-subject]');
+      if (!button || button.dataset.subject === bookSubject) return;
+      bookSubject = button.dataset.subject;
+      renderLibrary();
+    });
+    $('#bookReload').addEventListener('click', renderLibrary);
+    loadBook();
   }
 
   /* ---------------- 雙週倒計時 ---------------- */
