@@ -27,6 +27,7 @@
   var bookUrl = null, bookController = null, bookRequest = 0;
   var paperSubject = '', paperYear = '', paperPage = 1, paperManifest = null;
   var paperUrl = null, paperController = null, paperRequest = 0;
+  var readerPages = new Map();
   var startupHash = location.hash;
   // 所有網頁日期及雙週週期均以北京時間（UTC+8）為準；儲存的時間戳仍使用 UTC。
   var DAY_MS = 24 * 3600 * 1000;
@@ -669,6 +670,48 @@
   }
 
   /* ---------------- 私人錯題集與批改卷閱讀器 ---------------- */
+  function clearReaderPages() {
+    readerPages.forEach(function (entry) { if (entry.controller) entry.controller.abort(); });
+    readerPages.clear();
+  }
+  function readerPage(path, session) {
+    var key = session + ':' + path;
+    var entry = readerPages.get(key);
+    if (entry) {
+      readerPages.delete(key);
+      readerPages.set(key, entry);
+      return entry.promise;
+    }
+    var controller = new AbortController();
+    entry = { controller: controller, promise: null };
+    var timeout = setTimeout(function () { controller.abort(); }, 30000);
+    entry.promise = fetch(SYNC_API + path, {
+      method: 'GET', headers: { Authorization: 'Bearer ' + session },
+      cache: 'no-store', signal: controller.signal,
+    }).then(function (response) {
+      return response.ok ? response.blob() : readSyncResponse(response);
+    }).then(function (blob) {
+      entry.controller = null;
+      if (localStorage.getItem(LS_SYNC_SESSION) !== session && readerPages.get(key) === entry) {
+        readerPages.delete(key);
+      }
+      return blob;
+    }).catch(function (err) {
+      if (readerPages.get(key) === entry) readerPages.delete(key);
+      throw err;
+    }).finally(function () { clearTimeout(timeout); });
+    readerPages.set(key, entry);
+    while (readerPages.size > 6) {
+      var oldest = readerPages.keys().next().value;
+      var evicted = readerPages.get(oldest);
+      readerPages.delete(oldest);
+      if (evicted.controller) evicted.controller.abort();
+    }
+    return entry.promise;
+  }
+  function prefetchReaderPage(path, session) {
+    if (localStorage.getItem(LS_SYNC_SESSION) === session) readerPage(path, session).catch(function () {});
+  }
   function renderLibrary(parts) {
     releaseBook();
     releasePaper();
@@ -697,6 +740,7 @@
     if (bookController) { bookController.abort(); bookController = null; }
     if (bookUrl) { URL.revokeObjectURL(bookUrl); bookUrl = null; }
     bookManifest = null;
+    clearReaderPages();
   }
   function bookError(err, session, requestId, status) {
     if (requestId !== bookRequest) return;
@@ -731,16 +775,8 @@
     open.href = '';
     updateBookControls();
     if (!session) { status.textContent = '請先登入網站，再閱讀錯題集。'; return; }
-    var controller = new AbortController();
-    bookController = controller;
-    var timeout = setTimeout(function () { controller.abort(); }, 30000);
     status.textContent = '正在載入' + (subject === 'chem' ? '化學' : '生物') + '錯題集第 ' + page + ' 頁…';
-    fetch(SYNC_API + '/books/' + subject + '/pages/' + manifest.version + '/' + page, {
-      method: 'GET', headers: { Authorization: 'Bearer ' + session },
-      cache: 'no-store', signal: controller.signal,
-    }).then(function (response) {
-      return response.ok ? response.blob() : readSyncResponse(response);
-    }).then(function (blob) {
+    readerPage('/books/' + subject + '/pages/' + manifest.version + '/' + page, session).then(function (blob) {
       if (requestId !== bookRequest || localStorage.getItem(LS_SYNC_SESSION) !== session || bookSubject !== subject) return;
       bookUrl = URL.createObjectURL(blob);
       image.alt = (subject === 'chem' ? '化學' : '生物') + '錯題集第 ' + page + ' 頁';
@@ -752,11 +788,13 @@
       open.href = bookUrl;
       open.hidden = false;
       status.textContent = '第 ' + page + ' / ' + manifest.pages + ' 頁，可用上方按鈕翻頁。';
+      if (page < manifest.pages) setTimeout(function () {
+        if (requestId === bookRequest && bookManifest === manifest && bookSubject === subject) {
+          prefetchReaderPage('/books/' + subject + '/pages/' + manifest.version + '/' + (page + 1), session);
+        }
+      }, 200);
     }).catch(function (err) {
       bookError(err, session, requestId, status);
-    }).finally(function () {
-      clearTimeout(timeout);
-      if (requestId === bookRequest) bookController = null;
     });
   }
   function goBookPage(page) {
@@ -813,7 +851,7 @@
         '<span id="bookPageCount">—</span> 頁</label>' +
         '<button class="btn btn-ghost" id="bookNext" type="button">下一頁 →</button></div>' +
         '<img class="book-image" id="bookImage" alt="錯題集頁面" hidden></div>' +
-      '<p class="library-note">每次只載入目前頁面；更新錯題集後按「重新載入」可取得新版。</p></div></section>';
+      '<p class="library-note">閱讀時預先載入下一頁，已看過的頁面暫存在此分頁；更新錯題集後按「重新載入」可取得新版。</p></div></section>';
     $('#bookReader').hidden = true;
     $('#bookImage').hidden = true;
     $('#bookImage').src = '';
@@ -838,6 +876,7 @@
     if (paperController) { paperController.abort(); paperController = null; }
     if (paperUrl) { URL.revokeObjectURL(paperUrl); paperUrl = null; }
     paperManifest = null;
+    clearReaderPages();
   }
   function paperError(err, session, requestId, status, pageRequest) {
     if (requestId !== paperRequest) return;
@@ -921,16 +960,8 @@
     open.href = '';
     updatePaperControls();
     if (!session) { status.textContent = '請先登入網站，再閱讀批改卷。'; return; }
-    var controller = new AbortController();
-    paperController = controller;
-    var timeout = setTimeout(function () { controller.abort(); }, 30000);
     status.textContent = '正在載入' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷第 ' + page + ' 頁…';
-    fetch(SYNC_API + '/papers/' + subject + '/' + year + '/pages/' + manifest.version + '/' + page, {
-      method: 'GET', headers: { Authorization: 'Bearer ' + session },
-      cache: 'no-store', signal: controller.signal,
-    }).then(function (response) {
-      return response.ok ? response.blob() : readSyncResponse(response);
-    }).then(function (blob) {
+    readerPage('/papers/' + subject + '/' + year + '/pages/' + manifest.version + '/' + page, session).then(function (blob) {
       if (requestId !== paperRequest || localStorage.getItem(LS_SYNC_SESSION) !== session ||
         paperSubject !== subject || paperYear !== year) return;
       paperUrl = URL.createObjectURL(blob);
@@ -943,11 +974,13 @@
       open.href = paperUrl;
       open.hidden = false;
       status.textContent = '第 ' + page + ' / ' + manifest.pages + ' 頁，可用上方按鈕翻頁。';
+      if (page < manifest.pages) setTimeout(function () {
+        if (requestId === paperRequest && paperManifest === manifest && paperSubject === subject && paperYear === year) {
+          prefetchReaderPage('/papers/' + subject + '/' + year + '/pages/' + manifest.version + '/' + (page + 1), session);
+        }
+      }, 200);
     }).catch(function (err) {
       paperError(err, session, requestId, status, true);
-    }).finally(function () {
-      clearTimeout(timeout);
-      if (requestId === paperRequest) paperController = null;
     });
   }
   function goPaperPage(page) {
@@ -999,7 +1032,7 @@
         '<span id="paperPageCount">—</span> 頁</label>' +
         '<button class="btn btn-ghost" id="paperNext" type="button">下一頁 →</button></div>' +
         '<img class="book-image" id="paperImage" alt="紅筆批改卷頁面" hidden></div>' +
-      '<p class="library-note">每次只載入目前頁面；更新批改卷後按「重新載入」可取得新版。</p></div></section>';
+      '<p class="library-note">閱讀時預先載入下一頁，已看過的頁面暫存在此分頁；更新批改卷後按「重新載入」可取得新版。</p></div></section>';
     $('#paperReader').hidden = true;
     $('#paperImage').hidden = true;
     $('#paperImage').src = '';
