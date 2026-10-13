@@ -23,7 +23,10 @@
   var passwordLoginBusy = false;
   var syncTimer = null, syncBusy = false, syncAgain = false, syncRevision = 0;
   var syncMessage = '';
-  var bookSubject = 'chem', bookUrl = null, bookController = null, bookRequest = 0;
+  var bookSubject = 'chem', bookPage = 1, bookManifest = null;
+  var bookUrl = null, bookController = null, bookRequest = 0;
+  var paperSubject = '', paperYear = '', paperPage = 1, paperManifest = null;
+  var paperUrl = null, paperController = null, paperRequest = 0;
   var startupHash = location.hash;
   // 所有網頁日期及雙週週期均以北京時間（UTC+8）為準；儲存的時間戳仍使用 UTC。
   var DAY_MS = 24 * 3600 * 1000;
@@ -158,8 +161,10 @@
       else if (detail === 'service_unavailable') message = '同步服務暫時無法使用，請稍後重試';
       else if (detail === 'owner_connection_required') message = '資料儲存需要重新連接，請開啟儲存設定';
       else if (detail === 'too_many_attempts') message = '密碼嘗試次數過多，請於 15 分鐘後再試';
-      else if (detail === 'book_not_accessible') message = '私人錯題集未能讀取，請檢查工作倉庫授權與 PDF 是否存在';
-      else if (detail === 'book_unavailable') message = '錯題集 PDF 暫時無法讀取，請稍後重試';
+      else if (detail === 'book_not_accessible') message = '錯題集頁面圖片未能讀取，請檢查私人資料倉庫或重新生成圖片';
+      else if (detail === 'book_unavailable') message = '錯題集頁面暫時無法讀取，請稍後重試';
+      else if (detail === 'paper_not_accessible') message = '批改卷未能讀取，請檢查是否已發布此年份的批改版本';
+      else if (detail === 'paper_unavailable') message = '批改卷暫時無法讀取，請稍後重試';
       throw Object.assign(new Error(message + ' [HTTP ' + r.status + ']'), { status: r.status, code: detail });
     });
   }
@@ -191,16 +196,18 @@
     var before = state(backupData());
     var sentRevision = syncRevision;
     return syncRequest('GET').then(function (remote) {
+      if (localStorage.getItem(LS_SYNC_SESSION) !== session) return null;
       if (remote.data) mergeData(remote.data);
       var backup = backupData();
       sentRevision = syncRevision;
       if (remote.data && state(remote.data) === state(backup)) {
         return { savedAt: new Date().toISOString(), kind: before === state(backup) ? 'checked' : 'downloaded' };
       }
-      return syncRequest('PUT', { data: backup }).then(function (result) {
+      return syncRequest('PUT', { data: backup, sha: remote.sha || null }).then(function (result) {
         result.kind = 'uploaded'; return result;
       });
     }).then(function (result) {
+      if (!result || localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       var checkedAt = new Date().toISOString();
       localStorage.setItem(LS_SYNCED_AT, checkedAt);
       var label = result.kind === 'uploaded' ? '已上傳至雲端' : result.kind === 'downloaded' ? '已更新本機記錄' : '雲端已核對，無新記錄';
@@ -211,6 +218,7 @@
       if (location.hash.indexOf('/records') >= 0) renderRecords();
       return true;
     }).catch(function (err) {
+      if (localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       expireConnection(err, session);
       setSyncStatus('同步失敗：' + err.message);
       return false;
@@ -264,7 +272,9 @@
           localStorage.setItem(LS_AUTH_MODE, 'password');
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
           forgetBank(); bankMessage = '';
-          return previous.catch(function () {}).then(function () { return loadBank(); }).then(function () { return syncNow(true); });
+          return previous.catch(function () {}).then(function () {
+            return Promise.all([loadBank(), syncNow(true)]);
+          });
         }).catch(function (err) {
           setSyncStatus('登入失敗：' + err.message);
         }).finally(function () { passwordLoginBusy = false; button.disabled = false; });
@@ -340,7 +350,7 @@
         .then(function (data) {
           if (PASSWORD_AUTH) localStorage.setItem(LS_AUTH_MODE, 'password');
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
-          return loadBank().then(function () { return syncNow(true); });
+          return Promise.all([loadBank(), syncNow(true)]);
         }).catch(function (err) { setSyncStatus('连接失败：' + err.message); });
     } else if (hash.indexOf('sync=cancelled') >= 0) {
       setSyncStatus('已取消 GitHub 授权');
@@ -354,7 +364,7 @@
             localStorage.setItem(LS_AUTH_MODE, 'password');
             localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
           }).catch(function (err) { expireConnection(err, existing); setSyncStatus('連接更新失敗：' + err.message); })
-          .then(function () { return loadBank(); }).then(function () { return syncNow(true); });
+          .then(function () { return Promise.all([loadBank(), syncNow(true)]); });
       } else {
         loadBank();
         setTimeout(function () { syncNow(true); }, 600);
@@ -368,7 +378,7 @@
   window.addEventListener('storage', function (event) {
     if (event.key === LS_SYNC_SESSION) {
       forgetBank(); route();
-      if (event.newValue) loadBank().then(function () { syncNow(true); });
+      if (event.newValue) Promise.all([loadBank(), syncNow(true)]);
     }
   });
   // Also fetch updates made on another computer while this tab remains open.
@@ -558,7 +568,7 @@
     var h = location.hash.replace(/^#/, '').split('?')[0] || '/';
     var parts = h.split('/').filter(Boolean);
     var view = parts[0] || 'home';
-    if (view !== 'library') releaseBook();
+    if (view !== 'library') { releaseBook(); releasePaper(); }
     $all('.rail-item,.tab-item').forEach(function (a) {
       a.classList.toggle('active', a.dataset.route === view);
     });
@@ -566,7 +576,7 @@
     if (PRIVATE_BANK && !bankLoaded && view !== 'records') return renderBankGate();
     if (view === 'home') return renderHome();
     if (view === 'practice') return renderPractice(parts[1] || 'chem');
-    if (view === 'library') return renderLibrary();
+    if (view === 'library') return renderLibrary(parts.slice(1));
     if (view === 'random') return renderRandomPicker();
     if (view === 'session') {
       renderSession(parts[1], decodeURIComponent(parts[2] || ''));
@@ -632,7 +642,7 @@
 
         '<div class="tile-grid">' +
           tile('#/practice/chem', '✏️', '開始練習', '按課題失分由高到低排，逐個擊破', 'tile-blue') +
-          tile('#/library', '📖', '閱讀錯題集', '在網站直接翻閱化學和生物錯題集', 'tile-gold') +
+          tile('#/library', '📖', '閱讀錯題集', '翻閱錯題集及歷屆試題的紅筆批改版本', 'tile-gold') +
           tile('#/records', '📈', '做題記錄', '刷題熱力圖＋分數走勢', 'tile-gold') +
           tile('#/random', '🎲', '隨機十題', '化學／生物隨機抽 10 題速測', 'tile-green') +
         '</div>' +
@@ -658,53 +668,137 @@
     startCycleTimer();
   }
 
-  /* ---------------- 私人錯題集閱讀器 ---------------- */
+  /* ---------------- 私人錯題集與批改卷閱讀器 ---------------- */
+  function renderLibrary(parts) {
+    releaseBook();
+    releasePaper();
+    parts = parts || [];
+    if (parts[0] === 'books' && parts.length === 1) return renderBookLibrary();
+    if (parts[0] === 'papers') {
+      if (parts.length === 1) return renderPaperSubjects();
+      if (SUBJECT_ORDER.indexOf(parts[1]) >= 0) {
+        if (parts.length === 2) return renderPaperYears(parts[1]);
+        if (parts.length === 3 && /^\d{4}$/.test(parts[2])) return renderPaperReader(parts[1], parts[2]);
+      }
+    }
+    $('#app').innerHTML = '<section class="page library-page">' +
+      '<header class="page-head"><div><h1 class="page-title">📖 在線閱讀</h1>' +
+      '<p class="page-sub">選擇要閱讀的資料；內容從私人倉庫按頁載入。</p></div>' +
+      '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
+      '<div class="library-choices">' +
+        '<a class="library-choice" href="#/library/books"><span class="library-choice-icon">📚</span>' +
+          '<span><strong>錯題集</strong><small>按科目翻閱化學與生物錯題集</small></span><span aria-hidden="true">→</span></a>' +
+        '<a class="library-choice" href="#/library/papers"><span class="library-choice-icon">🖊️</span>' +
+          '<span><strong>紅筆批改卷</strong><small>按科目和年份閱讀歷屆試題批改版本</small></span><span aria-hidden="true">→</span></a>' +
+      '</div></section>';
+  }
   function releaseBook() {
     bookRequest++;
     if (bookController) { bookController.abort(); bookController = null; }
     if (bookUrl) { URL.revokeObjectURL(bookUrl); bookUrl = null; }
+    bookManifest = null;
+  }
+  function bookError(err, session, requestId, status) {
+    if (requestId !== bookRequest) return;
+    expireConnection(err, session);
+    if (err.name === 'AbortError') status.textContent = '載入逾時，請按「重新載入」再試。';
+    else if (err.code === 'not_found') status.textContent = '閱讀服務尚未更新，請稍後再試。';
+    else if (err.code === 'book_not_accessible' && bookManifest) {
+      status.textContent = '錯題集可能已更新，請按「重新載入」取得新版頁面。';
+    }
+    else status.textContent = '讀取失敗：' + err.message;
+  }
+  function updateBookControls() {
+    if (!bookManifest) return;
+    $('#bookPageSelect').innerHTML = Array.from({ length: bookManifest.pages }, function (_, index) {
+      return '<option value="' + (index + 1) + '">' + (index + 1) + '</option>';
+    }).join('');
+    $('#bookPageSelect').value = String(bookPage);
+    $('#bookPageCount').textContent = String(bookManifest.pages);
+    $('#bookPrev').disabled = bookPage <= 1;
+    $('#bookNext').disabled = bookPage >= bookManifest.pages;
+  }
+  function loadBookPage() {
+    if (!bookManifest) return;
+    if (bookController) { bookController.abort(); bookController = null; }
+    if (bookUrl) { URL.revokeObjectURL(bookUrl); bookUrl = null; }
+    var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++bookRequest;
+    var subject = bookSubject, manifest = bookManifest, page = bookPage;
+    var status = $('#bookStatus'), image = $('#bookImage'), open = $('#bookOpen');
+    image.hidden = true;
+    image.src = '';
+    open.hidden = true;
+    open.href = '';
+    updateBookControls();
+    if (!session) { status.textContent = '請先登入網站，再閱讀錯題集。'; return; }
+    var controller = new AbortController();
+    bookController = controller;
+    var timeout = setTimeout(function () { controller.abort(); }, 30000);
+    status.textContent = '正在載入' + (subject === 'chem' ? '化學' : '生物') + '錯題集第 ' + page + ' 頁…';
+    fetch(SYNC_API + '/books/' + subject + '/pages/' + manifest.version + '/' + page, {
+      method: 'GET', headers: { Authorization: 'Bearer ' + session },
+      cache: 'no-store', signal: controller.signal,
+    }).then(function (response) {
+      return response.ok ? response.blob() : readSyncResponse(response);
+    }).then(function (blob) {
+      if (requestId !== bookRequest || localStorage.getItem(LS_SYNC_SESSION) !== session || bookSubject !== subject) return;
+      bookUrl = URL.createObjectURL(blob);
+      image.alt = (subject === 'chem' ? '化學' : '生物') + '錯題集第 ' + page + ' 頁';
+      image.onerror = function () {
+        if (requestId === bookRequest) status.textContent = '頁面圖片未能顯示，請按「重新載入」再試。';
+      };
+      image.src = bookUrl;
+      image.hidden = false;
+      open.href = bookUrl;
+      open.hidden = false;
+      status.textContent = '第 ' + page + ' / ' + manifest.pages + ' 頁，可用上方按鈕翻頁。';
+    }).catch(function (err) {
+      bookError(err, session, requestId, status);
+    }).finally(function () {
+      clearTimeout(timeout);
+      if (requestId === bookRequest) bookController = null;
+    });
+  }
+  function goBookPage(page) {
+    if (!bookManifest || !Number.isInteger(page) || page < 1 || page > bookManifest.pages || page === bookPage) return;
+    bookPage = page;
+    loadBookPage();
   }
   function loadBook() {
     var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++bookRequest;
-    var status = $('#bookStatus'), frame = $('#bookFrame'), open = $('#bookOpen');
+    var status = $('#bookStatus');
     if (!session || !SYNC_API) {
       status.textContent = '請先登入網站，然後再閱讀私人錯題集。';
       return;
     }
     var controller = new AbortController();
     bookController = controller;
-    var timeout = setTimeout(function () { controller.abort(); }, 120000);
-    status.textContent = '正在載入' + (bookSubject === 'chem' ? '化學' : '生物') + '錯題集，檔案約 25–30 MB…';
-    fetch(SYNC_API + '/books/' + bookSubject, {
+    var timeout = setTimeout(function () { controller.abort(); }, 15000);
+    status.textContent = '正在查看' + (bookSubject === 'chem' ? '化學' : '生物') + '錯題集頁數…';
+    fetch(SYNC_API + '/books/' + bookSubject + '/manifest', {
       method: 'GET', headers: { Authorization: 'Bearer ' + session },
       cache: 'no-store', signal: controller.signal,
-    }).then(function (response) {
-      return response.ok ? response.blob() : readSyncResponse(response);
-    }).then(function (blob) {
+    }).then(readSyncResponse).then(function (manifest) {
       if (requestId !== bookRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
-      bookUrl = URL.createObjectURL(blob);
-      frame.src = bookUrl;
-      frame.hidden = false;
-      open.href = bookUrl;
-      open.hidden = false;
-      status.textContent = '已載入，可在下方直接翻頁閱讀。';
+      if (!manifest || !/^[a-f0-9]{16}$/.test(manifest.version) ||
+        !Number.isInteger(manifest.pages) || manifest.pages < 1) throw new Error('錯題集頁面清單無效');
+      bookManifest = manifest;
+      if (bookPage > manifest.pages) bookPage = 1;
+      $('#bookReader').hidden = false;
+      loadBookPage();
     }).catch(function (err) {
-      if (requestId !== bookRequest) return;
-      expireConnection(err, session);
-      if (err.name === 'AbortError') status.textContent = '載入逾時，請按「重新載入」再試。';
-      else if (err.code === 'not_found') status.textContent = '閱讀服務尚未更新，請稍後再試。';
-      else status.textContent = '讀取失敗：' + err.message;
+      bookError(err, session, requestId, status);
     }).finally(function () {
       clearTimeout(timeout);
       if (requestId === bookRequest) bookController = null;
     });
   }
-  function renderLibrary() {
+  function renderBookLibrary() {
     releaseBook();
     $('#app').innerHTML = '<section class="page library-page">' +
       '<header class="page-head"><div><h1 class="page-title">📖 錯題集在線閱讀</h1>' +
       '<p class="page-sub">直接在網站翻閱完整錯題集；閱讀時才從私人倉庫載入。</p></div>' +
-      '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
+      '<a class="btn btn-ghost" href="#/library">← 返回閱讀入口</a></header>' +
       '<div class="panel"><div class="library-toolbar"><div class="filter-seg" id="bookSubjects">' +
         SUBJECT_ORDER.map(function (code) {
           return '<button class="seg' + (bookSubject === code ? ' on' : '') + '" data-subject="' + code +
@@ -713,20 +807,209 @@
         }).join('') + '</div><div class="record-tools"><button class="btn btn-ghost" id="bookReload" type="button">重新載入</button>' +
         '<a class="btn btn-ghost" id="bookOpen" target="_blank" rel="noopener" hidden>在新分頁開啟</a></div></div>' +
       '<p class="review-note" id="bookStatus" role="status" aria-live="polite"></p>' +
-      '<iframe class="book-frame" id="bookFrame" title="錯題集 PDF 閱讀器" hidden></iframe>' +
-      '<p class="library-note">PDF 僅在本次閱讀時載入；退出登入或離開此頁後會釋放暫存檔案。</p></div></section>';
-    $('#bookFrame').hidden = true;
-    $('#bookFrame').src = 'about:blank';
+      '<div class="book-reader" id="bookReader" hidden><div class="book-page-controls">' +
+        '<button class="btn btn-ghost" id="bookPrev" type="button">← 上一頁</button>' +
+        '<label>第 <select id="bookPageSelect" aria-label="選擇錯題集頁碼"></select> / ' +
+        '<span id="bookPageCount">—</span> 頁</label>' +
+        '<button class="btn btn-ghost" id="bookNext" type="button">下一頁 →</button></div>' +
+        '<img class="book-image" id="bookImage" alt="錯題集頁面" hidden></div>' +
+      '<p class="library-note">每次只載入目前頁面；更新錯題集後按「重新載入」可取得新版。</p></div></section>';
+    $('#bookReader').hidden = true;
+    $('#bookImage').hidden = true;
+    $('#bookImage').src = '';
     $('#bookOpen').hidden = true;
     $('#bookOpen').href = '';
     $('#bookSubjects').addEventListener('click', function (event) {
       var button = event.target.closest('[data-subject]');
       if (!button || button.dataset.subject === bookSubject) return;
       bookSubject = button.dataset.subject;
-      renderLibrary();
+      bookPage = 1;
+      renderBookLibrary();
     });
-    $('#bookReload').addEventListener('click', renderLibrary);
+    $('#bookReload').addEventListener('click', renderBookLibrary);
+    $('#bookPrev').addEventListener('click', function () { goBookPage(bookPage - 1); });
+    $('#bookNext').addEventListener('click', function () { goBookPage(bookPage + 1); });
+    $('#bookPageSelect').addEventListener('change', function (event) { goBookPage(Number(event.target.value)); });
     loadBook();
+  }
+
+  function releasePaper() {
+    paperRequest++;
+    if (paperController) { paperController.abort(); paperController = null; }
+    if (paperUrl) { URL.revokeObjectURL(paperUrl); paperUrl = null; }
+    paperManifest = null;
+  }
+  function paperError(err, session, requestId, status, pageRequest) {
+    if (requestId !== paperRequest) return;
+    expireConnection(err, session);
+    if (err.status === 401) return;
+    if (err.name === 'AbortError') status.textContent = '載入逾時，請稍後重試。';
+    else if (err.code === 'paper_not_accessible') status.textContent = pageRequest
+      ? '批改卷可能已更新，請按「重新載入」取得新版頁面。'
+      : '此年份的批改卷暫未發布，或私人資料倉庫內沒有對應圖片。';
+    else status.textContent = '讀取失敗：' + err.message;
+  }
+  function renderPaperSubjects() {
+    $('#app').innerHTML = '<section class="page library-page">' +
+      '<header class="page-head"><div><h1 class="page-title">🖊️ 紅筆批改卷</h1>' +
+      '<p class="page-sub">先選科目，再選年份；只會列出已發布的批改版本。</p></div>' +
+      '<a class="btn btn-ghost" href="#/library">← 返回閱讀入口</a></header>' +
+      '<div class="library-choices">' + SUBJECT_ORDER.map(function (code) {
+        return '<a class="library-choice" href="#/library/papers/' + code + '"><span class="library-choice-icon">' +
+          SUBJECT_META[code].icon + '</span><span><strong>' + SUBJECT_META[code].name +
+          '</strong><small>選擇批改卷年份</small></span><span aria-hidden="true">→</span></a>';
+      }).join('') + '</div></section>';
+  }
+  function renderPaperYears(subject) {
+    paperSubject = subject;
+    paperYear = '';
+    $('#app').innerHTML = '<section class="page library-page">' +
+      '<header class="page-head"><div><h1 class="page-title">' + SUBJECT_META[subject].icon + ' ' +
+        SUBJECT_META[subject].name + '紅筆批改卷</h1>' +
+      '<p class="page-sub">選擇已發布的年份。</p></div>' +
+      '<a class="btn btn-ghost" href="#/library/papers">← 返回科目</a></header>' +
+      '<div class="panel"><p class="review-note" id="paperYearsStatus" role="status" aria-live="polite">正在載入年份…</p>' +
+        '<div class="paper-years" id="paperYears"></div></div></section>';
+    var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++paperRequest;
+    var status = $('#paperYearsStatus');
+    if (!session || !SYNC_API) { status.textContent = '請先登入網站，再閱讀私人批改卷。'; return; }
+    var controller = new AbortController();
+    paperController = controller;
+    var timeout = setTimeout(function () { controller.abort(); }, 15000);
+    fetch(SYNC_API + '/papers/catalog', {
+      method: 'GET', headers: { Authorization: 'Bearer ' + session },
+      cache: 'no-store', signal: controller.signal,
+    }).then(readSyncResponse).then(function (catalog) {
+      if (requestId !== paperRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
+      if (!catalog || !catalog.subjects || !Array.isArray(catalog.subjects[subject])) {
+        throw new Error('批改卷年份清單無效');
+      }
+      var years = catalog.subjects[subject].filter(function (year) { return /^\d{4}$/.test(year); });
+      if (!years.length) { status.textContent = '此科目尚無已發布的批改卷。'; return; }
+      status.textContent = '已發布 ' + years.length + ' 個年份的批改卷。';
+      $('#paperYears').innerHTML = years.map(function (year) {
+        return '<a class="paper-year" href="#/library/papers/' + subject + '/' + year + '">' +
+          '<strong>' + year + ' 年</strong><span>閱讀批改卷 →</span></a>';
+      }).join('');
+    }).catch(function (err) {
+      paperError(err, session, requestId, status, false);
+    }).finally(function () {
+      clearTimeout(timeout);
+      if (requestId === paperRequest) paperController = null;
+    });
+  }
+  function updatePaperControls() {
+    if (!paperManifest) return;
+    $('#paperPageSelect').innerHTML = Array.from({ length: paperManifest.pages }, function (_, index) {
+      return '<option value="' + (index + 1) + '">' + (index + 1) + '</option>';
+    }).join('');
+    $('#paperPageSelect').value = String(paperPage);
+    $('#paperPageCount').textContent = String(paperManifest.pages);
+    $('#paperPrev').disabled = paperPage <= 1;
+    $('#paperNext').disabled = paperPage >= paperManifest.pages;
+  }
+  function loadPaperPage() {
+    if (!paperManifest) return;
+    if (paperController) { paperController.abort(); paperController = null; }
+    if (paperUrl) { URL.revokeObjectURL(paperUrl); paperUrl = null; }
+    var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++paperRequest;
+    var subject = paperSubject, year = paperYear, manifest = paperManifest, page = paperPage;
+    var status = $('#paperStatus'), image = $('#paperImage'), open = $('#paperOpen');
+    image.hidden = true;
+    image.src = '';
+    open.hidden = true;
+    open.href = '';
+    updatePaperControls();
+    if (!session) { status.textContent = '請先登入網站，再閱讀批改卷。'; return; }
+    var controller = new AbortController();
+    paperController = controller;
+    var timeout = setTimeout(function () { controller.abort(); }, 30000);
+    status.textContent = '正在載入' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷第 ' + page + ' 頁…';
+    fetch(SYNC_API + '/papers/' + subject + '/' + year + '/pages/' + manifest.version + '/' + page, {
+      method: 'GET', headers: { Authorization: 'Bearer ' + session },
+      cache: 'no-store', signal: controller.signal,
+    }).then(function (response) {
+      return response.ok ? response.blob() : readSyncResponse(response);
+    }).then(function (blob) {
+      if (requestId !== paperRequest || localStorage.getItem(LS_SYNC_SESSION) !== session ||
+        paperSubject !== subject || paperYear !== year) return;
+      paperUrl = URL.createObjectURL(blob);
+      image.alt = SUBJECT_META[subject].name + ' ' + year + ' 年紅筆批改卷第 ' + page + ' 頁';
+      image.onerror = function () {
+        if (requestId === paperRequest) status.textContent = '頁面圖片未能顯示，請按「重新載入」再試。';
+      };
+      image.src = paperUrl;
+      image.hidden = false;
+      open.href = paperUrl;
+      open.hidden = false;
+      status.textContent = '第 ' + page + ' / ' + manifest.pages + ' 頁，可用上方按鈕翻頁。';
+    }).catch(function (err) {
+      paperError(err, session, requestId, status, true);
+    }).finally(function () {
+      clearTimeout(timeout);
+      if (requestId === paperRequest) paperController = null;
+    });
+  }
+  function goPaperPage(page) {
+    if (!paperManifest || !Number.isInteger(page) || page < 1 || page > paperManifest.pages || page === paperPage) return;
+    paperPage = page;
+    loadPaperPage();
+  }
+  function loadPaper() {
+    var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++paperRequest;
+    var status = $('#paperStatus');
+    if (!session || !SYNC_API) { status.textContent = '請先登入網站，再閱讀私人批改卷。'; return; }
+    var controller = new AbortController();
+    paperController = controller;
+    var timeout = setTimeout(function () { controller.abort(); }, 15000);
+    status.textContent = '正在查看' + SUBJECT_META[paperSubject].name + ' ' + paperYear + ' 年批改卷頁數…';
+    fetch(SYNC_API + '/papers/' + paperSubject + '/' + paperYear + '/manifest', {
+      method: 'GET', headers: { Authorization: 'Bearer ' + session },
+      cache: 'no-store', signal: controller.signal,
+    }).then(readSyncResponse).then(function (manifest) {
+      if (requestId !== paperRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
+      if (!manifest || !/^[a-f0-9]{16}$/.test(manifest.version) ||
+        !Number.isInteger(manifest.pages) || manifest.pages < 1) throw new Error('批改卷頁面清單無效');
+      paperManifest = manifest;
+      if (paperPage > manifest.pages) paperPage = 1;
+      $('#paperReader').hidden = false;
+      loadPaperPage();
+    }).catch(function (err) {
+      paperError(err, session, requestId, status, false);
+    }).finally(function () {
+      clearTimeout(timeout);
+      if (requestId === paperRequest) paperController = null;
+    });
+  }
+  function renderPaperReader(subject, year) {
+    if (paperSubject !== subject || paperYear !== year) paperPage = 1;
+    paperSubject = subject;
+    paperYear = year;
+    $('#app').innerHTML = '<section class="page library-page">' +
+      '<header class="page-head"><div><h1 class="page-title">🖊️ ' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷</h1>' +
+      '<p class="page-sub">逐頁閱讀紅筆批改版本。</p></div>' +
+      '<a class="btn btn-ghost" href="#/library/papers/' + subject + '">← 返回年份</a></header>' +
+      '<div class="panel"><div class="library-toolbar"><div class="record-tools">' +
+        '<button class="btn btn-ghost" id="paperReload" type="button">重新載入</button>' +
+        '<a class="btn btn-ghost" id="paperOpen" target="_blank" rel="noopener" hidden>在新分頁開啟</a>' +
+      '</div></div><p class="review-note" id="paperStatus" role="status" aria-live="polite"></p>' +
+      '<div class="book-reader" id="paperReader" hidden><div class="book-page-controls">' +
+        '<button class="btn btn-ghost" id="paperPrev" type="button">← 上一頁</button>' +
+        '<label>第 <select id="paperPageSelect" aria-label="選擇批改卷頁碼"></select> / ' +
+        '<span id="paperPageCount">—</span> 頁</label>' +
+        '<button class="btn btn-ghost" id="paperNext" type="button">下一頁 →</button></div>' +
+        '<img class="book-image" id="paperImage" alt="紅筆批改卷頁面" hidden></div>' +
+      '<p class="library-note">每次只載入目前頁面；更新批改卷後按「重新載入」可取得新版。</p></div></section>';
+    $('#paperReader').hidden = true;
+    $('#paperImage').hidden = true;
+    $('#paperImage').src = '';
+    $('#paperOpen').hidden = true;
+    $('#paperOpen').href = '';
+    $('#paperReload').addEventListener('click', function () { releasePaper(); renderPaperReader(subject, year); });
+    $('#paperPrev').addEventListener('click', function () { goPaperPage(paperPage - 1); });
+    $('#paperNext').addEventListener('click', function () { goPaperPage(paperPage + 1); });
+    $('#paperPageSelect').addEventListener('change', function (event) { goPaperPage(Number(event.target.value)); });
+    loadPaper();
   }
 
   /* ---------------- 雙週倒計時 ---------------- */

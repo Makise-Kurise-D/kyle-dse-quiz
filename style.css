@@ -294,11 +294,34 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   font-weight:700;cursor:pointer;color:var(--gray);font-family:inherit}
 .seg.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.1)}
 
-/* 私人 PDF 閱讀器 */
+/* 私人錯題集與批改卷逐頁閱讀器 */
+.library-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.library-choice{display:flex;align-items:center;gap:14px;padding:23px 20px;min-width:0;
+  background:var(--card);border:1px solid var(--line);border-radius:16px;
+  box-shadow:var(--shadow);color:var(--ink);text-decoration:none}
+.library-choice:hover,.library-choice:focus-visible{border-color:var(--gold);transform:translateY(-2px)}
+.library-choice>span:nth-child(2){display:flex;flex:1;flex-direction:column;gap:5px;min-width:0}
+.library-choice strong{font-size:18px}
+.library-choice small{font-size:13px;color:var(--gray);line-height:1.5}
+.library-choice-icon{font-size:28px;line-height:1}
+.library-choice>span:last-child{color:var(--gray);font-size:20px}
+.paper-years{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:11px}
+.paper-year{display:flex;flex-direction:column;gap:5px;padding:15px 17px;
+  border:1px solid var(--line);border-radius:12px;background:#f7f5ef;color:var(--ink);text-decoration:none}
+.paper-year:hover,.paper-year:focus-visible{border-color:var(--gold);background:#fff}
+.paper-year strong{font-size:18px}.paper-year span{font-size:12px;color:var(--gray)}
 .library-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
-.book-frame{display:block;width:100%;height:min(78vh,900px);min-height:540px;border:1px solid var(--line);
-  border-radius:12px;background:#f2f1ed}
-.book-frame[hidden],#bookOpen[hidden]{display:none}
+.book-reader{max-width:850px;margin:0 auto}
+.book-reader[hidden],.book-image[hidden],#bookOpen[hidden],#paperOpen[hidden]{display:none}
+.book-page-controls{position:sticky;top:8px;z-index:3;display:flex;align-items:center;
+  justify-content:space-between;gap:12px;margin:0 0 14px;padding:8px;flex-wrap:wrap;
+  background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:12px}
+.book-page-controls label{font-size:14px;color:var(--ink2);font-weight:700}
+.book-page-controls select{padding:6px 8px;border:1px solid var(--line);border-radius:8px;
+  background:#fff;color:var(--ink);font:inherit}
+.book-page-controls .btn:disabled{opacity:.45;cursor:default}
+.book-image{display:block;width:100%;height:auto;border:1px solid var(--line);
+  border-radius:12px;background:#f2f1ed;box-shadow:var(--shadow)}
 .library-note{font-size:12px;color:var(--gray);margin:12px 0 0}
 @media(max-width:1100px) and (min-width:861px){.tile-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .cycle-report-period{margin:5px 0 0;color:var(--gray);font-size:12.5px}
@@ -431,7 +454,8 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   .cycle-report-lists{grid-template-columns:1fr}
   .cycle-report-picker{width:100%;justify-content:space-between}
   .cycle-report-picker select{max-width:72%}
-  .book-frame{height:72vh;min-height:430px}
+  .book-page-controls{justify-content:center}
+  .library-choices{grid-template-columns:1fr}
   .rand-grid{grid-template-columns:1fr}
   .rp-head{position:static}
   .toast{bottom:82px}
