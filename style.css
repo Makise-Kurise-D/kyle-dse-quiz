@@ -59,7 +59,7 @@ b{font-weight:700}
 .hero-cycle .cycle-note{color:#aebfd4;font-size:11.5px;opacity:.85}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-.tile-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin:22px 0 30px}
+.tile-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:22px 0 30px}
 .tile{display:flex;align-items:center;gap:15px;background:var(--card);border-radius:18px;
   padding:22px 20px;box-shadow:var(--shadow);border:1px solid var(--line);
   transition:transform .15s,box-shadow .15s;position:relative;overflow:hidden}
@@ -293,6 +293,14 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
 .seg{border:0;background:transparent;padding:6px 15px;border-radius:8px;font-size:13px;
   font-weight:700;cursor:pointer;color:var(--gray);font-family:inherit}
 .seg.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.1)}
+
+/* 私人 PDF 閱讀器 */
+.library-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.book-frame{display:block;width:100%;height:min(78vh,900px);min-height:540px;border:1px solid var(--line);
+  border-radius:12px;background:#f2f1ed}
+.book-frame[hidden],#bookOpen[hidden]{display:none}
+.library-note{font-size:12px;color:var(--gray);margin:12px 0 0}
+@media(max-width:1100px) and (min-width:861px){.tile-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .cycle-report-period{margin:5px 0 0;color:var(--gray);font-size:12.5px}
 .cycle-report-picker{display:flex;align-items:center;gap:8px;color:var(--gray);font-size:12.5px;font-weight:700}
 .cycle-report-picker select{max-width:240px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;
@@ -423,6 +431,7 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
   .cycle-report-lists{grid-template-columns:1fr}
   .cycle-report-picker{width:100%;justify-content:space-between}
   .cycle-report-picker select{max-width:72%}
+  .book-frame{height:72vh;min-height:430px}
   .rand-grid{grid-template-columns:1fr}
   .rp-head{position:static}
   .toast{bottom:82px}
