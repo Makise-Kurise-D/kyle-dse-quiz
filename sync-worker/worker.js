@@ -3,15 +3,10 @@ const SITE_HOME = `${SITE_ORIGIN}/kyle-dse-quiz/`;
 const REPO = 'Makise-Kurisu-D/kyle-dse-quiz-data';
 const DATA_PATH = 'records.json';
 const BANK_PATH = 'question-bank/bank.json';
-const BOOK_REPO = 'Makise-Kurisu-D/kyle-codex-workspace';
-const BOOK_PATHS = {
-  chem: 'workspace/DSE/错题集/Kyle_化学错题集.pdf',
-  bio: 'workspace/DSE/错题集/Kyle_生物错题集.pdf',
-};
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'pdf-reader-20261013';
+const SERVICE_VERSION = 'book-pages-20261013';
 const refreshes = new Map();
 
 function json(data, status = 200, headers = {}) {
@@ -174,28 +169,16 @@ async function github(path, token, init = {}) {
   return body;
 }
 
-async function githubPdf(path, token) {
-  const encodedPath = path.split('/').map(encodeURIComponent).join('/');
-  const headers = {
-    accept: 'application/vnd.github.raw+json',
-    'user-agent': 'kyle-dse-quiz-sync',
-    authorization: `Bearer ${token}`,
-    'x-github-api-version': '2022-11-28',
-  };
-  let response = await fetch(`https://api.github.com/repos/${BOOK_REPO}/contents/${encodedPath}?ref=main`, { headers });
-  if (!response.ok) throw Object.assign(new Error('book_unavailable'), { status: response.status });
-  // GitHub can return metadata for larger files instead of the requested raw body.
-  if ((response.headers.get('content-type') || '').includes('json')) {
-    const file = await response.json();
-    if (!file.download_url || file.size > 60_000_000) throw new Error('book_unavailable');
-    const raw = new URL(file.download_url);
-    if (raw.protocol !== 'https:' || raw.hostname !== 'raw.githubusercontent.com') throw new Error('book_unavailable');
-    response = await fetch(raw, { headers: { authorization: `Bearer ${token}`, 'user-agent': 'kyle-dse-quiz-sync' } });
-    if (!response.ok) throw Object.assign(new Error('book_unavailable'), { status: response.status });
-  }
-  const length = Number(response.headers.get('content-length') || 0);
-  if (length > 60_000_000 || !response.body) throw new Error('book_unavailable');
-  return response.body;
+async function githubBookManifest(subject, token) {
+  const file = await github(`/repos/${REPO}/contents/books/${subject}/manifest.json`, token);
+  if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_book_manifest');
+  const manifest = JSON.parse(decodeUtf8(file.content));
+  const sha = manifest.source_sha256;
+  if (typeof sha !== 'string' || !/^[0-9a-f]{64}$/.test(sha) ||
+      manifest.version !== sha.slice(0, 16) ||
+      !Number.isInteger(manifest.pages) || manifest.pages < 1 || manifest.pages > 9999 ||
+      manifest.format !== 'jpeg') throw new Error('invalid_book_manifest');
+  return { version: manifest.version, pages: manifest.pages, format: 'jpeg', source_sha256: sha };
 }
 
 async function passwordVersion(env) {
@@ -434,8 +417,9 @@ const worker = {
     }
     if (url.pathname === '/books' || url.pathname.startsWith('/books/')) {
       if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
-      const book = url.pathname.match(/^\/books\/(chem|bio)$/);
-      if (!book) return json({ error: 'not_found' }, 404, cors(request));
+      const manifest = url.pathname.match(/^\/books\/(chem|bio)\/manifest$/);
+      const page = url.pathname.match(/^\/books\/(chem|bio)\/pages\/([0-9a-f]{16})\/([1-9]\d{0,3})$/);
+      if (!manifest && !page) return json({ error: 'not_found' }, 404, cors(request));
       const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
       if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
       if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
@@ -444,11 +428,27 @@ const worker = {
         if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
         const user = await github('/user', auth.token);
         if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return json({ error: 'owner_only' }, 403, cors(request));
-        const body = await githubPdf(BOOK_PATHS[book[1]], auth.token);
-        return new Response(body, { headers: cors(request, {
-          'content-type': 'application/pdf', 'content-disposition': 'inline',
-          'x-content-type-options': 'nosniff',
-        }) });
+        if (manifest) return json(await githubBookManifest(manifest[1], auth.token), 200, cors(request));
+        if (page) {
+          const [, subject, version, numberText] = page;
+          const current = await githubBookManifest(subject, auth.token);
+          const number = Number(numberText);
+          if (version !== current.version || number > current.pages) {
+            return json({ error: 'book_not_accessible' }, 404, cors(request));
+          }
+          const filename = `page-${String(number).padStart(4, '0')}.jpg`;
+          const file = await github(`/repos/${REPO}/contents/books/${subject}/${version}/${filename}`, auth.token);
+          if (file.encoding !== 'base64' || typeof file.content !== 'string' || file.content.length > 1_400_000) {
+            throw new Error('invalid_book_page');
+          }
+          const binary = atob(file.content.replace(/\n/g, ''));
+          if (binary.length > 1_000_000 || binary.charCodeAt(0) !== 255 || binary.charCodeAt(1) !== 216) {
+            throw new Error('invalid_book_page');
+          }
+          return new Response(Uint8Array.from(binary, char => char.charCodeAt(0)), {
+            headers: cors(request, { 'content-type': 'image/jpeg', 'x-content-type-options': 'nosniff' }),
+          });
+        }
       } catch (error) {
         const status = error.status === 404 ? 404 : error.status === 503 ? 503 : 502;
         return json({ error: status === 404 ? 'book_not_accessible' : 'book_unavailable' }, status, cors(request));
