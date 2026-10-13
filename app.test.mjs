@@ -86,6 +86,37 @@ test('library reads private page images on demand and releases each temporary UR
   assert.ok([...app.saved.values()].every(value => !value.includes('synthetic-jpeg')));
 });
 
+test('book reader preloads the next page, reuses viewed pages, and forgets them on exit', async () => {
+  const calls = [];
+  const app = boot('', async url => {
+    calls.push(url);
+    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
+      version: 'a'.repeat(16), pages: 3, format: 'jpeg', source_sha256: 'a'.repeat(64),
+    }) };
+    return { ok: true, blob: async () => new Blob(['private-page'], { type: 'image/jpeg' }) };
+  }, { dse_quiz_sync_session_v1: 'valid-session' });
+  let serial = 0;
+  app.context.URL = { createObjectURL: () => 'blob:book-cache-' + (++serial), revokeObjectURL() {} };
+  app.location.hash = '#/library/books'; app.events.hashchange();
+  await settle();
+  assert.equal(calls.length, 2);
+  app.timers.find(timer => timer.delay === 200).fn();
+  await settle();
+  assert.equal(calls.at(-1), 'https://sync.example.workers.dev/books/chem/pages/aaaaaaaaaaaaaaaa/2');
+  assert.equal(calls.length, 3);
+  app.node('#bookNext').listeners.click();
+  await settle();
+  assert.equal(calls.length, 3, 'prefetched page is shown without another network call');
+  app.node('#bookPrev').listeners.click();
+  await settle();
+  assert.equal(calls.length, 3, 'a previously viewed page stays in memory');
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.location.hash = '#/library/books'; app.events.hashchange();
+  await settle();
+  assert.equal(calls.length, 5, 'leaving the reader discards private pages and reloads the manifest');
+  assert.ok([...app.saved.values()].every(value => !value.includes('private-page')));
+});
+
 test('library stays behind the private-bank login and explains inaccessible page images', async () => {
   const calls = [];
   const locked = boot('', async url => { calls.push(url); throw new Error('unexpected fetch'); }, {}, true, true);
@@ -178,6 +209,34 @@ test('library offers two entrances, then graded papers select subject and publis
   assert.ok(calls.every(call => call.options.cache === 'no-store' &&
     call.options.headers.Authorization === 'Bearer valid-session'));
   assert.ok([...app.saved.values()].every(value => !value.includes('paper-page')));
+});
+
+test('graded-paper reader shares an in-flight next-page request with navigation', async () => {
+  const calls = [];
+  let finishNextPage;
+  const app = boot('', async url => {
+    calls.push(url);
+    if (url.endsWith('/catalog')) return { ok: true, json: async () => ({
+      subjects: { chem: ['2022'], bio: [] },
+    }) };
+    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
+      version: 'b'.repeat(16), pages: 2, format: 'jpeg', source_sha256: 'b'.repeat(64),
+    }) };
+    if (url.endsWith('/2')) return new Promise(resolve => { finishNextPage = resolve; });
+    return { ok: true, blob: async () => new Blob(['first-page'], { type: 'image/jpeg' }) };
+  }, { dse_quiz_sync_session_v1: 'valid-session' });
+  let serial = 0;
+  app.context.URL = { createObjectURL: () => 'blob:paper-cache-' + (++serial), revokeObjectURL() {} };
+  app.location.hash = '#/library/papers/chem/2022'; app.events.hashchange();
+  await settle();
+  app.timers.find(timer => timer.delay === 200).fn();
+  assert.equal(typeof finishNextPage, 'function');
+  app.node('#paperNext').listeners.click();
+  assert.equal(calls.filter(url => url.endsWith('/2')).length, 1, 'navigation reuses the prefetch');
+  finishNextPage({ ok: true, blob: async () => new Blob(['second-page'], { type: 'image/jpeg' }) });
+  await settle();
+  assert.equal(app.node('#paperImage').src, 'blob:paper-cache-2');
+  assert.equal(app.node('#paperImage').hidden, false);
 });
 
 test('graded-paper reload switches image version and empty subjects give a clear result', async () => {
