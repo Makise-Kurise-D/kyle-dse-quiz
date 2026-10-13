@@ -1201,6 +1201,100 @@
   }
 
   /* ---------------- 記錄頁 ---------------- */
+  var selectedReportCycle = null;
+  function reportPeriodStarts(now) {
+    var current = cycleStartOf(now), periods = new Set([current]);
+    allSessions().forEach(function (s) {
+      if (s && Number.isFinite(s.t) && s.t <= now) periods.add(cycleStartOf(s.t));
+    });
+    return Array.from(periods).sort(function (a, b) { return b - a; });
+  }
+  function buildCycleReport(start, now) {
+    var bankItems = new Map();
+    SUBJECT_ORDER.forEach(function (code) {
+      itemsOf(code).forEach(function (it) { bankItems.set(it.id, { code: code, it: it }); });
+    });
+    var state = new Map(), seenSessions = new Set(), end = Math.min(start + CYCLE_MS, now + 1);
+    allSessions().filter(function (s) { return s && Number.isFinite(s.t) && s.t < end && s.results; })
+      .sort(function (a, b) { return a.t - b.t; }).forEach(function (s) {
+        var sessionKey = [s.t, s.subj, s.topic, JSON.stringify(s.results)].join('|');
+        if (seenSessions.has(sessionKey)) return;
+        seenSessions.add(sessionKey);
+        Object.keys(s.results).forEach(function (id) {
+          var item = bankItems.get(id), result = s.results[id];
+          if (!item || !result) return;
+          var row = state.get(id) || { code: item.code, it: item.it, everCorrect: false,
+            firstCorrectHere: false, latest: null };
+          var ratio = result.tot ? result.marks / result.tot : (result.ok ? 1 : 0);
+          var correct = fullRight({ ok: result.ok, ratio: ratio });
+          if (s.t >= start) {
+            if (correct && !row.everCorrect) row.firstCorrectHere = true;
+            row.latest = { correct: correct, hadCorrectBefore: row.everCorrect,
+              ratio: ratio, date: s.t };
+          }
+          if (correct) row.everCorrect = true;
+          state.set(id, row);
+        });
+      });
+    var attempted = [], correct = [], newSolved = [], regressed = [];
+    state.forEach(function (row) {
+      if (!row.latest) return;
+      attempted.push(row);
+      if (row.latest.correct) {
+        correct.push(row);
+        if (row.firstCorrectHere) newSolved.push(row);
+      } else if (row.latest.hadCorrectBefore) regressed.push(row);
+    });
+    [newSolved, regressed].forEach(function (rows) {
+      rows.sort(function (a, b) { return b.latest.date - a.latest.date; });
+    });
+    return { total: bankItems.size, attempted: attempted.length, correct: correct.length,
+      newSolved: newSolved, regressed: regressed };
+  }
+  function reportRowsHtml(rows, empty, regressed) {
+    if (!rows.length) return '<p class="cycle-report-empty">' + empty + '</p>';
+    return '<div class="cycle-report-items">' + rows.map(function (row) {
+      var it = row.it;
+      return '<a class="cycle-report-item" href="#/session/' + row.code + '/' + encodeURIComponent(it.topic) + '">' +
+        '<span><b>' + SUBJECT_META[row.code].icon + ' ' + esc(it.year + ' ' + it.qref) + '</b>' +
+        '<small>' + esc(topicName(row.code, it.topic)) + ' · ' + fmtDate(row.latest.date) +
+        (regressed ? ' · 最近得分率 ' + Math.round(row.latest.ratio * 100) + '%' : ' · 最新作答滿分') +
+        '</small></span><span aria-hidden="true">→</span></a>';
+    }).join('') + '</div>';
+  }
+  function cycleReportHtml() {
+    if (PRIVATE_BANK && !bankLoaded) return '<div class="panel cycle-report"><h2 class="panel-h">📋 雙週復習報告</h2>' +
+      '<p class="review-note">登入並載入私人題庫後，即可查看本期與往期報告。</p></div>';
+    var now = Date.now(), current = cycleStartOf(now), periods = reportPeriodStarts(now);
+    if (selectedReportCycle == null || periods.indexOf(selectedReportCycle) < 0) selectedReportCycle = current;
+    var start = selectedReportCycle, report = buildCycleReport(start, now);
+    var pct = report.total ? Math.round(report.correct / report.total * 1000) / 10 : 0;
+    var pctText = String(pct).replace(/\.0$/, '');
+    var label = start === current ? '本期' : '該期';
+    return '<div class="panel cycle-report"><div class="panel-h-row"><div><h2 class="panel-h">📋 雙週復習報告</h2>' +
+      '<p class="cycle-report-period">' + (start === current ? '進行中' : '已結束') + ' · ' +
+      fmtDate(start) + '—' + fmtDate(start + CYCLE_MS - 1) + '（北京時間）</p></div>' +
+      '<label class="cycle-report-picker">選擇週期 <select id="cycleReportPeriod">' + periods.map(function (period) {
+        return '<option value="' + period + '"' + (period === start ? ' selected' : '') + '>' +
+          fmtDate(period) + '—' + fmtDate(period + CYCLE_MS - 1) +
+          (period === current ? '（本期）' : '') + '</option>';
+      }).join('') + '</select></label></div>' +
+      '<div class="cycle-report-stats">' +
+        '<div><b>' + report.attempted + '</b><span>' + label + '做過的不同題目</span></div>' +
+        '<div><b>' + report.correct + ' / ' + report.total + '</b><span>' + label + '最後一次答對</span></div>' +
+        '<div><b>' + pctText + '%</b><span>佔目前題庫</span></div>' +
+        '<div><b>' + report.newSolved.length + '</b><span>首次解決</span></div>' +
+        '<div><b>' + report.regressed.length + '</b><span>答對後再錯</span></div></div>' +
+      '<div class="cycle-report-progress" role="img" aria-label="答對題目佔目前題庫 ' + pctText + '%">' +
+        '<span style="width:' + Math.min(100, pct) + '%"></span></div>' +
+      '<p class="cycle-report-note">以每題在這個週期最後一次已儲存的批改為準；大題滿分才算答對。' +
+        '「首次解決」指歷來第一次答對且最新仍答對；「答對後再錯」指最新答錯、之前曾答對。' +
+        '刷新後可在此切換回看；往期比例按目前題庫計算。</p>' +
+      '<div class="cycle-report-lists"><div><h3>✨ ' + label + '首次解決（' + report.newSolved.length + '）</h3>' +
+        reportRowsHtml(report.newSolved, '還沒有首次解決的題目。', false) + '</div>' +
+        '<div><h3>↩️ ' + label + '答對後再錯（' + report.regressed.length + '）</h3>' +
+        reportRowsHtml(report.regressed, '目前沒有答對後再錯的題目。', true) + '</div></div></div>';
+  }
   function renderRecords() {
     var connected = !!localStorage.getItem(LS_SYNC_SESSION);
     var passwordTools = connected
@@ -1252,6 +1346,8 @@
           statCard('🔁', '上次仍錯', wrongRows.length + ' 題', wrongRows.length ? 'c-red' : 'c-green') +
         '</div>' +
 
+        cycleReportHtml() +
+
         '<div class="panel"><h2 class="panel-h">刷題活躍圖（近 6 個月，按答題數）</h2><div id="heat"></div>' +
         '<div class="heat-legend">少 <span class="lv lv0"></span><span class="lv lv1"></span>' +
         '<span class="lv lv2"></span><span class="lv lv3"></span><span class="lv lv4"></span> 多（佔題庫比例）</div></div>' +
@@ -1274,6 +1370,11 @@
     renderHeat();
     renderReviewDue();
     renderWrongList('ALL');
+    var reportPicker = $('#cycleReportPeriod');
+    if (!PRIVATE_BANK || bankLoaded) reportPicker.addEventListener('change', function (event) {
+      selectedReportCycle = Number(event.target.value);
+      renderRecords();
+    });
     $('#wrongFilter').addEventListener('click', function (e) {
       var b = e.target.closest('.seg'); if (!b) return;
       $all('.seg', this).forEach(function (x) { x.classList.toggle('on', x === b); });
