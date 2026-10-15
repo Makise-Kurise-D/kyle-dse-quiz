@@ -267,7 +267,7 @@
       var password = input.value;
       if (!password) { setSyncStatus('請輸入密碼'); return; }
       input.value = ''; button.disabled = true; passwordLoginBusy = true;
-      setSyncStatus('正在登入並同步…');
+      setSyncStatus('正在驗證密碼…');
       var headers = { 'Content-Type': 'application/json' };
       var existing = localStorage.getItem(LS_SYNC_SESSION);
       var authenticated = false;
@@ -279,7 +279,7 @@
           localStorage.setItem(LS_AUTH_MODE, 'password');
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
           authenticated = true;
-          setSyncStatus('已登入，正在讀取資料…');
+          setSyncStatus('密碼已驗證，正在載入題庫…');
           forgetBank(); bankMessage = '';
           return previous.catch(function () {}).then(function () {
             return Promise.all([loadBank(), syncNow(true)]);
@@ -294,7 +294,7 @@
     if (bankPromise) return bankPromise;
     var session = localStorage.getItem(LS_SYNC_SESSION);
     if (!session || !SYNC_API) return Promise.resolve(false);
-    bankMessage = '正在載入你的錯題庫…';
+    bankMessage = PASSWORD_AUTH ? '已登入，正在載入你的錯題庫…' : '正在載入你的錯題庫…';
     route();
     bankPromise = syncFetch('/bank', {
       method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store'

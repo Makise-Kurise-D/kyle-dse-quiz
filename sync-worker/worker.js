@@ -6,8 +6,9 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'login-recovery-20261015';
+const SERVICE_VERSION = 'login-speed-20261015';
 const refreshes = new Map();
+const bankReads = new Map();
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -102,6 +103,7 @@ function cors(request, headers = {}) {
     'access-control-allow-credentials': 'false',
     'access-control-allow-headers': 'authorization, content-type',
     'access-control-allow-methods': 'GET, PUT, POST, DELETE, OPTIONS',
+    'access-control-max-age': '600',
     'vary': 'Origin',
     'cache-control': 'no-store',
   };
@@ -182,6 +184,22 @@ async function github(path, token, init = {}) {
   });
   if (!response.ok) throw Object.assign(new Error(body.message || `GitHub returned ${response.status}`), { status: response.status });
   return body;
+}
+
+function privateBank(token) {
+  const cached = bankReads.get(token);
+  if (cached && cached.until > Date.now()) return cached.promise;
+  const entry = { until: Date.now() + 30000, promise: null };
+  entry.promise = github(`/repos/${REPO}/contents/${BANK_PATH}`, token).then(file => {
+    if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_bank_file');
+    return JSON.parse(decodeUtf8(file.content));
+  }).catch(error => {
+    if (bankReads.get(token) === entry) bankReads.delete(token);
+    throw error;
+  });
+  bankReads.set(token, entry);
+  while (bankReads.size > 4) bankReads.delete(bankReads.keys().next().value);
+  return entry.promise;
 }
 
 async function githubBookManifest(subject, token) {
@@ -362,7 +380,7 @@ async function isOwner(auth, env) {
 }
 
 const worker = {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(request) });
     if (url.pathname === '/auth/upgrade' && request.method === 'POST') {
@@ -419,8 +437,18 @@ const worker = {
           }
         }
         if (!owner) return json({ error: 'owner_connection_required' }, 503, cors(request));
+        if (ctx && typeof ctx.waitUntil === 'function') {
+          const warm = async () => {
+            let credential = typeof owner === 'string' ? { accessToken: owner } : owner;
+            if (credential.expiresAt && credential.expiresAt <= Date.now() + 60000) credential = await ownerCredential(env);
+            if (credential?.accessToken) await privateBank(credential.accessToken);
+          };
+          // Overlap the upstream read with session persistence and the browser's
+          // return trip. Warming never delays password verification.
+          ctx.waitUntil(warm().catch(() => {}));
+        }
         const sessionId = await passwordSession(env);
-        await env.SESSIONS.delete(limitKey);
+        if (attempts) await env.SESSIONS.delete(limitKey);
         return json({ sessionId, expiresIn: PASSWORD_TTL }, 200, cors(request));
       } catch (error) {
         return json({ error: error.status === 503 ? error.message : 'login_unavailable' }, error.status === 503 ? 503 : 502, cors(request));
@@ -504,10 +532,10 @@ const worker = {
         const auth = await tokenFor(request, env);
         if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
         if (!await isOwner(auth, env)) return json({ error: 'owner_only' }, 403, cors(request));
-        const path = image ? `question-bank/images/${image[1]}` : BANK_PATH;
+        if (!image) return json(await privateBank(auth.token), 200, cors(request));
+        const path = `question-bank/images/${image[1]}`;
         const file = await github(`/repos/${REPO}/contents/${path}`, auth.token);
         if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_bank_file');
-        if (!image) return json(JSON.parse(decodeUtf8(file.content)), 200, cors(request));
         const binary = atob(file.content.replace(/\n/g, ''));
         return new Response(Uint8Array.from(binary, char => char.charCodeAt(0)), {
           headers: cors(request, { 'content-type': 'image/jpeg', 'x-content-type-options': 'nosniff' }),
@@ -652,8 +680,8 @@ const worker = {
 };
 
 export default {
-  async fetch(request, env) {
-    try { return await worker.fetch(request, env); }
+  async fetch(request, env, ctx) {
+    try { return await worker.fetch(request, env, ctx); }
     catch { return json({ error: 'service_unavailable' }, 503, cors(request)); }
   },
 };
