@@ -449,6 +449,18 @@ test('authentication, configuration and invalid bank errors do not trigger autom
     assert.equal(app.timers.some(timer => timer.delay === 1000 || timer.delay === 3000), false);
     assert.equal(app.saved.has('dse_quiz_sync_session_v1'), status !== 401);
   }
+  for (const data of [null, { subjects: { chem: { topics: [], items: [null] }, bio: { topics: [], items: [] } } }]) {
+    let bankCalls = 0;
+    const app = boot('', async url => {
+      if (!url.endsWith('/bank')) return { ok: true, json: async () => ({ data: null }) };
+      bankCalls++;
+      return { ok: true, json: async () => data };
+    }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password' }, true, true);
+    await settle();
+    app.intervals.find(timer => timer.delay === 60000).fn();
+    await settle();
+    assert.equal(bankCalls, 1, 'invalid bank objects do not become recurring network retries');
+  }
 });
 
 test('a queued retry is cancelled when its session is replaced or logged out', async () => {

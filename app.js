@@ -319,7 +319,8 @@
         method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store'
       }, readSyncResponse).catch(function (err) {
         if (!current()) return null;
-        if (!transientBankError(err) || attempt >= 2) throw err;
+        var retryable = transientBankError(err);
+        if (!retryable || attempt >= 2) { bankAutoRetry = retryable; throw err; }
         bankMessage = '錯題庫暫時未有回應，正在自動重試（' + (attempt + 1) + '/2）…';
         var status = $('#bankStatus');
         if (status) status.textContent = bankMessage;
@@ -346,7 +347,7 @@
     }).catch(function (err) {
       if (requestId !== bankRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       expireConnection(err, session);
-      bankFailed = true; bankAutoRetry = transientBankError(err);
+      bankFailed = true;
       bankMessage = '未能讀取錯題庫：' + err.message; refreshBankView(); return false;
     }).finally(function () { if (requestId === bankRequest) bankPromise = null; });
     refreshBankView();
