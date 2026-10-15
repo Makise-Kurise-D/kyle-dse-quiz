@@ -8,7 +8,7 @@
   }
   var PRIVATE_BANK = window.QUIZ_PRIVATE_BANK === true;
   var DATA = PRIVATE_BANK ? emptyBank() : window.QUIZ_DATA;
-  var bankLoaded = !PRIVATE_BANK, bankPromise = null, bankMessage = '', bankFailed = false, bankRequest = 0;
+  var bankLoaded = !PRIVATE_BANK, bankPromise = null, bankMessage = '', bankFailed = false, bankRequest = 0, bankAutoRetry = false;
   var imageUrls = new Map(), imageReads = new Map(), imageObserver = null;
   var LS_SESS = 'dse_quiz_sessions_v2';
   var LS_DRAFT = 'dse_quiz_draft_v2';
@@ -150,7 +150,10 @@
     }).then(readSyncResponse);
   }
   function readSyncResponse(r) {
-    return Promise.resolve().then(function () { return r.json(); }).catch(function () { return {}; }).then(function (data) {
+    return Promise.resolve().then(function () { return r.json(); }).catch(function (err) {
+      if (err.name === 'AbortError' || err.name === 'TypeError') throw err;
+      return {};
+    }).then(function (data) {
       if (r.ok) return data;
       var detail = data.error || '服務未回傳有效回應';
       var message = detail;
@@ -177,14 +180,16 @@
     bankMessage = err.message;
     route();
   }
-  function syncFetch(path, options) {
+  function syncFetch(path, options, readResponse) {
     var controller = new AbortController();
-    var timer = setTimeout(function () { controller.abort(); }, 15000);
+    // 題庫可能先續期儲存授權再讀取資料，需容納兩次各有 8 秒上限的上游請求。
+    var timer = setTimeout(function () { controller.abort(); }, path === '/bank' ? 30000 : 15000);
     return fetch(SYNC_API + path, Object.assign({}, options, { signal: controller.signal }))
+      .then(function (response) { return readResponse ? readResponse(response) : response; })
       .catch(function (err) {
-        if (err.name === 'AbortError') throw Object.assign(new Error(path === '/auth/password'
+        if (controller.signal.aborted || err.name === 'AbortError') throw Object.assign(new Error(path === '/auth/password'
           ? '登入服務連線逾時，請重試；若持續發生，請檢查目前網絡能否連上同步服務'
-          : '同步連線逾時，請稍後重試'), { code: 'connection_timeout', path: path });
+          : path === '/bank' ? '錯題庫連線逾時，請稍後重試' : '同步連線逾時，請稍後重試'), { code: 'connection_timeout', path: path });
         throw err;
       }).finally(function () { clearTimeout(timer); });
   }
@@ -216,7 +221,7 @@
       localStorage.setItem(LS_SYNCED_AT, checkedAt);
       var label = result.kind === 'uploaded' ? '已上傳至雲端' : result.kind === 'downloaded' ? '已更新本機記錄' : '雲端已核對，無新記錄';
       setSyncStatus(syncRevision === sentRevision
-        ? label + ' · 練習 ' + (sessions.length + archive.length) + ' 次 · ' + fmtDateTime(result.savedAt || checkedAt)
+        ? label + ' · ' + fmtDateTime(result.savedAt || checkedAt)
         : '本機有新變更，等待自動同步…');
       if (syncRevision !== sentRevision) scheduleSync();
       if ((location.hash.replace(/^#/, '').split('?')[0] || '/') === '/' && before !== state(backupData())) renderHome();
@@ -245,7 +250,7 @@
   }
   function forgetBank() {
     bankRequest++;
-    bankPromise = null; bankMessage = ''; bankFailed = false;
+    bankPromise = null; bankMessage = ''; bankFailed = false; bankAutoRetry = false;
     releasePaper();
     if (imageObserver) { imageObserver.disconnect(); imageObserver = null; }
     window.DSELibrary.reset();
@@ -294,17 +299,36 @@
         }).finally(function () { passwordLoginBusy = false; button.disabled = false; });
     });
   }
+  function transientBankError(err) {
+    if (err.code === 'service_not_configured' || err.code === 'owner_connection_required') return false;
+    return err.code === 'connection_timeout' || err.name === 'TypeError' ||
+      [408, 429, 500, 502, 503, 504].indexOf(err.status) >= 0;
+  }
   function loadBank() {
     if (!PRIVATE_BANK || bankLoaded) return Promise.resolve(true);
     if (bankPromise) return bankPromise;
     var session = localStorage.getItem(LS_SYNC_SESSION);
     if (!session || !SYNC_API) return Promise.resolve(false);
     var requestId = ++bankRequest;
-    bankFailed = false;
+    bankFailed = false; bankAutoRetry = false;
     bankMessage = PASSWORD_AUTH ? '已登入，正在載入你的錯題庫…' : '正在載入你的錯題庫…';
-    bankPromise = syncFetch('/bank', {
-      method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store'
-    }).then(readSyncResponse).then(function (bank) {
+    function current() { return requestId === bankRequest && localStorage.getItem(LS_SYNC_SESSION) === session; }
+    function readBank(attempt) {
+      if (!current()) return Promise.resolve(null);
+      return syncFetch('/bank', {
+        method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store'
+      }, readSyncResponse).catch(function (err) {
+        if (!current()) return null;
+        var retryable = transientBankError(err);
+        if (!retryable || attempt >= 2) { bankAutoRetry = retryable; throw err; }
+        bankMessage = '錯題庫暫時未有回應，正在自動重試（' + (attempt + 1) + '/2）…';
+        var status = $('#bankStatus');
+        if (status) status.textContent = bankMessage;
+        return new Promise(function (resolve) { setTimeout(resolve, attempt === 0 ? 1000 : 3000); })
+          .then(function () { return readBank(attempt + 1); });
+      });
+    }
+    bankPromise = readBank(0).then(function (bank) {
       if (requestId !== bankRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       ['chem', 'bio'].forEach(function (code) {
         if (!bank.subjects || !bank.subjects[code] || !Array.isArray(bank.subjects[code].items) || !Array.isArray(bank.subjects[code].topics)) {
@@ -441,7 +465,9 @@
     }
   });
   // Also fetch updates made on another computer while this tab remains open.
-  setInterval(function () { if (PASSWORD_AUTH) syncNow(true); }, 60000);
+  setInterval(function () {
+    if (PASSWORD_AUTH) { if (bankAutoRetry) loadBank(); syncNow(true); }
+  }, 60000);
 
   function cycleStartOf(ts) {
     return CYCLE_ANCHOR + Math.floor((ts - CYCLE_ANCHOR) / CYCLE_MS) * CYCLE_MS;

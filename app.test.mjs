@@ -366,10 +366,12 @@ test('a failed bank keeps home usable, retries on reconnect and keeps practice b
   let bankCalls = 0, finishBank;
   const app = boot('', async url => {
     if (!url.endsWith('/bank')) return { ok: true, json: async () => ({ data: null }) };
-    if (++bankCalls === 1) return { ok: false, status: 503, json: async () => ({ error: 'storage_timeout' }) };
+    if (++bankCalls <= 3) return { ok: false, status: 503, json: async () => ({ error: 'storage_timeout' }) };
     return new Promise(resolve => { finishBank = resolve; });
   }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password' }, true, true);
   await settle();
+  app.timers.find(timer => timer.delay === 1000).fn(); await settle();
+  app.timers.find(timer => timer.delay === 3000).fn(); await settle();
   assert.match(app.node('#app').innerHTML, /開始練習/);
   assert.match(app.node('#app').innerHTML, /重試載入錯題庫/);
   assert.doesNotMatch(app.node('#app').innerHTML, /passwordLoginForm/);
@@ -379,11 +381,107 @@ test('a failed bank keeps home usable, retries on reconnect and keeps practice b
   app.location.hash = '#/records'; app.events.hashchange();
   assert.match(app.node('#app').innerHTML, /累計作答/);
   app.events.online(); app.events.focus();
-  assert.equal(bankCalls, 2, 'reconnect and focus share one retry');
+  assert.equal(bankCalls, 4, 'reconnect and focus share one retry after the bounded attempts');
   finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
   await settle();
   app.location.hash = '#/'; app.events.hashchange();
   assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
+});
+
+test('bank timeouts cover headers and body, retry automatically and never block home or clear login', async () => {
+  for (const phase of ['headers', 'body', 'body-network']) {
+    let calls = 0;
+    const progress = JSON.stringify([{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }]);
+    const app = boot('', async (url, options) => {
+      if (!url.endsWith('/bank')) return { ok: true, json: async () => ({ data: null }) };
+      if (++calls > 1) return { ok: true, json: async () => app.context.QUIZ_DATA };
+      if (phase === 'body-network') return { ok: true, json: async () => { throw new TypeError('Body stream disconnected'); } };
+      const stall = () => new Promise((resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+      return phase === 'headers' ? stall() : { ok: true, json: stall };
+    }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password', dse_quiz_sessions_v2: progress }, true, true);
+    await settle();
+    assert.match(app.node('#app').innerHTML, /開始練習/);
+    if (phase !== 'body-network') app.timers.find(timer => timer.delay === 30000).fn();
+    await settle();
+    assert.match(app.node('#bankStatus').textContent, /正在自動重試/);
+    assert.doesNotMatch(app.node('#bankStatus').textContent, /同步連線逾時/);
+    app.events.focus();
+    assert.equal(calls, 1, 'focus shares the retry in progress');
+    app.timers.find(timer => timer.delay === 1000).fn();
+    await settle();
+    assert.equal(calls, 2);
+    assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
+    assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'p'.repeat(43));
+    assert.equal(app.saved.get('dse_quiz_sessions_v2'), progress);
+    assert.ok([...app.saved.values()].every(value => !value.includes('示例題')));
+  }
+});
+
+test('bounded bank retries recover on the minute poll without a page refresh', async () => {
+  let calls = 0;
+  const app = boot('', async url => {
+    if (!url.endsWith('/bank')) return { ok: true, json: async () => ({ data: null }) };
+    if (++calls <= 3) throw new TypeError('Failed to fetch');
+    return { ok: true, json: async () => app.context.QUIZ_DATA };
+  }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password' }, true, true);
+  await settle();
+  app.timers.find(timer => timer.delay === 1000).fn(); await settle();
+  app.timers.find(timer => timer.delay === 3000).fn(); await settle();
+  assert.equal(calls, 3);
+  assert.match(app.node('#app').innerHTML, /重試載入錯題庫/);
+  app.intervals.find(timer => timer.delay === 60000).fn();
+  await settle();
+  assert.equal(calls, 4);
+  assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
+});
+
+test('authentication, configuration and invalid bank errors do not trigger automatic retries', async () => {
+  for (const [status, error] of [[401,'not_connected'],[403,'origin_denied'],[404,'not_found'],[503,'owner_connection_required'],[503,'service_not_configured'],[200,null]]) {
+    let calls = 0;
+    const app = boot('', async () => {
+      calls++;
+      return { ok: status === 200, status, json: async () => ({ error }) };
+    }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password' }, true, true);
+    await settle();
+    assert.equal(calls, 1);
+    assert.equal(app.timers.some(timer => timer.delay === 1000 || timer.delay === 3000), false);
+    assert.equal(app.saved.has('dse_quiz_sync_session_v1'), status !== 401);
+  }
+  for (const data of [null, { subjects: { chem: { topics: [], items: [null] }, bio: { topics: [], items: [] } } }]) {
+    let bankCalls = 0;
+    const app = boot('', async url => {
+      if (!url.endsWith('/bank')) return { ok: true, json: async () => ({ data: null }) };
+      bankCalls++;
+      return { ok: true, json: async () => data };
+    }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password' }, true, true);
+    await settle();
+    app.intervals.find(timer => timer.delay === 60000).fn();
+    await settle();
+    assert.equal(bankCalls, 1, 'invalid bank objects do not become recurring network retries');
+  }
+});
+
+test('a queued retry is cancelled when its session is replaced or logged out', async () => {
+  for (const next of ['new-session', null]) {
+    let calls = 0;
+    const app = boot('', async url => {
+      if (!url.endsWith('/bank')) return { ok: true, json: async () => ({ data: null }) };
+      if (++calls === 1) throw new TypeError('Failed to fetch');
+      return { ok: true, json: async () => app.context.QUIZ_DATA };
+    }, { dse_quiz_sync_session_v1: 'old-session', dse_quiz_auth_mode_v1: 'password' }, true, true);
+    await settle();
+    if (next) app.saved.set('dse_quiz_sync_session_v1', next);
+    else app.saved.delete('dse_quiz_sync_session_v1');
+    app.events.storage({ key: 'dse_quiz_sync_session_v1', newValue: next });
+    await settle();
+    app.timers.find(timer => timer.delay === 1000).fn();
+    await settle();
+    assert.equal(calls, next ? 2 : 1);
+    assert.equal(app.saved.get('dse_quiz_sync_session_v1'), next || undefined);
+    assert.doesNotMatch(app.node('#app').innerHTML, /未能讀取錯題庫/);
+  }
 });
 
 test('bank arrival does not interrupt paper browsing', async () => {
@@ -448,6 +546,8 @@ test('login network timeouts are distinguished from storage failures and preserv
   connected.node('#syncPassword').value = 'test-password';
   connected.node('#passwordLoginForm').listeners.submit({ preventDefault() {} });
   await settle();
+  connected.timers.find(timer => timer.delay === 1000).fn(); await settle();
+  connected.timers.find(timer => timer.delay === 3000).fn(); await settle();
   assert.equal(connected.saved.get('dse_quiz_sync_session_v1'), id);
   assert.match(connected.node('#app').innerHTML, /資料儲存回應逾時/);
   assert.doesNotMatch(connected.node('#syncStatus').textContent, /登入失敗/);
@@ -497,6 +597,7 @@ test('automatic polling skips unchanged uploads, and logout retains local record
   await settle();
   assert.deepEqual(calls.map(call => call.method), ['GET']);
   assert.match(app.node('#syncStatus').textContent, /雲端已核對，無新記錄/);
+  assert.doesNotMatch(app.node('#syncStatus').textContent, /練習\s*\d+\s*次|已答題/);
   assert.match(app.node('#app').innerHTML, /退出登入/);
   app.context.confirm = () => { throw new Error('Password logout must not depend on a browser dialog'); };
   app.node('#syncDisconnectBtn').listeners.click();
@@ -770,7 +871,7 @@ test('OAuth loads the private bank without copying questions into persistent sto
 
 test('a denied private bank stays locked while existing records remain intact', async () => {
   const records = [{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }];
-  const app = boot('', async () => ({ ok: false, status: 403 }), {
+  const app = boot('', async () => ({ ok: false, status: 403, json: async () => ({ error: 'origin_denied' }) }), {
     dse_quiz_sync_session_v1: 'test-session', dse_quiz_sessions_v2: JSON.stringify(records)
   }, true);
   await settle();
