@@ -41,118 +41,34 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
   context.window = context;
   vm.createContext(context);
   vm.runInContext(data, context);
+  vm.runInContext(readFileSync(new URL('./library.js', import.meta.url), 'utf8'), context);
   vm.runInContext(source, context);
   return { context, location, nodes, node, saved, timers, intervals, events };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
-test('library reads private page images on demand and releases each temporary URL', async () => {
-  const calls = [], revoked = [];
-  const app = boot('', async (url, options) => {
-    calls.push({ url, authorization: options.headers.Authorization });
-    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
-      version: 'a'.repeat(16), pages: 2, format: 'jpeg', source_sha256: 'a'.repeat(64),
-    }) };
-    return { ok: true, blob: async () => new Blob(['synthetic-jpeg'], { type: 'image/jpeg' }) };
-  }, { dse_quiz_sync_session_v1: 'valid-session' });
-  let serial = 0;
-  app.context.URL = { createObjectURL: () => 'blob:synthetic-' + (++serial),
-    revokeObjectURL: url => revoked.push(url) };
-  assert.match(app.node('#app').innerHTML, /href="#\/library".*閱讀錯題集/s);
+test('structured library uses the loaded private bank without book requests and preserves history across cycle rollover', async () => {
+  const calls = [], now = Date.UTC(2026, 9, 15);
+  const archive = [{ t: now - 30 * 864e5, subj: 'chem', topic: 'T3', results: { 'example-mc': { ok: true, marks: 1, tot: 1 } } },
+    { t: now - 20 * 864e5, subj: 'chem', topic: 'T3', results: { 'example-mc': { ok: true, marks: 1, tot: 1 } } }];
+  const app = boot('', async url => { calls.push(url); throw new Error('unexpected network'); },
+    { dse_quiz_archive_v1: JSON.stringify(archive) }, false, false, now);
   app.location.hash = '#/library/books'; app.events.hashchange();
-  await settle();
-  assert.equal(app.node('#bookImage').src, 'blob:synthetic-1');
-  assert.equal(app.node('#bookReader').hidden, false);
-  assert.equal(app.node('#bookImage').hidden, false);
-  assert.equal(app.node('#bookOpen').href, 'blob:synthetic-1');
-  assert.deepEqual(calls.map(call => call.url), [
-    'https://sync.example.workers.dev/books/chem/manifest',
-    'https://sync.example.workers.dev/books/chem/pages/aaaaaaaaaaaaaaaa/1',
-  ]);
-  assert.ok(calls.every(call => call.authorization === 'Bearer valid-session'));
-  app.node('#bookNext').listeners.click();
-  await settle();
-  assert.equal(app.node('#bookImage').src, 'blob:synthetic-2');
-  assert.equal(calls[2].url, 'https://sync.example.workers.dev/books/chem/pages/aaaaaaaaaaaaaaaa/2');
-  assert.deepEqual(revoked, ['blob:synthetic-1']);
-  app.node('#bookSubjects').listeners.click({ target: { closest: () => ({ dataset: { subject: 'bio' } }) } });
-  await settle();
-  assert.equal(app.node('#bookImage').src, 'blob:synthetic-3');
-  assert.deepEqual(revoked, ['blob:synthetic-1', 'blob:synthetic-2']);
-  assert.equal(calls[3].url, 'https://sync.example.workers.dev/books/bio/manifest');
-  assert.equal(calls[4].url, 'https://sync.example.workers.dev/books/bio/pages/aaaaaaaaaaaaaaaa/1');
-  app.location.hash = '#/records'; app.events.hashchange();
-  assert.deepEqual(revoked, ['blob:synthetic-1', 'blob:synthetic-2', 'blob:synthetic-3']);
-  assert.ok([...app.saved.values()].every(value => !value.includes('synthetic-jpeg')));
-});
-
-test('book reader preloads the next page, reuses viewed pages, and forgets them on exit', async () => {
-  const calls = [];
-  const app = boot('', async url => {
-    calls.push(url);
-    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
-      version: 'a'.repeat(16), pages: 3, format: 'jpeg', source_sha256: 'a'.repeat(64),
-    }) };
-    return { ok: true, blob: async () => new Blob(['private-page'], { type: 'image/jpeg' }) };
-  }, { dse_quiz_sync_session_v1: 'valid-session' });
-  let serial = 0;
-  app.context.URL = { createObjectURL: () => 'blob:book-cache-' + (++serial), revokeObjectURL() {} };
-  app.location.hash = '#/library/books'; app.events.hashchange();
-  await settle();
-  assert.equal(calls.length, 2);
-  app.timers.find(timer => timer.delay === 200).fn();
-  await settle();
-  assert.equal(calls.at(-1), 'https://sync.example.workers.dev/books/chem/pages/aaaaaaaaaaaaaaaa/2');
-  assert.equal(calls.length, 3);
-  app.node('#bookNext').listeners.click();
-  await settle();
-  assert.equal(calls.length, 3, 'prefetched page is shown without another network call');
-  app.node('#bookPrev').listeners.click();
-  await settle();
-  assert.equal(calls.length, 3, 'a previously viewed page stays in memory');
-  app.location.hash = '#/records'; app.events.hashchange();
-  app.location.hash = '#/library/books'; app.events.hashchange();
-  await settle();
-  assert.equal(calls.length, 5, 'leaving the reader discards private pages and reloads the manifest');
-  assert.ok([...app.saved.values()].every(value => !value.includes('private-page')));
-});
-
-test('library stays behind the private-bank login and explains inaccessible page images', async () => {
-  const calls = [];
-  const locked = boot('', async url => { calls.push(url); throw new Error('unexpected fetch'); }, {}, true, true);
-  locked.location.hash = '#/library/books'; locked.events.hashchange();
-  assert.equal(calls.length, 0);
+  assert.match(app.node('#app').innerHTML, /生物/);
+  assert.match(app.node('#app').innerHTML, /化學/);
+  assert.match(app.node('#app').innerHTML, /數學/);
+  app.location.hash = '#/library/books/chem'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /100/);
+  assert.match(app.node('#mlTopics').innerHTML, /示例課題/);
+  app.location.hash = '#/library/books/chem/T3'; app.events.hashchange();
+  assert.match(app.node('#mlQuestions').innerHTML, /我的原答案/);
+  assert.match(app.node('#mlQuestions').innerHTML, /扣分點與錯因/);
+  assert.match(app.node('#mlQuestions').innerHTML, /ml-mastered/);
+  assert.equal(calls.length, 0, 'browsing text requests neither reader pages nor images');
+  assert.equal(app.saved.get('dse_quiz_archive_v1'), JSON.stringify(archive), 'reading does not write exercise records');
+  const locked = boot('', async () => { throw new Error('unexpected'); }, {}, true, true);
+  locked.location.hash = '#/library/books/chem'; locked.events.hashchange();
   assert.match(locked.node('#app').innerHTML, /登入並自動同步/);
-
-  const failed = boot('', async () => ({ ok: false, status: 404,
-    json: async () => ({ error: 'book_not_accessible' }) }),
-  { dse_quiz_sync_session_v1: 'valid-session' });
-  failed.location.hash = '#/library/books'; failed.events.hashchange();
-  await settle();
-  assert.match(failed.node('#bookStatus').textContent, /私人資料倉庫/);
-  assert.equal(failed.node('#bookImage').hidden, true);
-});
-
-test('reloading a revised book discards its previous browser image and requests the new version', async () => {
-  const urls = [], revoked = [];
-  let version = 'a'.repeat(16), serial = 0;
-  const app = boot('', async url => {
-    urls.push(url);
-    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
-      version, pages: 1, format: 'jpeg', source_sha256: version.repeat(4),
-    }) };
-    return { ok: true, blob: async () => new Blob(['page-image'], { type: 'image/jpeg' }) };
-  }, { dse_quiz_sync_session_v1: 'valid-session' });
-  app.context.URL = { createObjectURL: () => 'blob:page-' + (++serial), revokeObjectURL: url => revoked.push(url) };
-  app.location.hash = '#/library/books'; app.events.hashchange();
-  await settle();
-  assert.equal(app.node('#bookImage').src, 'blob:page-1');
-  version = 'b'.repeat(16);
-  app.node('#bookReload').listeners.click();
-  await settle();
-  assert.deepEqual(revoked, ['blob:page-1']);
-  assert.equal(app.node('#bookImage').src, 'blob:page-2');
-  assert.equal(urls.at(-1), 'https://sync.example.workers.dev/books/chem/pages/bbbbbbbbbbbbbbbb/1');
 });
 
 test('library offers two entrances, then graded papers select subject and published year', async () => {
@@ -162,7 +78,7 @@ test('library offers two entrances, then graded papers select subject and publis
     if (url.endsWith('/catalog')) return { ok: true, json: async () => ({ subjects: {
       chem: ['2024', '2022'], bio: ['2023'],
     } }) };
-    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
+    if (url.includes('/manifest')) return { ok: true, json: async () => ({
       version: 'c'.repeat(16), pages: 2, format: 'jpeg', source_sha256: 'c'.repeat(64),
     }) };
     return { ok: true, blob: async () => new Blob(['paper-page'], { type: 'image/jpeg' }) };
@@ -174,7 +90,7 @@ test('library offers two entrances, then graded papers select subject and publis
   app.location.hash = '#/library'; app.events.hashchange();
   await settle();
   const choices = app.node('#app').innerHTML;
-  assert.match(choices, /href="#\/library\/books".*錯題集/s);
+  assert.match(choices, /href="#\/library\/books".*錯題庫/s);
   assert.match(choices, /href="#\/library\/papers".*紅筆批改卷/s);
   assert.equal((choices.match(/class="library-hub-card /g) || []).length, 2);
   assert.equal(app.node('#libraryPaperCount').textContent, '3');
@@ -253,7 +169,7 @@ test('graded-paper reader shares an in-flight next-page request with navigation'
     if (url.endsWith('/catalog')) return { ok: true, json: async () => ({
       subjects: { chem: ['2022'], bio: [] },
     }) };
-    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
+    if (url.includes('/manifest')) return { ok: true, json: async () => ({
       version: 'b'.repeat(16), pages: 2, format: 'jpeg', source_sha256: 'b'.repeat(64),
     }) };
     if (url.endsWith('/2')) return new Promise(resolve => { finishNextPage = resolve; });
@@ -279,7 +195,7 @@ test('graded-paper reload switches image version and empty subjects give a clear
   const app = boot('', async url => {
     urls.push(url);
     if (url.endsWith('/catalog')) return { ok: true, json: async () => ({ subjects: { chem: ['2022'], bio: [] } }) };
-    if (url.endsWith('/manifest')) return { ok: true, json: async () => ({
+    if (url.includes('/manifest')) return { ok: true, json: async () => ({
       version, pages: 1, format: 'jpeg', source_sha256: version.repeat(4),
     }) };
     return { ok: true, blob: async () => new Blob(['page'], { type: 'image/jpeg' }) };
@@ -786,3 +702,4 @@ test('private images are fetched with authorization and displayed using revocabl
   app.events.storage({ key: 'dse_quiz_sync_session_v1', newValue: null });
   assert.deepEqual(revoked, ['blob:private-test-image']);
 });
+

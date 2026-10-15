@@ -6,9 +6,10 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'login-speed-20261015';
+const SERVICE_VERSION = 'topic-library-20261015';
 const refreshes = new Map();
 const bankReads = new Map();
+const metadataReads = new Map();
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -202,16 +203,27 @@ function privateBank(token) {
   return entry.promise;
 }
 
-async function githubBookManifest(subject, token) {
-  const file = await github(`/repos/${REPO}/contents/books/${subject}/manifest.json`, token);
-  if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_book_manifest');
-  const manifest = JSON.parse(decodeUtf8(file.content));
-  const sha = manifest.source_sha256;
-  if (typeof sha !== 'string' || !/^[0-9a-f]{64}$/.test(sha) ||
-      manifest.version !== sha.slice(0, 16) ||
-      !Number.isInteger(manifest.pages) || manifest.pages < 1 || manifest.pages > 9999 ||
-      manifest.format !== 'jpeg') throw new Error('invalid_book_manifest');
-  return { version: manifest.version, pages: manifest.pages, format: 'jpeg', source_sha256: sha };
+function privateMetadata(path, token, fresh = false) {
+  const key = token + ':' + path;
+  const cached = metadataReads.get(key);
+  if (!fresh && cached && cached.until > Date.now()) return cached.promise;
+  const entry = { until: Date.now() + 30000, promise: null };
+  entry.promise = github(`/repos/${REPO}/contents/${path}`, token).then(file => {
+    if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_private_metadata');
+    return JSON.parse(decodeUtf8(file.content));
+  }).catch(error => { if (metadataReads.get(key) === entry) metadataReads.delete(key); throw error; });
+  metadataReads.set(key, entry);
+  while (metadataReads.size > 24) metadataReads.delete(metadataReads.keys().next().value);
+  return entry.promise;
+}
+
+function paperSections(manifest) {
+  if (!Array.isArray(manifest.sections)) return [];
+  if (manifest.sections.length > 32 || !manifest.sections.every((section, i) => section &&
+    typeof section.label === 'string' && section.label.trim() && section.label.length <= 80 &&
+    Number.isInteger(section.page) && section.page >= 1 && section.page <= manifest.pages &&
+    (!i || section.page > manifest.sections[i - 1].page))) throw new Error('invalid_paper_sections');
+  return manifest.sections.map(section => ({ label: section.label, page: section.page }));
 }
 
 function paperSummary(value) {
@@ -241,10 +253,8 @@ function paperSummary(value) {
   return summary;
 }
 
-async function githubPaperCatalog(token) {
-  const file = await github(`/repos/${REPO}/contents/papers/catalog.json`, token);
-  if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_paper_catalog');
-  const catalog = JSON.parse(decodeUtf8(file.content));
+async function githubPaperCatalog(token, fresh = false) {
+  const catalog = await privateMetadata('papers/catalog.json', token, fresh);
   const subjects = catalog?.subjects;
   if (!subjects || typeof subjects !== 'object' || Array.isArray(subjects) ||
       Object.keys(subjects).some(subject => !['chem', 'bio'].includes(subject)) ||
@@ -266,10 +276,8 @@ async function githubPaperCatalog(token) {
   return result;
 }
 
-async function githubPaperManifest(subject, year, token) {
-  const file = await github(`/repos/${REPO}/contents/papers/${subject}/${year}/manifest.json`, token);
-  if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_paper_manifest');
-  const manifest = JSON.parse(decodeUtf8(file.content));
+async function githubPaperManifest(subject, year, token, fresh = false) {
+  const manifest = await privateMetadata(`papers/${subject}/${year}/manifest.json`, token, fresh);
   const sha = manifest.source_sha256;
   if (typeof sha !== 'string' || !/^[0-9a-f]{64}$/.test(sha) ||
       manifest.version !== sha.slice(0, 16) ||
@@ -279,7 +287,8 @@ async function githubPaperManifest(subject, year, token) {
     throw new Error('invalid_paper_manifest');
   }
   return { version: manifest.version, pages: manifest.pages, format: 'jpeg',
-    source_sha256: sha, dpi: manifest.dpi, quality: manifest.quality };
+    source_sha256: sha, dpi: manifest.dpi, quality: manifest.quality,
+    ...(manifest.sections ? { sections: paperSections(manifest) } : {}) };
 }
 
 async function passwordVersion(env) {
@@ -523,7 +532,7 @@ const worker = {
     }
     if (url.pathname === '/bank' || url.pathname.startsWith('/bank/')) {
       if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
-      const image = url.pathname.match(/^\/bank\/images\/((?:chem|bio)-\d{4}-mc-\d+\.jpg)$/);
+      const image = url.pathname.match(/^\/bank\/images\/((?:chem|bio)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg)$/);
       if (url.pathname !== '/bank' && !image) return json({ error: 'not_found' }, 404, cors(request));
       const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
       if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
@@ -535,8 +544,9 @@ const worker = {
         if (!image) return json(await privateBank(auth.token), 200, cors(request));
         const path = `question-bank/images/${image[1]}`;
         const file = await github(`/repos/${REPO}/contents/${path}`, auth.token);
-        if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_bank_file');
+        if (file.encoding !== 'base64' || typeof file.content !== 'string' || file.content.length > 1_400_000) throw new Error('invalid_bank_file');
         const binary = atob(file.content.replace(/\n/g, ''));
+        if (binary.length > 1_000_000 || binary.charCodeAt(0) !== 255 || binary.charCodeAt(1) !== 216) throw new Error('invalid_bank_file');
         return new Response(Uint8Array.from(binary, char => char.charCodeAt(0)), {
           headers: cors(request, { 'content-type': 'image/jpeg', 'x-content-type-options': 'nosniff' }),
         });
@@ -545,42 +555,7 @@ const worker = {
       }
     }
     if (url.pathname === '/books' || url.pathname.startsWith('/books/')) {
-      if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
-      const manifest = url.pathname.match(/^\/books\/(chem|bio)\/manifest$/);
-      const page = url.pathname.match(/^\/books\/(chem|bio)\/pages\/([0-9a-f]{16})\/([1-9]\d{0,3})$/);
-      if (!manifest && !page) return json({ error: 'not_found' }, 404, cors(request));
-      const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
-      if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
-      if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
-      try {
-        const auth = await tokenFor(request, env);
-        if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
-        if (!await isOwner(auth, env)) return json({ error: 'owner_only' }, 403, cors(request));
-        if (manifest) return json(await githubBookManifest(manifest[1], auth.token), 200, cors(request));
-        if (page) {
-          const [, subject, version, numberText] = page;
-          const current = await githubBookManifest(subject, auth.token);
-          const number = Number(numberText);
-          if (version !== current.version || number > current.pages) {
-            return json({ error: 'book_not_accessible' }, 404, cors(request));
-          }
-          const filename = `page-${String(number).padStart(4, '0')}.jpg`;
-          const file = await github(`/repos/${REPO}/contents/books/${subject}/${version}/${filename}`, auth.token);
-          if (file.encoding !== 'base64' || typeof file.content !== 'string' || file.content.length > 1_400_000) {
-            throw new Error('invalid_book_page');
-          }
-          const binary = atob(file.content.replace(/\n/g, ''));
-          if (binary.length > 1_000_000 || binary.charCodeAt(0) !== 255 || binary.charCodeAt(1) !== 216) {
-            throw new Error('invalid_book_page');
-          }
-          return new Response(Uint8Array.from(binary, char => char.charCodeAt(0)), {
-            headers: cors(request, { 'content-type': 'image/jpeg', 'x-content-type-options': 'nosniff' }),
-          });
-        }
-      } catch (error) {
-        const status = error.status === 404 ? 404 : error.status === 503 ? 503 : 502;
-        return json({ error: status === 404 ? 'book_not_accessible' : 'book_unavailable' }, status, cors(request));
-      }
+      return json({ error: 'book_reader_retired', library: `${SITE_HOME}#/library/books` }, 410, cors(request));
     }
     if (url.pathname === '/papers' || url.pathname.startsWith('/papers/')) {
       if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
@@ -595,11 +570,11 @@ const worker = {
         const auth = await tokenFor(request, env);
         if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
         if (!await isOwner(auth, env)) return json({ error: 'owner_only' }, 403, cors(request));
-        const available = await githubPaperCatalog(auth.token);
+        const available = await githubPaperCatalog(auth.token, url.searchParams.has('refresh'));
         if (catalog) return json(available, 200, cors(request));
         const subject = (manifest || page)[1], year = (manifest || page)[2];
         if (!available.subjects[subject].includes(year)) return json({ error: 'paper_not_accessible' }, 404, cors(request));
-        const current = await githubPaperManifest(subject, year, auth.token);
+        const current = await githubPaperManifest(subject, year, auth.token, url.searchParams.has('refresh'));
         if (manifest) return json(current, 200, cors(request));
         const version = page[3], number = Number(page[4]);
         if (version !== current.version || number > current.pages) {
@@ -685,3 +660,4 @@ export default {
     catch { return json({ error: 'service_unavailable' }, 503, cors(request)); }
   },
 };
+
