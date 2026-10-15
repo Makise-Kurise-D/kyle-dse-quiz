@@ -323,9 +323,107 @@ test('password login starts cloud sync while the private bank is still loading',
   assert.equal(typeof finishBank, 'function');
   assert.ok(calls.some(call => call.url.endsWith('/sync') && call.options.method === 'GET'),
     'records begin downloading before the bank finishes');
+  assert.match(app.node('#app').innerHTML, /開始練習/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /passwordLoginForm/);
   finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
   await settle();
   assert.match(app.node('#app').innerHTML, /題在庫/);
+});
+
+test('a returning browser opens home before either private request completes and updates after each one', async () => {
+  const calls = [], cycle = boot().saved.get('dse_quiz_cycle_v1');
+  let finishBank, finishSync;
+  const remote = { app: 'kyle-dse-quiz', sessions: [{ t: Date.now(), subj: 'chem', topic: 'T3',
+    results: { 'example-mc': { ok: true, marks: 1, tot: 1 } } }], archive: [], drafts: {}, reviewPlan: {}, cycle };
+  const app = boot('#/records', (url, options) => {
+    calls.push({ url, method: options.method });
+    if (url.endsWith('/bank')) return new Promise(resolve => { finishBank = resolve; });
+    if (options.method === 'GET') return new Promise(resolve => { finishSync = resolve; });
+    throw new Error('unchanged remote records must not be uploaded');
+  }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password', dse_quiz_cycle_v1: cycle }, true, true);
+  assert.equal(app.location.hash, '#/');
+  assert.match(app.node('#app').innerHTML, /開始練習/);
+  assert.match(app.node('#app').innerHTML, /<b>—<\/b> 題在庫/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /passwordLoginForm/);
+  assert.equal(typeof finishBank, 'function');
+  assert.equal(app.timers.some(timer => timer.delay === 600), false);
+  app.timers.find(timer => timer.delay === 0).fn();
+  assert.equal(typeof finishSync, 'function', 'cloud read starts while bank is pending');
+  finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
+  await settle();
+  assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
+  assert.match(app.node('#app').innerHTML, /class="c-green">0<\/b> 已征服/);
+  finishSync({ ok: true, json: async () => ({ data: remote }) });
+  await settle();
+  assert.match(app.node('#app').innerHTML, /class="c-green">1<\/b> 已征服/);
+  assert.match(app.node('#app').innerHTML, /class="c-red">0<\/b> 待清/);
+  assert.match(app.node('#syncStatus').textContent, /已更新本機記錄/);
+  assert.equal(calls.length, 2);
+  assert.ok([...app.saved.values()].every(value => !value.includes('示例題')));
+});
+
+test('a failed bank keeps home usable, retries on reconnect and keeps practice behind a loading view', async () => {
+  let bankCalls = 0, finishBank;
+  const app = boot('', async url => {
+    if (!url.endsWith('/bank')) return { ok: true, json: async () => ({ data: null }) };
+    if (++bankCalls === 1) return { ok: false, status: 503, json: async () => ({ error: 'storage_timeout' }) };
+    return new Promise(resolve => { finishBank = resolve; });
+  }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password' }, true, true);
+  await settle();
+  assert.match(app.node('#app').innerHTML, /開始練習/);
+  assert.match(app.node('#app').innerHTML, /重試載入錯題庫/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /passwordLoginForm/);
+  app.location.hash = '#/practice/chem'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /題庫載入後會自動顯示/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /passwordLoginForm|示例題/);
+  app.location.hash = '#/records'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /累計作答/);
+  app.events.online(); app.events.focus();
+  assert.equal(bankCalls, 2, 'reconnect and focus share one retry');
+  finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
+  await settle();
+  app.location.hash = '#/'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
+});
+
+test('bank arrival does not interrupt paper browsing', async () => {
+  let finishBank;
+  const calls = [];
+  const app = boot('', async url => {
+    calls.push(url);
+    if (url.endsWith('/bank')) return new Promise(resolve => { finishBank = resolve; });
+    return { ok: true, json: async () => ({ subjects: { chem: [], bio: [] } }) };
+  }, { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password' }, true, true);
+  app.location.hash = '#/library/papers/chem'; app.events.hashchange();
+  await settle();
+  assert.match(app.node('#app').innerHTML, /paperYears/);
+  const html = app.node('#app').innerHTML;
+  app.node('#app').innerHTML += '<span>scroll-and-focus-sentinel</span>';
+  finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
+  await settle();
+  assert.equal(app.node('#app').innerHTML, html + '<span>scroll-and-focus-sentinel</span>');
+  assert.equal(calls.filter(url => url.endsWith('/catalog')).length, 1);
+});
+
+test('a slow bank from a replaced session cannot delay or overwrite the new bank', async () => {
+  let finishOldBank, finishNewBank;
+  const app = boot('', async (url, options) => {
+    if (!url.endsWith('/bank')) return { ok: true, json: async () => ({ data: null }) };
+    return new Promise(resolve => {
+      if (options.headers.Authorization.includes('old-session')) finishOldBank = resolve;
+      else finishNewBank = resolve;
+    });
+  }, { dse_quiz_sync_session_v1: 'old-session', dse_quiz_auth_mode_v1: 'password' }, true, true);
+  app.saved.set('dse_quiz_sync_session_v1', 'new-session');
+  app.events.storage({ key: 'dse_quiz_sync_session_v1', newValue: 'new-session' });
+  assert.equal(typeof finishNewBank, 'function', 'new session starts without waiting for the old bank');
+  finishNewBank({ ok: true, json: async () => app.context.QUIZ_DATA });
+  await settle();
+  finishOldBank({ ok: false, status: 401, json: async () => ({ error: 'not_connected' }) });
+  await settle();
+  assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'new-session');
+  assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /未能讀取錯題庫|passwordLoginForm/);
 });
 
 test('login network timeouts are distinguished from storage failures and preserve local records', async () => {
