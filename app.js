@@ -161,6 +161,8 @@
       else if (r.status === 403) message = 'GitHub 授權或存取被拒絕，請重新連接並檢查授權（' + detail + '）';
       else if (detail === 'service_not_configured') message = '同步服務設定不完整';
       else if (detail === 'service_unavailable') message = '同步服務暫時無法使用，請稍後重試';
+      else if (detail === 'storage_timeout') message = '資料儲存回應逾時，請稍後重試；本機記錄已保留';
+      else if (detail === 'storage_unavailable') message = '資料儲存暫時無法連線，請稍後重試；不需要重設記錄';
       else if (detail === 'owner_connection_required') message = '資料儲存需要重新連接，請開啟儲存設定';
       else if (detail === 'too_many_attempts') message = '密碼嘗試次數過多，請於 15 分鐘後再試';
       else if (detail === 'book_not_accessible') message = '錯題集頁面圖片未能讀取，請檢查私人資料倉庫或重新生成圖片';
@@ -182,7 +184,9 @@
     var timer = setTimeout(function () { controller.abort(); }, 15000);
     return fetch(SYNC_API + path, Object.assign({}, options, { signal: controller.signal }))
       .catch(function (err) {
-        if (err.name === 'AbortError') throw new Error('同步連線逾時，請稍後重試');
+        if (err.name === 'AbortError') throw Object.assign(new Error(path === '/auth/password'
+          ? '登入服務連線逾時，請重試；若持續發生，請檢查目前網絡能否連上同步服務'
+          : '同步連線逾時，請稍後重試'), { code: 'connection_timeout', path: path });
         throw err;
       }).finally(function () { clearTimeout(timer); });
   }
@@ -266,6 +270,7 @@
       setSyncStatus('正在登入並同步…');
       var headers = { 'Content-Type': 'application/json' };
       var existing = localStorage.getItem(LS_SYNC_SESSION);
+      var authenticated = false;
       if (existing) headers.Authorization = 'Bearer ' + existing;
       syncFetch('/auth/password', { method: 'POST', headers: headers, body: JSON.stringify({ password: password }), cache: 'no-store' })
         .then(readSyncResponse).then(function (data) {
@@ -273,12 +278,14 @@
           var previous = bankPromise || Promise.resolve();
           localStorage.setItem(LS_AUTH_MODE, 'password');
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
+          authenticated = true;
+          setSyncStatus('已登入，正在讀取資料…');
           forgetBank(); bankMessage = '';
           return previous.catch(function () {}).then(function () {
             return Promise.all([loadBank(), syncNow(true)]);
           });
         }).catch(function (err) {
-          setSyncStatus('登入失敗：' + err.message);
+          setSyncStatus((authenticated ? '已登入，但資料載入未完成：' : '登入失敗：') + err.message);
         }).finally(function () { passwordLoginBusy = false; button.disabled = false; });
     });
   }

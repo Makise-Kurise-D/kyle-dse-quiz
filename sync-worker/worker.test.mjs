@@ -32,7 +32,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'library-grades-20261013');
+  assert.equal(status.version, 'login-recovery-20261015');
   assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
@@ -59,7 +59,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'library-grades-20261013', passwordConfigured: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'login-recovery-20261015', passwordConfigured: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -408,6 +408,74 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   const deniedCallback = await worker.fetch(new Request(`${BASE}/auth/callback?code=other-code&state=${freshState}`, { headers: { Cookie: freshCookie } }), env);
   assert.equal(deniedCallback.status, 403);
   login = 'Makise-Kurisu-D';
+});
+
+test('password login never waits for expired storage tokens and transient refresh failures preserve the connection', async t => {
+  const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'test-password',
+    GITHUB_CLIENT_ID: 'test-client', GITHUB_CLIENT_SECRET: 'test-secret' };
+  const originalFetch = globalThis.fetch, originalNow = Date.now, originalSetTimeout = globalThis.setTimeout;
+  const started = originalNow();
+  let now = started, mode = 'healthy', refreshCalls = 0, finishRefresh;
+  Date.now = () => now;
+  t.after(() => { globalThis.fetch = originalFetch; Date.now = originalNow; globalThis.setTimeout = originalSetTimeout; });
+  const token = () => Response.json({ access_token: 'test-access-' + now, refresh_token: 'test-refresh-' + now,
+    expires_in: 28800, refresh_token_expires_in: 15897600 });
+  const bank = { subjects: { chem: { topics: [], items: [] }, bio: { topics: [], items: [] } } };
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/login/oauth/access_token')) {
+      const refresh = JSON.parse(options.body).grant_type === 'refresh_token';
+      if (!refresh) return token();
+      refreshCalls++;
+      if (mode === 'unavailable') return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
+      if (mode === 'stalled') return new Promise((resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+      if (mode === 'rotated') return new Promise(resolve => { finishRefresh = resolve; });
+      return token();
+    }
+    if (String(url).endsWith('/user')) return Response.json({ login: 'Makise-Kurisu-D' });
+    if (String(url).endsWith('/question-bank/bank.json')) return Response.json({ encoding: 'base64', content: b64json(bank) });
+    throw new Error('Unexpected test request');
+  };
+  const start = await worker.fetch(new Request(`${BASE}/auth/start`), env);
+  const cookie = start.headers.get('set-cookie').split(';')[0];
+  const state = new URL(start.headers.get('location')).searchParams.get('state');
+  const connect = () => worker.fetch(new Request(`${BASE}/auth/callback?code=test-code&state=${state}`, { headers: { Cookie: cookie } }), env);
+  assert.equal((await connect()).status, 302);
+  const saved = await env.SESSIONS.get('service:github-owner');
+  now += 9 * 3600000;
+  mode = 'stalled';
+  const login = await worker.fetch(new Request(`${BASE}/auth/password`, { method: 'POST',
+    headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'test-password' }) }), env);
+  assert.equal(login.status, 200);
+  assert.equal(refreshCalls, 0, 'correct password verification performs no upstream renewal');
+  const id = (await login.json()).sessionId;
+  const readBank = () => worker.fetch(new Request(`${BASE}/bank`, { headers: { Origin: ORIGIN, Authorization: `Bearer ${id}` } }), env);
+  mode = 'unavailable';
+  const unavailable = await readBank();
+  assert.equal(unavailable.status, 503);
+  assert.equal((await unavailable.json()).error, 'storage_unavailable');
+  assert.equal(await env.SESSIONS.get('service:github-owner'), saved);
+  mode = 'stalled';
+  globalThis.setTimeout = (fn, ms, ...args) => originalSetTimeout(fn, ms === 8000 ? 5 : ms, ...args);
+  const timedOut = await readBank();
+  globalThis.setTimeout = originalSetTimeout;
+  assert.equal(timedOut.status, 503);
+  assert.equal((await timedOut.json()).error, 'storage_timeout');
+  assert.equal(timedOut.headers.get('access-control-allow-origin'), ORIGIN);
+  assert.equal(await env.SESSIONS.get('service:github-owner'), saved);
+  mode = 'healthy';
+  assert.equal((await readBank()).status, 200, 'a later request retries renewal without reconnecting');
+  assert.equal(refreshCalls, 3);
+  now += 9 * 3600000;
+  mode = 'rotated';
+  const pending = readBank();
+  while (!finishRefresh) await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await connect()).status, 302);
+  const renewed = await env.SESSIONS.get('service:github-owner');
+  finishRefresh(Response.json({ error: 'bad_refresh_token' }, { status: 400 }));
+  assert.equal((await pending).status, 200, 'a losing renewal uses the newer stored connection');
+  assert.equal(await env.SESSIONS.get('service:github-owner'), renewed);
 });
 
 test('private bank fails closed when storage or secrets are not configured', async () => {
