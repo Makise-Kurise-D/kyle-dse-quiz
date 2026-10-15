@@ -18,13 +18,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.event.repository.default_branch }}
       - name: Probe health and password login reachability
         run: |
           node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const expectedVersion = readFileSync('sync-worker/worker.js', 'utf8').match(/^const SERVICE_VERSION = ['"]([^'"]+)['"];?$/m)?.[1];
+          if (!expectedVersion) throw new Error('Missing expected Worker version');
           const base = 'https://snowy-cake-a0a7.3355718646.workers.dev';
           const origin = 'https://makise-kurisu-d.github.io';
           const probes = [
-            { name: 'health', path: '/health', expected: r => r.status === 200 && r.body.ok === true && r.body.passwordConfigured === true },
+            { name: 'health', path: '/health', expected: r => r.status === 200 && r.body.ok === true && r.body.passwordConfigured === true && r.body.version === expectedVersion },
             { name: 'login-preflight', path: '/auth/password', options: { method: 'OPTIONS',
               headers: { Origin: origin, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' } },
               expected: r => r.status === 204 && r.allowOrigin === origin },
@@ -38,12 +44,20 @@ jobs:
           await Promise.all(probes.map(async probe => {
             const started = Date.now();
             try {
-              const response = await fetch(base + probe.path, { ...probe.options, signal: AbortSignal.timeout(15000) });
-              const body = response.status === 204 ? {} : await response.json();
+              let response, body;
+              const attempts = probe.name === 'health' ? 5 : 1;
+              for (let attempt = 1; attempt <= attempts; attempt++) {
+                const path = probe.path + (probe.name === 'health' ? '?probe=' + Date.now() : '');
+                response = await fetch(base + path, { ...probe.options, cache: 'no-store', signal: AbortSignal.timeout(15000) });
+                body = response.status === 204 ? {} : await response.json();
+                if (probe.name !== 'health' || (response.ok && body.version === expectedVersion) || attempt === attempts) break;
+                console.warn(JSON.stringify({ probe: 'health-propagation', expectedVersion, observedVersion: body.version, attempt }));
+                await new Promise(resolve => setTimeout(resolve, 3000));
+              }
               const result = { probe: probe.name, status: response.status, elapsedMs: Date.now() - started,
                 allowOrigin: response.headers.get('access-control-allow-origin'),
                 preflightMaxAge: response.headers.get('access-control-max-age'),
-                body: probe.name === 'health' ? { ok: body.ok, version: body.version, passwordConfigured: body.passwordConfigured } : { error: body.error } };
+                body: probe.name === 'health' ? { expectedVersion, ok: body.ok, version: body.version, passwordConfigured: body.passwordConfigured } : { error: body.error } };
               console.log(JSON.stringify(result));
               if (!probe.expected(result)) process.exitCode = 1;
             } catch (error) {
@@ -52,3 +66,4 @@ jobs:
             }
           }));
           NODE
+
