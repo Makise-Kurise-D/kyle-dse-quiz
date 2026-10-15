@@ -81,8 +81,8 @@ jobs:
           import { readFileSync } from 'node:fs';
           const base = 'https://makise-kurisu-d.github.io/kyle-dse-quiz/';
           const index = readFileSync('index.html', 'utf8');
-          const assets = [...index.matchAll(/(?:src|href)="((?:app|library)\.js\?v=[^"\s]+|(?:style|library)\.css\?v=[^"\s]+)"/g)].map(m => m[1]);
-          if (assets.length !== 4) throw new Error('Missing versioned website assets');
+          const assets = [...index.matchAll(/(?:src|href)="((?:app|library)\.js\?v=[^"\s]+|(?:style|library)\.css\?v=[^"\s]+|images\/avatar\.jpg\?v=[^"\s]+)"/g)].map(m => m[1]);
+          if (assets.length !== 5) throw new Error('Missing versioned website assets or avatar favicon');
           let lastError;
           for (let attempt = 1; attempt <= 24; attempt++) {
             try {
@@ -91,7 +91,7 @@ jobs:
               if (!response.ok || !assets.every(asset => html.includes(asset))) throw new Error('Homepage unavailable or awaiting current Pages release: HTTP ' + response.status);
               await Promise.all(assets.map(async asset => {
                 const result = await fetch(new URL(asset + '&probe=' + Date.now(), base), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
-                if (!result.ok || await result.text() !== readFileSync(asset.split('?')[0], 'utf8')) throw new Error('Published asset differs or is unavailable: ' + asset + ' HTTP ' + result.status);
+                if (!result.ok || !Buffer.from(await result.arrayBuffer()).equals(readFileSync(asset.split('?')[0]))) throw new Error('Published asset differs or is unavailable: ' + asset + ' HTTP ' + result.status);
               }));
               console.log(JSON.stringify({ probe: 'published-website', status: response.status, assets, attempt }));
               lastError = null;
