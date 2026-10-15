@@ -6,7 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'library-grades-20261013';
+const SERVICE_VERSION = 'login-recovery-20261015';
 const refreshes = new Map();
 
 function json(data, status = 200, headers = {}) {
@@ -152,8 +152,24 @@ async function unseal(value, secret) {
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
+async function storageJson(url, init = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const body = await response.json().catch(error => {
+      if (controller.signal.aborted) throw error;
+      return {};
+    });
+    return { response, body };
+  } catch (error) {
+    throw Object.assign(new Error(controller.signal.aborted || error.name === 'AbortError'
+      ? 'storage_timeout' : 'storage_unavailable'), { status: 503 });
+  } finally { clearTimeout(timer); }
+}
+
 async function github(path, token, init = {}) {
-  const response = await fetch(`https://api.github.com${path}`, {
+  const { response, body } = await storageJson(`https://api.github.com${path}`, {
     ...init,
     headers: {
       accept: 'application/vnd.github+json',
@@ -164,7 +180,6 @@ async function github(path, token, init = {}) {
       ...(init.headers || {}),
     },
   });
-  const body = await response.json().catch(() => ({}));
   if (!response.ok) throw Object.assign(new Error(body.message || `GitHub returned ${response.status}`), { status: response.status });
   return body;
 }
@@ -261,12 +276,16 @@ async function passwordSession(env) {
   return sessionId;
 }
 
-async function credentialFor(sessionKey, env) {
+async function credentialFor(sessionKey, env, refreshExpired = true) {
   const saved = await env.SESSIONS.get(sessionKey);
   if (!saved) return null;
   let session;
   try { session = await unseal(saved, env.SESSION_SECRET); }
   catch { await env.SESSIONS.delete(sessionKey); return null; }
+  // Password verification only needs a configured owner connection. Renewing
+  // its upstream credential belongs to private-data requests, not site login.
+  if (!refreshExpired) return session.accessToken && (!session.expiresAt ||
+    session.expiresAt > Date.now() || session.refreshToken) ? session : null;
   if (session.expiresAt && Date.now() > session.expiresAt - 60000) {
     if (!session.refreshToken) {
       await env.SESSIONS.delete(sessionKey);
@@ -275,19 +294,27 @@ async function credentialFor(sessionKey, env) {
     if (configurationError(env, ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'])) {
       throw Object.assign(new Error('service_not_configured'), { status: 503 });
     }
-    const refresh = await fetch('https://github.com/login/oauth/access_token', {
+    const { response: refresh, body: next } = await storageJson('https://github.com/login/oauth/access_token', {
       method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET,
         grant_type: 'refresh_token', refresh_token: session.refreshToken }),
     });
-    const next = await refresh.json().catch(() => ({}));
     if (!refresh.ok || !next.access_token) {
-      await env.SESSIONS.delete(sessionKey);
+      // Another Worker instance may already have renewed a rotating token.
+      const latest = await env.SESSIONS.get(sessionKey);
+      if (latest && latest !== saved) {
+        const updated = await unseal(latest, env.SESSION_SECRET).catch(() => null);
+        if (updated?.accessToken && (!updated.expiresAt || updated.expiresAt > Date.now() + 60000)) return updated;
+      }
+      // A temporary upstream failure must never erase the shared connection.
+      if (refresh.status === 429 || refresh.status >= 500 || !next.error) {
+        throw Object.assign(new Error('storage_unavailable'), { status: 503 });
+      }
       return null;
     }
     session = {
       accessToken: next.access_token,
-      refreshToken: next.refresh_token,
+      refreshToken: next.refresh_token || session.refreshToken,
       expiresAt: Date.now() + Number(next.expires_in || 28800) * 1000,
     };
     await env.SESSIONS.put(sessionKey, await seal(session, env.SESSION_SECRET), { expirationTtl: Math.max(3600, Number(next.refresh_token_expires_in || 15897600)) });
@@ -378,7 +405,7 @@ const worker = {
         return json({ error: 'invalid_password' }, 401, cors(request));
       }
       try {
-        let owner = await ownerCredential(env);
+        let owner = env.GITHUB_TOKEN || await credentialFor(OWNER_KEY, env, false);
         // An existing owner login can initialize the service without another authorization or token copy by the user.
         if (!owner && request.headers.has('Authorization')) {
           const auth = await tokenFor(request, env);
@@ -427,12 +454,11 @@ const worker = {
         return new Response('OAuth state check failed. Return to the quiz site and reconnect.', { status: 400 });
       }
       if (url.searchParams.has('error')) return Response.redirect(`${SITE_HOME}?v=${Date.now()}#/records?sync=cancelled`, 302);
-      const exchange = await fetch('https://github.com/login/oauth/access_token', {
+      const { response: exchange, body: token } = await storageJson('https://github.com/login/oauth/access_token', {
         method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' },
         body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET,
           code: url.searchParams.get('code'), redirect_uri: `${url.origin}/auth/callback`, state }),
       });
-      const token = await exchange.json();
       if (!exchange.ok || !token.access_token) return new Response('GitHub authorization failed.', { status: 502 });
       const sessionId = await randomId();
       const sessionKey = await digest(sessionId);

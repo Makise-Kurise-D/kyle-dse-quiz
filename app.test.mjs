@@ -412,6 +412,33 @@ test('password login starts cloud sync while the private bank is still loading',
   assert.match(app.node('#app').innerHTML, /題在庫/);
 });
 
+test('login network timeouts are distinguished from storage failures and preserve local records', async () => {
+  const local = [{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }];
+  const app = boot('', async (url, options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+  }), { dse_quiz_sessions_v2: JSON.stringify(local) }, true, true);
+  app.node('#syncPassword').value = 'test-password';
+  app.node('#passwordLoginForm').listeners.submit({ preventDefault() {} });
+  app.timers.find(timer => timer.delay === 15000).fn();
+  await settle();
+  assert.match(app.node('#syncStatus').textContent, /登入失敗：登入服務連線逾時/);
+  assert.equal(app.saved.has('dse_quiz_sync_session_v1'), false);
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_sessions_v2')).length, 1);
+  assert.equal(app.node('#passwordLoginBtn').disabled, false);
+
+  const id = 'p'.repeat(43);
+  const connected = boot('', async url => url.endsWith('/auth/password')
+    ? { ok: true, json: async () => ({ sessionId: id }) }
+    : { ok: false, status: 503, json: async () => ({ error: 'storage_timeout' }) },
+    { dse_quiz_sessions_v2: JSON.stringify(local) }, true, true);
+  connected.node('#syncPassword').value = 'test-password';
+  connected.node('#passwordLoginForm').listeners.submit({ preventDefault() {} });
+  await settle();
+  assert.equal(connected.saved.get('dse_quiz_sync_session_v1'), id);
+  assert.match(connected.node('#app').innerHTML, /資料儲存回應逾時/);
+  assert.doesNotMatch(connected.node('#syncStatus').textContent, /登入失敗/);
+});
+
 test('wrong passwords cannot load questions or overwrite progress', async () => {
   const calls = [];
   const app = boot('', async url => {
