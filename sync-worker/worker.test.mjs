@@ -32,7 +32,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'login-speed-20261015');
+  assert.equal(status.version, 'topic-library-20261015');
   assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
@@ -60,7 +60,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'login-speed-20261015', passwordConfigured: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'topic-library-20261015', passwordConfigured: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -236,15 +236,6 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
     ['/bank/images/records.json', privateHeaders, 404],
     ['/bank/images/chem-2022-mc-01.jpg/extra', privateHeaders, 404],
     ['/bank/images/%2e%2e%2frecords.json', privateHeaders, 404],
-    ['/books/chem/manifest', { Origin: ORIGIN }, 401],
-    [`/books/chem/pages/${bookVersion}/1`, { Origin: ORIGIN }, 401],
-    ['/books/chem/manifest', { ...privateHeaders, Origin: 'https://attacker.example' }, 403],
-    [`/books/chem/pages/${bookVersion}/1`, { ...privateHeaders, Origin: 'https://attacker.example' }, 403],
-    ['/books/chem', privateHeaders, 404],
-    ['/books/records.json', privateHeaders, 404],
-    ['/books/chem/extra', privateHeaders, 404],
-    ['/books/chem/pages/not-hex/1', privateHeaders, 404],
-    [`/books/chem/pages/${bookVersion}/0001`, privateHeaders, 404],
     ['/papers/catalog', { Origin: ORIGIN }, 401],
     ['/papers/chem/2022/manifest', { Origin: ORIGIN }, 401],
     [`/papers/chem/2022/pages/${paperVersion}/1`, { Origin: ORIGIN }, 401],
@@ -270,28 +261,10 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   assert.equal(image.headers.get('cache-control'), 'no-store');
   assert.equal(image.headers.get('x-content-type-options'), 'nosniff');
   assert.deepEqual([...new Uint8Array(await image.arrayBuffer())], [255, 216, 255, 217]);
-  const bookManifest = await worker.fetch(new Request(`${BASE}/books/chem/manifest`, { headers: privateHeaders }), env);
-  assert.equal(bookManifest.status, 200);
-  assert.equal(bookManifest.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await bookManifest.json(), { version: bookVersion, pages: 2, format: 'jpeg', source_sha256: bookSha });
-  const pageUrl = `${BASE}/books/chem/pages/${bookVersion}/1`;
-  const bookPage = await worker.fetch(new Request(pageUrl, { headers: privateHeaders }), env);
-  assert.equal(bookPage.status, 200);
-  assert.equal(bookPage.headers.get('content-type'), 'image/jpeg');
-  assert.equal(bookPage.headers.get('cache-control'), 'no-store');
-  assert.equal(bookPage.headers.get('x-content-type-options'), 'nosniff');
-  assert.deepEqual([...new Uint8Array(await bookPage.arrayBuffer())], [255, 216, 255, 217]);
-  const stalePage = await worker.fetch(new Request(`${BASE}/books/chem/pages/${'b'.repeat(16)}/1`, { headers: privateHeaders }), env);
-  assert.equal(stalePage.status, 404);
-  assert.equal(bookPageCalls, 1, 'stale versions cannot fetch archived page files');
-  const outOfRangePage = await worker.fetch(new Request(`${BASE}/books/chem/pages/${bookVersion}/3`, { headers: privateHeaders }), env);
-  assert.equal(outOfRangePage.status, 404);
-  assert.equal(bookPageCalls, 1, 'out-of-range pages never fetch image files');
-  pageAccess = false;
-  const missingPage = await worker.fetch(new Request(pageUrl, { headers: privateHeaders }), env);
-  assert.equal(missingPage.status, 404);
-  assert.deepEqual(await missingPage.json(), { error: 'book_not_accessible' });
-  pageAccess = true;
+  const retired = await worker.fetch(new Request(`${BASE}/books/chem/manifest`, { headers: privateHeaders }), env);
+  assert.equal(retired.status, 410);
+  assert.equal((await retired.json()).error, 'book_reader_retired');
+  assert.equal(bookPageCalls, 0, 'retired books do not request old screenshots');
   const paperCatalog = await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: privateHeaders }), env);
   assert.equal(paperCatalog.status, 200);
   assert.equal(paperCatalog.headers.get('cache-control'), 'no-store');
@@ -301,12 +274,12 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
       components: [{ label: '卷一', earned: 70, total: 100 }],
       boundaries: [{ level: '4', minimumPercent: 65 }, { level: '5', minimumPercent: 75 }], ignored: 'extra' } },
     '2023': { pages: 2, source_sha256: paperSha } }, bio: {} };
-  const withGrades = await (await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: privateHeaders }), env)).json();
+  const withGrades = await (await worker.fetch(new Request(`${BASE}/papers/catalog?refresh=1`, { headers: privateHeaders }), env)).json();
   assert.equal(withGrades.papers.chem['2022'].assessment.earned, 70);
   assert.equal(withGrades.papers.chem['2022'].assessment.ignored, undefined);
   assert.equal(withGrades.papers.chem['2023'], undefined, 'unpublished years are never returned');
   catalogFile.papers.chem['2022'].assessment.source_sha256 = 'd'.repeat(64);
-  const staleGrade = await (await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: privateHeaders }), env)).json();
+  const staleGrade = await (await worker.fetch(new Request(`${BASE}/papers/catalog?refresh=1`, { headers: privateHeaders }), env)).json();
   assert.equal(staleGrade.papers.chem['2022'].assessment, undefined, 'stale grades are omitted while the paper remains readable');
   catalogFile = { subjects: { chem: ['2022'], bio: [] } };
   const paperManifest = await worker.fetch(new Request(`${BASE}/papers/chem/2022/manifest`, { headers: privateHeaders }), env);
@@ -333,7 +306,6 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   const stranger = await worker.fetch(new Request(`${BASE}/bank`, { headers: privateHeaders }), env);
   assert.equal(stranger.status, 403);
   assert.equal((await stranger.json()).error, 'owner_only');
-  assert.equal((await worker.fetch(new Request(`${BASE}/books/chem/manifest`, { headers: privateHeaders }), env)).status, 403);
   assert.equal((await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: privateHeaders }), env)).status, 403);
 
   // Upgrade an already connected owner's session; no new token is supplied by the user.
@@ -368,10 +340,6 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   assert.equal(savedViaPassword.status, 200);
   const pictureViaPassword = await worker.fetch(new Request(`${BASE}/bank/images/chem-2022-mc-01.jpg`, { headers: passwordHeaders }), env);
   assert.equal(pictureViaPassword.status, 200);
-  const passwordBookManifest = await worker.fetch(new Request(`${BASE}/books/chem/manifest`, { headers: passwordHeaders }), env);
-  assert.equal(passwordBookManifest.status, 200);
-  assert.equal((await passwordBookManifest.json()).version, bookVersion);
-  assert.equal((await worker.fetch(new Request(pageUrl, { headers: passwordHeaders }), env)).status, 200);
   assert.equal((await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: passwordHeaders }), env)).status, 200);
   assert.equal((await worker.fetch(new Request(paperPageUrl, { headers: passwordHeaders }), env)).status, 200);
   assert.equal(userCalls, userCallsBeforePasswordReads, 'verified owner sessions avoid repeated GitHub identity reads');
@@ -542,6 +510,52 @@ test('private bank fails closed when storage or secrets are not configured', asy
   assert.equal((await response.json()).error, 'service_not_configured');
 });
 
+test('paper navigation validates final pages and metadata caching never bypasses per-request authorization', async t => {
+  const originalFetch = globalThis.fetch, counts = { catalog: 0, manifest: 0, pages: 0, figures: 0 };
+  const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'synthetic-password', GITHUB_TOKEN: 'unique-metadata-token' };
+  const sha = 'e'.repeat(64), version = sha.slice(0, 16);
+  let sections = [{ label: 'Summary', page: 1 }, { label: 'Part B', page: 2 }];
+  globalThis.fetch = async input => {
+    const url = String(input);
+    if (url.endsWith('/user')) return Response.json({ login: 'Makise-Kurisu-D' });
+    if (url.endsWith('/papers/catalog.json')) {
+      counts.catalog++;
+      return Response.json({ encoding: 'base64', content: b64json({ subjects: { chem: ['2022'], bio: [] } }) });
+    }
+    if (url.endsWith('/manifest.json')) {
+      counts.manifest++;
+      return Response.json({ encoding: 'base64', content: b64json({ version, source_sha256: sha, pages: 2, format: 'jpeg', dpi: 200, quality: 85, sections }) });
+    }
+    if (url.includes('/question-bank/images/')) counts.figures++; else counts.pages++;
+    return Response.json({ encoding: 'base64', content: btoa(String.fromCharCode(255, 216, 255, 217)) });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const login = await worker.fetch(new Request(`${BASE}/auth/password`, { method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: env.SITE_PASSWORD }) }), env);
+  const headers = { Origin: ORIGIN, Authorization: 'Bearer ' + (await login.json()).sessionId };
+  const request = path => worker.fetch(new Request(BASE + path, { headers }), env);
+  const manifest = await request('/papers/chem/2022/manifest');
+  assert.deepEqual((await manifest.json()).sections, sections);
+  assert.equal((await request(`/papers/chem/2022/pages/${version}/1`)).status, 200);
+  assert.equal((await request(`/papers/chem/2022/pages/${version}/2`)).status, 200);
+  assert.equal(counts.catalog, 1); assert.equal(counts.manifest, 1);
+  assert.equal(counts.pages, 2, 'each page reads only its image after metadata is warmed');
+  assert.equal((await request('/bank/images/chem-2022-fig-example.jpg')).status, 200);
+  assert.equal(counts.figures, 1);
+  assert.equal((await request('/bank/images/chem-2022-fig-../../records.json')).status, 404);
+  assert.equal((await request(`/papers/chem/2022/pages/${'f'.repeat(16)}/1`)).status, 404);
+  assert.equal(counts.pages, 2, 'old versions never request an archived image');
+  sections = [{ label: 'Invalid', page: 3 }];
+  assert.equal((await request('/papers/chem/2022/manifest?refresh=1')).status, 502);
+  sections = [{ label: 'Revised section', page: 1 }];
+  assert.deepEqual((await (await request('/papers/chem/2022/manifest?refresh=2')).json()).sections, sections);
+  const before = JSON.stringify(counts);
+  assert.equal((await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: { ...headers, Origin: 'https://other.example' } }), env)).status, 403);
+  await worker.fetch(new Request(`${BASE}/auth/logout`, { method: 'POST', headers }), env);
+  assert.equal((await request('/papers/chem/2022/manifest')).status, 401);
+  assert.equal((await request('/bank/images/chem-2022-fig-example.jpg')).status, 401);
+  assert.equal(JSON.stringify(counts), before, 'invalid origin and logged-out sessions cannot consume cached private metadata');
+});
+
 test('password login checks configuration, origin, attempts, expiry and credential isolation', async () => {
   const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'test-password', GITHUB_TOKEN: 'server-only-test-token' };
   function request(password, ip = '192.0.2.1', origin = ORIGIN) {
@@ -589,3 +603,4 @@ test('storage failures return a readable CORS error instead of an opaque browser
   const health = await worker.fetch(new Request(`${BASE}/health`), env);
   assert.equal((await health.json()).passwordConfigured, true);
 });
+

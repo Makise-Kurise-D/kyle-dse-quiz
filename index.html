@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Kyle 錯題本 · DSE 複習</title>
 <meta name="description" content="Kyle 的 DSE 化學／生物錯題本：按課題練習、自動批改、踩分點自檢、刷題記錄">
-<link rel="stylesheet" href="style.css?v=library-grades-20261013">
+<link rel="stylesheet" href="style.css?v=topic-library-20261015">
+<link rel="stylesheet" href="library.css?v=topic-library-20261015">
 </head>
 <body>
 
@@ -21,9 +22,10 @@
   <a class="rail-item" href="#/practice" data-route="practice">
     <span class="rail-ico">✏️</span><span>練習</span>
   </a>
-  <a class="rail-item" href="#/library" data-route="library">
-    <span class="rail-ico">📖</span><span>錯題集</span>
+  <a class="rail-item" href="#/library/books" data-route="library">
+    <span class="rail-ico">📖</span><span>錯題庫</span>
   </a>
+  <a class="rail-item" href="#/library/papers" data-route="papers"><span class="rail-ico">🖊️</span><span>批改卷</span></a>
   <a class="rail-item" href="#/records" data-route="records">
     <span class="rail-ico">📈</span><span>記錄</span>
   </a>
@@ -50,9 +52,10 @@
   <a class="tab-item" href="#/practice" data-route="practice">
     <span class="tab-ico">✏️</span><span class="tab-label">練習</span>
   </a>
-  <a class="tab-item" href="#/library" data-route="library">
-    <span class="tab-ico">📖</span><span class="tab-label">錯題集</span>
+  <a class="tab-item" href="#/library/books" data-route="library">
+    <span class="tab-ico">📖</span><span class="tab-label">錯題庫</span>
   </a>
+  <a class="tab-item" href="#/library/papers" data-route="papers"><span class="tab-ico">🖊️</span><span class="tab-label">批改卷</span></a>
   <a class="tab-item" href="#/records" data-route="records">
     <span class="tab-ico">📈</span><span class="tab-label">記錄</span>
   </a>
@@ -69,6 +72,8 @@ window.addEventListener('error', function () {
 </script>
 <script>window.QUIZ_PRIVATE_BANK=true;</script>
 <script>window.QUIZ_PASSWORD_AUTH=true;</script>
-<script src="app.js?v=login-speed-20261015"></script>
+<script defer src="library.js?v=topic-library-20261015"></script>
+<script defer src="app.js?v=topic-library-20261015"></script>
 </body>
 </html>
+
