@@ -32,7 +32,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'login-recovery-20261015');
+  assert.equal(status.version, 'login-speed-20261015');
   assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
@@ -40,6 +40,7 @@ test('health and CORS preflight are available locally', async () => {
   }), env);
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get('access-control-allow-origin'), ORIGIN);
+  assert.equal(preflight.headers.get('access-control-max-age'), '600');
 });
 
 test('the Worker responds through a local HTTP service', { skip: process.env.QUIZ_SKIP_HTTP_TEST === '1' }, async t => {
@@ -59,7 +60,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'login-recovery-20261015', passwordConfigured: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'login-speed-20261015', passwordConfigured: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -476,6 +477,63 @@ test('password login never waits for expired storage tokens and transient refres
   finishRefresh(Response.json({ error: 'bad_refresh_token' }, { status: 400 }));
   assert.equal((await pending).status, 200, 'a losing renewal uses the newer stored connection');
   assert.equal(await env.SESSIONS.get('service:github-owner'), renewed);
+});
+
+test('login warms the bank while saving its session and private reads share only authorized short-lived results', { timeout: 2000 }, async t => {
+  const originalFetch = globalThis.fetch, originalNow = Date.now;
+  const started = originalNow();
+  let now = started, bankCalls = 0, finishBank, releaseSession, warmingStarted, sessionStarted;
+  const bankStarted = new Promise(resolve => { warmingStarted = resolve; });
+  const sessionSaving = new Promise(resolve => { sessionStarted = resolve; });
+  const saveAllowed = new Promise(resolve => { releaseSession = resolve; });
+  const deletes = [];
+  class SlowSessionKV extends MemoryKV {
+    async put(key, value) {
+      if (/^[A-Za-z0-9_-]{43}$/.test(key)) { sessionStarted(); await saveAllowed; }
+      await super.put(key, value);
+    }
+    async delete(key) { deletes.push(key); await super.delete(key); }
+  }
+  const env = { SESSIONS: new SlowSessionKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'test-password',
+    GITHUB_TOKEN: 'speed-test-upstream-token' };
+  Date.now = () => now;
+  t.after(() => { globalThis.fetch = originalFetch; Date.now = originalNow; });
+  const bank = { subjects: { chem: { topics: [], items: [] }, bio: { topics: [], items: [] } } };
+  globalThis.fetch = async url => {
+    if (String(url).endsWith('/user')) return Response.json({ login: 'Makise-Kurisu-D' });
+    if (String(url).endsWith('/question-bank/bank.json')) {
+      bankCalls++;
+      if (bankCalls === 1) { warmingStarted(); return new Promise(resolve => { finishBank = resolve; }); }
+      return Response.json({ encoding: 'base64', content: b64json(bank) });
+    }
+    throw new Error('Unexpected speed-test request');
+  };
+  const background = [], ctx = { waitUntil(promise) { background.push(promise); } };
+  const login = worker.fetch(new Request(`${BASE}/auth/password`, { method: 'POST',
+    headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'test-password' }) }), env, ctx);
+  await Promise.all([bankStarted, sessionSaving]);
+  assert.equal(bankCalls, 1, 'the bank starts loading before session persistence completes');
+  releaseSession();
+  const response = await login;
+  assert.equal(response.status, 200, 'login does not await the bank download');
+  assert.equal(deletes.length, 0, 'a first-attempt login avoids an unnecessary KV delete');
+  const id = (await response.json()).sessionId;
+  const headers = { Origin: ORIGIN, Authorization: `Bearer ${id}` };
+  const read = worker.fetch(new Request(`${BASE}/bank`, { headers }), env);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bankCalls, 1);
+  finishBank(Response.json({ encoding: 'base64', content: b64json(bank) }));
+  assert.deepEqual(await (await read).json(), bank);
+  await Promise.all(background);
+  assert.equal((await worker.fetch(new Request(`${BASE}/bank`, { headers }), env)).headers.get('cache-control'), 'no-store');
+  assert.equal(bankCalls, 1, 'a recent authorized bank read skips GitHub');
+  assert.equal((await worker.fetch(new Request(`${BASE}/bank`, { headers: { Origin: ORIGIN } }), env)).status, 401);
+  assert.equal((await worker.fetch(new Request(`${BASE}/bank`, { headers: { ...headers, Origin: 'https://attacker.example' } }), env)).status, 403);
+  now += 31000;
+  assert.equal((await worker.fetch(new Request(`${BASE}/bank`, { headers }), env)).status, 200);
+  assert.equal(bankCalls, 2, 'bank data refreshes after the short memory TTL');
+  await worker.fetch(new Request(`${BASE}/auth/logout`, { method: 'POST', headers }), env);
+  assert.equal((await worker.fetch(new Request(`${BASE}/bank`, { headers }), env)).status, 401, 'warm bank data cannot bypass logout');
 });
 
 test('private bank fails closed when storage or secrets are not configured', async () => {

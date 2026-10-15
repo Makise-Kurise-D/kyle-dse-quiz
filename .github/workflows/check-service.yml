@@ -42,6 +42,7 @@ jobs:
               const body = response.status === 204 ? {} : await response.json();
               const result = { probe: probe.name, status: response.status, elapsedMs: Date.now() - started,
                 allowOrigin: response.headers.get('access-control-allow-origin'),
+                preflightMaxAge: response.headers.get('access-control-max-age'),
                 body: probe.name === 'health' ? { ok: body.ok, version: body.version, passwordConfigured: body.passwordConfigured } : { error: body.error } };
               console.log(JSON.stringify(result));
               if (!probe.expected(result)) process.exitCode = 1;
