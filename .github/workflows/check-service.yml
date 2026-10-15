@@ -2,8 +2,15 @@ name: Check live sync service
 
 on:
   push:
+    branches: [main]
     paths:
       - '.github/workflows/check-service.yml'
+      - 'app.js'
+      - 'app.test.mjs'
+      - 'index.html'
+      - 'library.js'
+      - 'library.css'
+      - 'style.css'
   workflow_dispatch:
   workflow_run:
     workflows: ['Deploy Cloudflare Worker']
@@ -16,11 +23,13 @@ jobs:
   probe:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.event.repository.default_branch }}
+      - name: Test website and Worker
+        run: node --test app.test.mjs library.test.mjs sync-worker/worker.test.mjs
       - name: Probe health and password login reachability
         run: |
           node --input-type=module <<'NODE'
@@ -65,5 +74,34 @@ jobs:
               process.exitCode = 1;
             }
           }));
+          NODE
+      - name: Verify published homepage and versioned assets
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const base = 'https://makise-kurisu-d.github.io/kyle-dse-quiz/';
+          const index = readFileSync('index.html', 'utf8');
+          const assets = [...index.matchAll(/(?:src|href)="((?:app|library)\.js\?v=[^"\s]+|(?:style|library)\.css\?v=[^"\s]+)"/g)].map(m => m[1]);
+          if (assets.length !== 4) throw new Error('Missing versioned website assets');
+          let lastError;
+          for (let attempt = 1; attempt <= 24; attempt++) {
+            try {
+              const response = await fetch(base + '?probe=' + Date.now(), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+              const html = await response.text();
+              if (!response.ok || !assets.every(asset => html.includes(asset))) throw new Error('Homepage unavailable or awaiting current Pages release: HTTP ' + response.status);
+              await Promise.all(assets.map(async asset => {
+                const result = await fetch(new URL(asset + '&probe=' + Date.now(), base), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+                if (!result.ok || await result.text() !== readFileSync(asset.split('?')[0], 'utf8')) throw new Error('Published asset differs or is unavailable: ' + asset + ' HTTP ' + result.status);
+              }));
+              console.log(JSON.stringify({ probe: 'published-website', status: response.status, assets, attempt }));
+              lastError = null;
+              break;
+            } catch (error) {
+              lastError = error;
+              console.warn(JSON.stringify({ probe: 'pages-propagation', attempt, error: error.message }));
+              if (attempt < 24) await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+          }
+          if (lastError) throw lastError;
           NODE
 

@@ -8,7 +8,7 @@
   }
   var PRIVATE_BANK = window.QUIZ_PRIVATE_BANK === true;
   var DATA = PRIVATE_BANK ? emptyBank() : window.QUIZ_DATA;
-  var bankLoaded = !PRIVATE_BANK, bankPromise = null, bankMessage = '';
+  var bankLoaded = !PRIVATE_BANK, bankPromise = null, bankMessage = '', bankFailed = false, bankRequest = 0;
   var imageUrls = new Map(), imageReads = new Map(), imageObserver = null;
   var LS_SESS = 'dse_quiz_sessions_v2';
   var LS_DRAFT = 'dse_quiz_draft_v2';
@@ -219,7 +219,8 @@
         ? label + ' · 練習 ' + (sessions.length + archive.length) + ' 次 · ' + fmtDateTime(result.savedAt || checkedAt)
         : '本機有新變更，等待自動同步…');
       if (syncRevision !== sentRevision) scheduleSync();
-      if (location.hash.indexOf('/records') >= 0) renderRecords();
+      if ((location.hash.replace(/^#/, '').split('?')[0] || '/') === '/' && before !== state(backupData())) renderHome();
+      else if (location.hash.indexOf('/records') >= 0) renderRecords();
       else if (location.hash.indexOf('/library/books') >= 0 && before !== state(backupData())) route();
       return true;
     }).catch(function (err) {
@@ -243,6 +244,8 @@
     if (el) { el.textContent = message; el.hidden = false; }
   }
   function forgetBank() {
+    bankRequest++;
+    bankPromise = null; bankMessage = ''; bankFailed = false;
     releasePaper();
     if (imageObserver) { imageObserver.disconnect(); imageObserver = null; }
     window.DSELibrary.reset();
@@ -278,15 +281,14 @@
       syncFetch('/auth/password', { method: 'POST', headers: headers, body: JSON.stringify({ password: password }), cache: 'no-store' })
         .then(readSyncResponse).then(function (data) {
           if (!data || !/^[A-Za-z0-9_-]{40,80}$/.test(data.sessionId || '')) throw new Error('登入服務未回傳有效連接');
-          var previous = bankPromise || Promise.resolve();
           localStorage.setItem(LS_AUTH_MODE, 'password');
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
           authenticated = true;
-          setSyncStatus('密碼已驗證，正在載入題庫…');
+          setSyncStatus('已登入，正在背景同步…');
           forgetBank(); bankMessage = '';
-          return previous.catch(function () {}).then(function () {
-            return Promise.all([loadBank(), syncNow(true)]);
-          });
+          location.hash = '#/';
+          route();
+          return Promise.all([loadBank(), syncNow(true)]);
         }).catch(function (err) {
           setSyncStatus((authenticated ? '已登入，但資料載入未完成：' : '登入失敗：') + err.message);
         }).finally(function () { passwordLoginBusy = false; button.disabled = false; });
@@ -297,11 +299,13 @@
     if (bankPromise) return bankPromise;
     var session = localStorage.getItem(LS_SYNC_SESSION);
     if (!session || !SYNC_API) return Promise.resolve(false);
+    var requestId = ++bankRequest;
+    bankFailed = false;
     bankMessage = PASSWORD_AUTH ? '已登入，正在載入你的錯題庫…' : '正在載入你的錯題庫…';
-    route();
     bankPromise = syncFetch('/bank', {
       method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store'
     }).then(readSyncResponse).then(function (bank) {
+      if (requestId !== bankRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       ['chem', 'bio'].forEach(function (code) {
         if (!bank.subjects || !bank.subjects[code] || !Array.isArray(bank.subjects[code].items) || !Array.isArray(bank.subjects[code].topics)) {
           throw new Error('錯題庫格式有誤');
@@ -313,15 +317,38 @@
         }))) throw new Error('原題圖表路徑有誤');
         });
       });
-      if (localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       DATA = bank; bankLoaded = true; bankMessage = '';
-      seedReviewPlan(); normalizeReviewPlan(); route();
+      seedReviewPlan(); normalizeReviewPlan(); refreshBankView();
       return true;
     }).catch(function (err) {
+      if (requestId !== bankRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       expireConnection(err, session);
-      bankMessage = '未能讀取錯題庫：' + err.message; route(); return false;
-    }).finally(function () { bankPromise = null; });
+      bankFailed = true;
+      bankMessage = '未能讀取錯題庫：' + err.message; refreshBankView(); return false;
+    }).finally(function () { if (requestId === bankRequest) bankPromise = null; });
+    refreshBankView();
     return bankPromise;
+  }
+  function refreshBankView() {
+    // Paper browsing has its own requests and must not restart when the bank arrives.
+    if (location.hash.indexOf('#/library/papers') !== 0) route(true);
+  }
+  function bankStatusHtml() {
+    if (bankLoaded) return '';
+    return '<div class="bank-status"><p class="review-note" id="bankStatus" role="status" aria-live="polite">' +
+      esc(bankMessage || '正在背景載入錯題庫，本機做題記錄可先查看。') + '</p>' +
+      (bankFailed ? '<button class="btn btn-ghost" id="bankRetryBtn" type="button">重試載入錯題庫</button>' : '') + '</div>';
+  }
+  function bindBankRetry() {
+    var retry = $('#bankRetryBtn');
+    if (retry) retry.addEventListener('click', function () { loadBank(); });
+  }
+  function renderBankLoading() {
+    $('#app').innerHTML = '<section class="page"><header class="page-head"><h1 class="page-title">錯題庫</h1></header>' +
+      bankStatusHtml() + '<p class="review-note">題庫載入後會自動顯示，你也可以先查看做題記錄或批改卷。</p>' +
+      '<a class="btn btn-ghost" href="#/">返回主頁</a> <a class="btn btn-ghost" href="#/records">做題記錄</a> ' +
+      '<a class="btn btn-ghost" href="#/library/papers">紅筆批改卷</a></section>';
+    bindBankRetry();
   }
   function renderBankGate() {
     $('#app').innerHTML = '<section class="home"><div class="hero">' +
@@ -399,13 +426,13 @@
           .then(function () { return Promise.all([loadBank(), syncNow(true)]); });
       } else {
         loadBank();
-        setTimeout(function () { syncNow(true); }, 600);
+        setTimeout(function () { syncNow(true); }, 0);
       }
     }
   }
-  window.addEventListener('online', function () { syncNow(true); });
+  window.addEventListener('online', function () { loadBank(); syncNow(true); });
   window.addEventListener('focus', function () {
-    if (localStorage.getItem(LS_SYNC_SESSION)) syncNow(true);
+    if (localStorage.getItem(LS_SYNC_SESSION)) { loadBank(); syncNow(true); }
   });
   window.addEventListener('storage', function (event) {
     if (event.key === LS_SYNC_SESSION) {
@@ -596,7 +623,7 @@
   }
 
   /* ---------------- 路由 ---------------- */
-  function route() {
+  function route(preserveScroll) {
     window.DSELibrary.remember();
     if (imageObserver) imageObserver.disconnect();
     var h = location.hash.replace(/^#/, '').split('?')[0] || '/';
@@ -606,8 +633,11 @@
     $all('.rail-item,.tab-item').forEach(function (a) {
       a.classList.toggle('active', a.dataset.route === (view === 'library' && parts[1] === 'papers' ? 'papers' : view));
     });
-    window.scrollTo(0, 0);
-    if (PRIVATE_BANK && !bankLoaded && view !== 'records') return renderBankGate();
+    if (preserveScroll !== true) window.scrollTo(0, 0);
+    if (PRIVATE_BANK && !bankLoaded && view !== 'records') {
+      if (!localStorage.getItem(LS_SYNC_SESSION)) return renderBankGate();
+      if (view !== 'home' && !(view === 'library' && parts[1] === 'papers')) return renderBankLoading();
+    }
     if (view === 'home') return renderHome();
     if (view === 'practice') return renderPractice(parts[1] || 'chem');
     if (view === 'library') return renderLibrary(parts.slice(1));
@@ -639,7 +669,7 @@
       var r = doneIds[id];
       return r.ok === true && (r.tot ? r.marks / r.tot >= 1 : true);
     }).length;
-    var due = totalItems - conquered;
+    var due = Math.max(0, totalItems - conquered);
 
     // 推薦課題：全部科目合併，按失分排序，取仍有未清錯題的前三
     var recs = [];
@@ -662,10 +692,11 @@
           '<h1 class="hero-title">Kyle 嘅錯題本</h1>' +
           '<p class="hero-sub">錯過嘅唔可以再錯 —— 逐課題清，每個踩分點都執返。</p>' +
           '<p class="review-note" id="syncStatus" role="status" aria-live="polite"' + (syncMessage ? '' : ' hidden') + '>' + esc(syncMessage) + '</p>' +
+          bankStatusHtml() +
           '<div class="hero-stat">' +
-            '<span><b>' + totalItems + '</b> 題在庫</span>' +
+            '<span><b>' + (bankLoaded ? totalItems : '—') + '</b> 題在庫</span>' +
             '<span><b class="c-green">' + conquered + '</b> 已征服</span>' +
-            '<span><b class="c-red">' + due + '</b> 待清</span>' +
+            '<span><b class="c-red">' + (bankLoaded ? due : '—') + '</b> 待清</span>' +
           '</div>' +
           '<div class="hero-cycle" id="heroCycle">' +
             '<span class="cycle-ico">🔄</span>' +
@@ -685,7 +716,7 @@
         '<div class="home-sec">' +
           '<div class="home-sec-h"><h2>🔥 建議優先複習</h2><a class="link" href="#/practice/chem">全部課題 →</a></div>' +
           '<div class="rec-grid">' +
-            top.map(function (r) {
+            (bankLoaded ? top.map(function (r) {
               var pct = pctOf(r.code, r.marks);
               return '<a class="rec-card" href="#/session/' + r.code + '/' + encodeURIComponent(r.topic) + '">' +
                 '<div class="rec-top"><span class="rec-subj">' + SUBJECT_META[r.code].icon + ' ' +
@@ -696,10 +727,11 @@
                 '<div class="rec-bar"><i style="width:' + pct + '"></i></div>' +
                 '<div class="rec-meta">' + r.n + ' 題錯 · 失分 ' + r.marks + ' 分 · 佔該科 ' + pct + '</div>' +
               '</a>';
-            }).join('') +
+            }).join('') : '<p class="review-note">錯題庫載入後顯示推薦課題。</p>') +
           '</div>' +
         '</div>' +
       '</section>';
+    bindBankRetry();
     startCycleTimer();
   }
 
