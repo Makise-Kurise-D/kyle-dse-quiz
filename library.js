@@ -202,7 +202,7 @@
       if (activeKey === code && context === api && generation === topicGeneration) root.querySelector('#mlGradeStatus').textContent = '原卷成績暫未能讀取。可先查看錯題；重新進入此頁可重試。';
     });
   }
-  function card(item) {
+  function card(item, year) {
     var row = context.index[item.id], state = row ? row.state : 'unseen';
     var own = item.kind === 'mc' ? text(item.option || '未作答') : (item.my || []).map(function (segment) {
       return '<span' + (segment[1] ? ' class="ml-answer-error"' : '') + '>' + text(segment[0]) + '</span>';
@@ -231,7 +231,7 @@
       (row ? '<div class="ml-history"><h3>最近重做記錄</h3><p>與上方原卷答案分開記錄 · 連續全對 ' + row.streak + ' 次</p><ol>' +
         row.history.slice(-5).reverse().map(function (h) { return '<li>' + context.formatDate(h.t) + ' · ' +
           (h.correct ? '全對' : '未全對') + (h.tot ? ' · ' + esc(h.marks + '/' + h.tot) : '') + '</li>'; }).join('') + '</ol></div>' : '') +
-      '<a class="btn btn-primary" href="#/session/' + context.code + '/' + encodeURIComponent(item.topic) + '">練習本課題</a></div></details>';
+      '<a class="btn btn-primary" href="#/session/' + context.code + '/' + encodeURIComponent(item.topic) + (year ? '/' + encodeURIComponent(year) : '') + '">練習本課題</a></div></details>';
   }
   function questions(code, topicCode) {
     var subject = context.data.subjects[code], topic = subject.topics.filter(function (t) { return t.code === topicCode; })[0];
@@ -245,7 +245,7 @@
       '<label>狀態<select id="mlStatus"><option value="">全部狀態</option>' + states.map(function (s) { return '<option value="' + s.key + '">' + s.label + '</option>'; }).join('') + '</select></label>' +
       '<label>題型<select id="mlKind"><option value="">全部題型</option><option value="mc">選擇題</option><option value="sub">主觀題</option></select></label>' +
       '<label>年份<select id="mlYear"><option value="">全部年份</option>' + years.map(function (y) { return '<option>' + esc(y) + '</option>'; }).join('') + '</select></label></div>' +
-      '<div class="ml-section-head"><p id="mlMatchCount" role="status" aria-live="polite"></p><a class="btn btn-primary" href="#/session/' + code + '/' + encodeURIComponent(topicCode) + '">練習本課題</a></div>' +
+      '<div class="ml-section-head"><p id="mlMatchCount" role="status" aria-live="polite"></p><a class="btn btn-primary" id="mlPracticeLink" href="#/session/' + code + '/' + encodeURIComponent(topicCode) + '">練習本課題</a></div>' +
       '<div id="mlQuestions"></div><button class="btn btn-ghost" id="mlMore" hidden type="button">顯示更多</button>');
     var root = context.root, search = root.querySelector('#mlSearch'), timer;
     ['Status', 'Kind', 'Year'].forEach(function (name) {
@@ -258,6 +258,7 @@
     });
     function draw() {
       if (activeKey !== key) return;
+      root.querySelector('#mlPracticeLink').href = '#/session/' + code + '/' + encodeURIComponent(topicCode) + (f.year ? '/' + encodeURIComponent(f.year) : '');
       var query = context.normalize(f.query.trim()).toLowerCase();
       var matches = normalized.filter(function (row) {
         var it = row.item, state = context.index[it.id];
@@ -265,7 +266,7 @@
           (!f.year || it.year === f.year) && (!query || row.search.indexOf(query) >= 0);
       });
       root.querySelector('#mlMatchCount').textContent = matches.length + ' / ' + items.length + ' 張錯題卡';
-      root.querySelector('#mlQuestions').innerHTML = matches.slice(0, limit).map(function (row) { return card(row.item); }).join('') || '<div class="empty-ok">沒有符合條件的錯題。</div>';
+      root.querySelector('#mlQuestions').innerHTML = matches.slice(0, limit).map(function (row) { return card(row.item, f.year); }).join('') || '<div class="empty-ok">沒有符合條件的錯題。</div>';
       root.querySelector('#mlMore').hidden = matches.length <= limit;
       Array.prototype.forEach.call(root.querySelectorAll('.ml-question'), function (detail) {
         detail.addEventListener('toggle', function () {

@@ -686,11 +686,11 @@
       if (view !== 'home' && !(view === 'library' && parts[1] === 'papers')) return renderBankLoading();
     }
     if (view === 'home') return renderHome();
-    if (view === 'practice') return renderPractice(parts[1] || 'chem');
+    if (view === 'practice') return renderPractice(parts[1] || 'chem', parts[2]);
     if (view === 'library') return renderLibrary(parts.slice(1));
     if (view === 'random') return renderRandomPicker();
     if (view === 'session') {
-      renderSession(parts[1], decodeURIComponent(parts[2] || ''));
+      renderSession(parts[1], decodeURIComponent(parts[2] || ''), undefined, parts[3]);
       return;
     }
     if (view === 'records') return renderRecords();
@@ -1215,8 +1215,15 @@
     return (all ? Math.round(marks / all * 100) : 0) + '%';
   }
 
-  /* ---------------- 練習頁：科目切換＋課題排序 ---------------- */
-  function renderPractice(code) {
+  function practiceHref(code, year) {
+    return '#/practice/' + code + (year && year !== 'all' ? '/' + encodeURIComponent(year) : '');
+  }
+  function practiceSessionHref(code, topic, year) {
+    return '#/session/' + code + '/' + encodeURIComponent(topic) + (year && year !== 'all' ? '/' + encodeURIComponent(year) : '');
+  }
+
+  /* ---------------- 練習頁：年份 → 課題，科目切換保留可用年份 ---------------- */
+  function renderPractice(code, requestedYear) {
     if (SUBJECT_META[code] && SUBJECT_META[code].soon) {
       $('#app').innerHTML = '<section class="page"><div class="soon-banner">📐 ' +
         esc(SUBJECT_META[code].name) + ' 錯題庫即將推出，考完好試卷就會自動出現。</div>' +
@@ -1224,56 +1231,97 @@
       return;
     }
     if (!subjOf(code)) code = 'chem';
-    var st = topicStats(code), latest = latestMap();
-    var totalMarks = Object.keys(st).reduce(function (s, t) { return s + st[t].marks; }, 0);
-    var rows = Object.keys(st).map(function (t) {
-      return { topic: t, marks: st[t].marks, n: st[t].n, due: dueCount(code, t, latest) };
-    }).sort(function (a, b) {
-      // 有待清的先排，其內按失分降序
+    var years = Array.from(new Set(itemsOf(code).map(function (it) { return String(it.year); }))).sort().reverse();
+    var selected = requestedYear || 'all';
+    if (years.indexOf(selected) < 0) selected = 'all';
+    var other = code === 'bio' ? 'chem' : 'bio';
+    var otherYear = selected === 'all' || itemsOf(other).some(function (it) { return String(it.year) === selected; }) ? selected : 'all';
+    var filtered = itemsOf(code).filter(function (it) { return selected === 'all' || String(it.year) === selected; });
+    var latest = latestMap(), st = {};
+    filtered.forEach(function (it) {
+      var row = st[it.topic] || (st[it.topic] = { topic: it.topic, marks: 0, known: 0, n: 0, due: 0 });
+      row.n++;
+      if (Number.isFinite(it.lost)) { row.marks += it.lost; row.known++; }
+      if (isWrong(latest[it.id])) row.due++;
+    });
+    var rows = Object.keys(st).map(function (key) { return st[key]; }).sort(function (a, b) {
       if ((a.due > 0) !== (b.due > 0)) return a.due > 0 ? -1 : 1;
       return b.marks - a.marks;
     });
-
-    var tabs = ['chem', 'bio', 'math'].map(function (c) {
-      var m = SUBJECT_META[c];
-      if (m.soon) {
-        return '<button class="subj-tab is-soon" type="button" disabled>' +
-          m.icon + ' ' + m.name + '<small>即將</small></button>';
-      }
-      return '<a class="subj-tab' + (c === code ? ' on' : '') + '" href="#/practice/' + c + '">' +
-        m.icon + ' ' + m.name + '</a>';
-    }).join('');
-
-    $('#app').innerHTML =
-      '<section class="page">' +
-        '<header class="page-head">' +
-          '<div><h1 class="page-title">' + SUBJECT_META[code].icon + ' ' + esc(subjOf(code).name) + '練習</h1>' +
-          '<p class="page-sub">按每個課題嘅失分同佔比排序，失分越多排越前。</p></div>' +
-          '<a class="btn btn-ghost" href="#/">← 主頁</a>' +
-        '</header>' +
-        '<div class="subj-tabs">' + tabs + '</div>' +
-        '<div class="topic-list">' +
-          rows.map(function (r, i) {
-            var pct = (totalMarks ? Math.round(r.marks / totalMarks * 100) : 0);
-            return '<a class="topic-card' + (r.due ? '' : ' is-clear') + '" ' +
-              'href="#/session/' + code + '/' + encodeURIComponent(r.topic) + '">' +
-              '<div class="topic-rank rank-' + Math.min(i + 1, 4) + '">' + (i + 1) + '</div>' +
-              '<div class="topic-main">' +
-                '<div class="topic-name">' + esc(r.topic + ' ' + topicName(code, r.topic)) + '</div>' +
-                '<div class="topic-bar"><i style="width:' + pct + '%"></i></div>' +
-                '<div class="topic-meta">' + r.n + ' 道錯題 · 失分 <b>' + r.marks + '</b> 分 · 佔比 ' + pct + '%</div>' +
-              '</div>' +
-              '<div class="topic-side">' +
-                (r.due ? '<span class="pill pill-red">待清 ' + r.due + '</span>'
-                       : '<span class="pill pill-green">已清 ✔</span>') +
-                '<span class="topic-go">開始 →</span>' +
-              '</div>' +
-            '</a>';
-          }).join('') +
-        '</div>' +
-        '<a class="btn btn-random" href="#/session/' + code + '/' + encodeURIComponent('__random__') +
-          '">🎲 隨機抽 10 題速測</a>' +
-      '</section>';
+    var yearLabel = selected === 'all' ? '全部年份' : selected + ' 年';
+    var otherHref = practiceHref(other, otherYear), catalog = null, requestId = paperRequest;
+    $('#app').innerHTML = '<section class="page practice-inventory">' +
+      '<header class="page-head"><div><h1 class="page-title">課題練習</h1><p class="page-sub">先選年份，再揀課題開始練習。</p></div>' +
+      '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="' + otherHref + '" aria-label="上一個學科：' + SUBJECT_META[other].name + '">‹ LB</a>' +
+      '<strong>' + SUBJECT_META[code].icon + ' ' + SUBJECT_META[code].name + '</strong><a class="shoulder-link" href="' + otherHref + '" aria-label="下一個學科：' + SUBJECT_META[other].name + '">RB ›</a></div>' +
+      '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
+      '<div class="inventory-layout"><section class="inventory-years" aria-label="選擇練習年份"><h2>YEAR SELECT <span>/ 選擇年份</span></h2>' +
+      '<div class="year-list" id="practiceYears"></div><p class="year-grade-note">LV 原卷已記錄等級 · HP 原卷分數 · SP 收錄錯題數。未提供的成績顯示「—」。</p>' +
+      '<p class="year-grade-note" id="practiceGradeStatus" role="status">正在核對原卷成績…</p></section>' +
+      '<section class="inventory-topics" aria-label="所選年份的課題"><div class="practice-topic-heading"><h2>TOPIC LIST <span>/ 選擇課題</span></h2>' +
+      '<span>' + String(rows.length).padStart(2, '0') + ' TOPICS</span></div><p class="practice-selection" role="status">' + yearLabel + ' · ' + SUBJECT_META[code].name + ' · ' + filtered.length + ' 道錯題</p>' +
+      '<div class="topic-list" id="practiceTopics">' + rows.map(function (row) {
+        return '<a class="topic-card practice-topic' + (row.due ? '' : ' is-clear') + '" data-topic="' + esc(row.topic) + '" href="' + practiceSessionHref(code, row.topic, selected) + '">' +
+          '<span class="practice-topic-code">' + esc(row.topic) + '</span><span class="topic-main"><span class="topic-name">' + esc(topicName(code, row.topic)) + '</span>' +
+          '<span class="topic-meta">' + (row.due ? '待複習 ' + row.due + ' 題' : '本輪已清 ✔') + '</span></span>' +
+          '<span class="practice-topic-count" aria-label="' + row.n + ' 道錯題"><small>×</small> ' + String(row.n).padStart(2, '0') + '</span></a>';
+      }).join('') + (rows.length ? '' : '<div class="empty-note">此科目尚未收錄錯題，加入題庫後會自動顯示年份與課題。</div>') + '</div>' +
+      '<section class="topic-info" aria-label="課題資訊"><span aria-hidden="true">INFO</span><div id="practiceTopicInfo" aria-live="polite"></div></section>' +
+      (filtered.length ? '<a class="btn btn-random" href="' + practiceSessionHref(code, '__random__', selected) + '">🎲 ' + yearLabel + '隨機抽 10 題</a>' : '') +
+      '</section></div></section>';
+    function drawYears() {
+      $('#practiceYears').innerHTML = ['all'].concat(years).map(function (year) {
+        var assessment = catalog && catalog.papers && catalog.papers[code] && catalog.papers[code][year] && catalog.papers[code][year].assessment;
+        var metrics = paperGradeMetrics(assessment);
+        var level = assessment && ['U','1','2','3','4','5','5*','5**'].indexOf(String(assessment.level)) >= 0 ? String(assessment.level) : '—';
+        var count = itemsOf(code).filter(function (it) { return year === 'all' || String(it.year) === year; }).length;
+        return '<button class="inventory-year" type="button" data-practice-year="' + esc(year) + '" aria-pressed="' + (year === selected) + '">' +
+          '<span class="year-number" aria-hidden="true">' + (year === 'all' ? 'ALL' : esc(year.slice(-2))) + '</span><span class="year-body"><span class="year-name">' +
+          (year === 'all' ? '全部年份' : esc(year + ' ' + SUBJECT_META[code].name)) + '</span><span class="year-meters">' +
+          (year === 'all' ? '' : '<span><abbr title="原卷已記錄等級">LV</abbr> <b>' + esc(level) + '</b></span><span><abbr title="原卷分數">HP</abbr> <b>' +
+            (metrics ? assessment.earned + '<small>/' + assessment.total + '</small>' : '—') + '</b></span>') +
+          '<span><abbr title="錯題數">SP</abbr> <b>' + count + '</b></span></span></span></button>';
+      }).join('');
+      var list = $('#practiceYears'), active = $('#practiceYears [aria-pressed="true"]');
+      if (active && list.scrollWidth > list.clientWidth) list.scrollLeft = active.offsetLeft - (list.clientWidth - active.offsetWidth) / 2;
+    }
+    function inspect(row) {
+      $('#practiceTopicInfo').innerHTML = '<h3>' + esc(row.topic + ' ' + topicName(code, row.topic)) + '</h3><p>' + yearLabel + ' · ' + row.n + ' 道錯題 · ' + row.due + ' 題待複習' +
+        (row.known === row.n ? ' · 原卷失分 ' + row.marks + ' 分' : ' · 原卷失分以已核實資料為準') + '。</p><a href="' + practiceSessionHref(code, row.topic, selected) + '">開始這個課題 ↗</a>';
+      $all('#practiceTopics [data-topic]').forEach(function (link) { link.classList.toggle('inspected', link.dataset.topic === row.topic); });
+    }
+    drawYears();
+    $('#practiceYears').addEventListener('click', function (event) {
+      var button = event.target.closest('[data-practice-year]');
+      if (button) location.hash = practiceHref(code, button.dataset.practiceYear);
+    });
+    $all('#practiceTopics [data-topic]').forEach(function (link) {
+      var row = st[link.dataset.topic];
+      link.addEventListener('mouseenter', function () { inspect(row); });
+      link.addEventListener('focus', function () { inspect(row); });
+    });
+    if (rows.length) inspect(rows[0]); else $('#practiceTopicInfo').textContent = '加入錯題後即可查看課題資訊。';
+    var session = localStorage.getItem(LS_SYNC_SESSION);
+    if (!session || !SYNC_API) { $('#practiceGradeStatus').textContent = '登入後可核對原卷成績；現有題目仍可練習。'; return; }
+    var controller = new AbortController();
+    paperController = controller;
+    var timeout = setTimeout(function () { controller.abort(); }, 15000);
+    fetchPaperCatalog(session, controller.signal).then(function (result) {
+      if (requestId !== paperRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
+      catalog = result;
+      var focused = document.activeElement, year = focused && focused.dataset && focused.dataset.practiceYear;
+      drawYears();
+      if (year) { var replacement = $('#practiceYears [data-practice-year="' + year + '"]'); if (replacement) replacement.focus(); }
+      $('#practiceGradeStatus').textContent = '已核對原卷成績；只列出已收錄錯題的年份。';
+    }).catch(function (err) {
+      if (requestId !== paperRequest) return;
+      expireConnection(err, session);
+      if (requestId !== paperRequest) return;
+      $('#practiceGradeStatus').textContent = '原卷成績暫未能讀取，可先選年份練習。';
+    }).finally(function () {
+      clearTimeout(timeout);
+      if (requestId === paperRequest) paperController = null;
+    });
   }
 
   /* ---------------- 隨機十題科目選擇 ---------------- */
@@ -1305,12 +1353,12 @@
   var reviewState = null;   // 提交後的批改結果
   var sessState = { code: null, topic: null, mcOnly: false };
 
-  function sessionItems(code, topic, mcOnly) {
+  function sessionItems(code, topic, mcOnly, year) {
     var pool = itemsOf(code).filter(function (it) {
-      return it.topic === topic && (!mcOnly || it.kind === 'mc');
+      return it.topic === topic && (!mcOnly || it.kind === 'mc') && (!year || String(it.year) === year);
     });
     if (topic === '__random__') {
-      pool = itemsOf(code).filter(function (it) { return !mcOnly || it.kind === 'mc'; });
+      pool = itemsOf(code).filter(function (it) { return (!mcOnly || it.kind === 'mc') && (!year || String(it.year) === year); });
       for (var i = pool.length - 1; i > 0; i--) {
         var j = Math.floor(Math.random() * (i + 1)), t = pool[i]; pool[i] = pool[j]; pool[j] = t;
       }
@@ -1319,7 +1367,7 @@
     return pool;
   }
 
-  function renderSession(code, topic, mcOnly) {
+  function renderSession(code, topic, mcOnly, year) {
     if (!topic) { location.hash = '#/practice'; return; }
     if (code === 'math' || !subjOf(code)) {
       $('#app').innerHTML =
@@ -1329,12 +1377,13 @@
       return;
     }
     if (mcOnly === undefined) mcOnly = false;
-    sessState = { code: code, topic: topic, mcOnly: mcOnly };
-    var items = sessionItems(code, topic, mcOnly);
-    if (!items.length) { location.hash = '#/practice/' + code; return; }
+    year = /^20\d{2}$/.test(year || '') ? String(year) : '';
+    sessState = { code: code, topic: topic, mcOnly: mcOnly, year: year };
+    var items = sessionItems(code, topic, mcOnly, year);
+    if (!items.length) { location.hash = practiceHref(code, year); return; }
     // 課題模式仍渲染全部題（大題靠 CSS 動畫收起）；隨機模式只渲染抽出的題
     var renderItems = (topic === '__random__') ? items :
-      itemsOf(code).filter(function (it) { return it.topic === topic; });
+      itemsOf(code).filter(function (it) { return it.topic === topic && (!year || String(it.year) === year); });
     var activeIds = {};
     items.forEach(function (it) { activeIds[it.id] = true; });
 
@@ -1354,7 +1403,7 @@
         '" data-key="' + esc(dkey) + '" data-code="' + code + '" data-topic="' + esc(topic) + '">' +
         '<header class="page-head">' +
           '<div><h1 class="page-title">' + SUBJECT_META[code].icon + ' ' + title + '</h1>' +
-          '<p class="page-sub"><span id="answeredCount">0</span> / <span id="totalCount">' +
+          '<p class="page-sub">' + (year ? year + ' 年 · ' : '') + '<span id="answeredCount">0</span> / <span id="totalCount">' +
             items.length + '</span> 題已作答 · MC 自動批改，大題照踩分點自己勾分</p></div>' +
           '<div class="head-actions">' +
             (topic === '__random__'
@@ -1366,7 +1415,7 @@
                 (nSub ? '<small>' + nMc + ' MC / ' + nSub + ' 大題</small>' : '') + '</span>' +
             '</label>' +
             '<a class="btn btn-ghost" href="' +
-              (topic === '__random__' ? '#/random' : '#/practice/' + code) + '">← 離開</a>' +
+              (topic === '__random__' && !year ? '#/random' : practiceHref(code, year)) + '">← 離開</a>' +
           '</div>' +
         '</header>' +
         (topic === '__random__'
@@ -1377,7 +1426,7 @@
                 if (!n) return '<span class="subj-tab is-soon">' + m.icon + ' ' + m.name +
                   '<small>未有題</small></span>';
                 return '<a class="subj-tab' + (c === code ? ' on' : '') +
-                  '" href="#/session/' + c + '/' + encodeURIComponent('__random__') + '">' +
+                  '" href="' + practiceSessionHref(c, '__random__', year && itemsOf(c).some(function (it) { return String(it.year) === year; }) ? year : '') + '">' +
                   m.icon + ' ' + m.name + '</a>';
               }).join('') +
             '</div>' : '') +
@@ -1469,7 +1518,7 @@
           if (k.indexOf(pfx) === 0) deleteDraft(k);
         });
         save();
-        renderSession(code, topic, sessState.mcOnly);
+        renderSession(code, topic, sessState.mcOnly, sessState.year);
         toast('🎲 已換一組新題');
       });
     }
@@ -1478,8 +1527,8 @@
     $('#mcOnlyChk').addEventListener('change', function () {
       var mc = this.checked;
       sessState.mcOnly = mc;
-      if (topic === '__random__') { renderSession(code, topic, mc); return; }
-      activeItems = sessionItems(code, topic, mc);
+      if (topic === '__random__') { renderSession(code, topic, mc, sessState.year); return; }
+      activeItems = sessionItems(code, topic, mc, sessState.year);
       var sec = $('.session');
       sec.classList.toggle('mc-only', mc);
       $all('.sq[data-kind="sub"]', sec).forEach(function (question) { question.hidden = mc; });
@@ -1596,7 +1645,7 @@
 
     html += '<div class="rp-actions">' +
       '<button class="btn btn-primary btn-lg" id="saveSessionBtn" type="button">💾 儲存做題記錄</button>' +
-      '<a class="btn btn-ghost" href="#/practice/' + code + '">返課題列表</a></div>';
+      '<a class="btn btn-ghost" href="' + practiceHref(code, sessState.year) + '">返課題列表</a></div>';
 
     var panel = $('#resultPanel');
     panel.hidden = false;
@@ -1657,13 +1706,16 @@
         results: reviewState.results,
         mc: mcMarks + '/' + mcFull, sub: mcOnly ? null : (subGotFinal + '/' + subFull)
       });
-      if (mcOnly && topic !== '__random__') {
-        // 只清今次提交嘅 MC 揀答，保留大題默寫草稿
+      if (topic !== '__random__' && (mcOnly || sessState.year)) {
+        // 按年份提交只清本次題目，保留其他年份與未提交的大題草稿。
+        draft = mergeDraft(drafts[dkey], draft);
         items.forEach(function (it) {
-          draft.pick[it.id] = '';
-          draft.changedAt = draft.changedAt || {};
-          var key = 'pick:' + it.id;
-          draft.changedAt[key] = Math.max(Date.now(), Number(draft.changedAt[key]) + 1 || 0);
+          (it.kind === 'mc' ? ['pick'] : ['text', 'paper']).forEach(function (kind) {
+            draft[kind][it.id] = kind === 'paper' ? false : '';
+            draft.changedAt = draft.changedAt || {};
+            var key = kind + ':' + it.id;
+            draft.changedAt[key] = Math.max(Date.now(), Number(draft.changedAt[key]) + 1 || 0);
+          });
         });
         if (!Object.values(draft.pick).some(Boolean) &&
             !Object.values(draft.text).some(Boolean) && !Object.values(draft.paper).some(Boolean)) deleteDraft(dkey);
@@ -1685,7 +1737,7 @@
             ? '⚡ 只做選擇題 · MC ' + mcMarks + '/' + mcFull
             : 'MC ' + mcMarks + '/' + mcFull + '　大題 ' + subGotFinal + '/' + subFull) + '</div>' +
           '<div class="rp-actions"><a class="btn btn-primary" href="#/records">📈 睇記錄</a>' +
-          '<a class="btn btn-ghost" href="#/practice/' + code + '">繼續練習 →</a></div>' +
+          '<a class="btn btn-ghost" href="' + practiceHref(code, sessState.year) + '">繼續練習 →</a></div>' +
         '</div>';
       panel.scrollIntoView({ behavior: motionBehavior(), block: 'center' });
       toast('記錄已儲存 ✔');
