@@ -270,7 +270,7 @@ mark.kw-hit{background:#ffe58a;border-radius:3px;padding:0 2px;font-weight:700}
 .rp-actions{display:flex;gap:12px;justify-content:center;margin:22px 0 6px;flex-wrap:wrap}
 .saved-card{background:var(--card);border:1px solid var(--line);border-radius:20px;
   padding:40px 30px;text-align:center;box-shadow:var(--shadow-l);max-width:520px;margin:0 auto}
-.saved-emoji{font-size:52px;margin-bottom:10px}
+.saved-icon{font-size:52px;margin-bottom:10px}
 .saved-card h2{font-size:21px;margin-bottom:12px}
 .saved-score{font-size:30px;font-weight:800;color:var(--green)}
 .saved-sub{color:var(--gray);font-size:14px;margin:6px 0 22px}

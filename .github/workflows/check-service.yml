@@ -16,6 +16,7 @@ on:
       - 'appearance.css'
       - 'appearance.test.mjs'
       - 'visual/**'
+      - 'images/persona3/**'
   workflow_dispatch:
   workflow_run:
     workflows: ['Deploy Cloudflare Worker']
@@ -90,7 +91,10 @@ jobs:
           if (versionedAssets.length !== 7) throw new Error('Missing versioned website assets or avatar favicon');
           const visualAssets = [...readFileSync('appearance.css', 'utf8').matchAll(/url\(['"]?(visual\/[^)'"\s]+)['"]?\)/g)].map(m => m[1]);
           if (new Set(visualAssets).size !== 4) throw new Error('Missing character, water or font assets');
-          const assets = [...new Set([...versionedAssets, ...visualAssets, 'visual/Barlow-OFL.txt'])];
+          const iconAssets = [...readFileSync('appearance.css', 'utf8').matchAll(/url\(['"]?(images\/persona3\/[^)'"\s]+)['"]?\)/g)].map(m => m[1]);
+          const iconSources = JSON.parse(readFileSync('images/persona3/sources.json', 'utf8'));
+          if (!iconAssets.length || !Object.keys(iconSources.assets).every(file => iconAssets.includes('images/persona3/' + file))) throw new Error('Missing Persona theme icon assets');
+          const assets = [...new Set([...versionedAssets, ...visualAssets, ...iconAssets, 'images/persona3/sources.json', 'visual/Barlow-OFL.txt'])];
           let lastError;
           for (let attempt = 1; attempt <= 24; attempt++) {
             try {

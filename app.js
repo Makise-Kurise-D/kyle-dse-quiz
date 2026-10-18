@@ -40,9 +40,9 @@
   var reviewPlan = load(LS_REVIEW, {});
   var SUBJECT_ORDER = ['chem', 'bio'];
   var SUBJECT_META = {
-    chem: { name: '化學', icon: '⚗️', soon: false },
-    bio: { name: '生物', icon: '🧬', soon: false },
-    math: { name: '數學', icon: '📐', soon: true }
+    chem: { name: '化學', icon: '<span class="persona-icon persona-icon-chem" aria-hidden="true"></span>', soon: false },
+    bio: { name: '生物', icon: '<span class="persona-icon persona-icon-bio" aria-hidden="true"></span>', soon: false },
+    math: { name: '數學', icon: '<span class="persona-icon persona-icon-math" aria-hidden="true"></span>', soon: true }
   };
 
   function load(k, d) {
@@ -705,7 +705,7 @@
 
   function toast(msg) {
     var t = $('#toast');
-    t.textContent = msg; t.hidden = false;
+    t.innerHTML = '<span class="persona-icon persona-icon-warning" aria-hidden="true"></span> ' + esc(msg); t.hidden = false;
     clearTimeout(toast._tm);
     toast._tm = setTimeout(function () { t.hidden = true; }, 2200);
   }
@@ -756,11 +756,11 @@
           '<a class="continue-command" href="' + esc(resumeHref) + '"><b aria-hidden="true">CONTINUE</b><span>繼續練習 ↗</span></a>' +
         '</div>' +
         '<div class="tile-grid">' +
-          tile('#/practice/chem', '✏️', '開始練習', '按課題逐個擊破', 'tile-blue') +
-          tile('#/library/books', '📚', '錯題庫', '歸納原答案、錯因與正解', 'tile-gold') +
-          tile('#/library/papers', '🖊️', '紅筆批改卷', '按年份回顧原答與批注', 'tile-green') +
-          tile('#/records', '📈', '做題記錄', '查看歷次練習與雙周進度', 'tile-gold') +
-          tile('#/random', '🎲', '隨機十題', '化學／生物十題速測', 'tile-green') +
+          tile('#/practice/chem', '<span class="persona-icon persona-icon-practice" aria-hidden="true"></span>', '開始練習', '按課題逐個擊破', 'tile-blue') +
+          tile('#/library/books', '<span class="persona-icon persona-icon-library" aria-hidden="true"></span>', '錯題庫', '歸納原答案、錯因與正解', 'tile-gold') +
+          tile('#/library/papers', '<span class="persona-icon persona-icon-papers" aria-hidden="true"></span>', '紅筆批改卷', '按年份回顧原答與批注', 'tile-green') +
+          tile('#/records', '<span class="persona-icon persona-icon-records" aria-hidden="true"></span>', '做題記錄', '查看歷次練習與雙周進度', 'tile-gold') +
+          tile('#/random', '<span class="persona-icon persona-icon-random" aria-hidden="true"></span>', '隨機十題', '化學／生物十題速測', 'tile-green') +
         '</div></div>' +
         '<div class="home-stat-strip">' +
           '<div>本輪待複習<strong class="c-red">' + (bankLoaded ? due : '—') + '<small>題</small></strong></div>' +
@@ -774,7 +774,7 @@
         '</div>' +
 
         '<div class="home-sec">' +
-          '<div class="home-sec-h"><h2>🔥 建議優先複習</h2><a class="link" href="#/practice/chem">全部課題 →</a></div>' +
+          '<div class="home-sec-h"><h2><span class="persona-icon persona-icon-chem" aria-hidden="true"></span> 建議優先複習</h2><a class="link" href="#/practice/chem">全部課題 →</a></div>' +
           '<div class="rec-grid">' +
             (bankLoaded ? top.map(function (r) {
               var pct = pctOf(r.code, r.marks);
@@ -874,12 +874,12 @@
       });
     });
     $('#app').innerHTML = '<section class="page library-page library-hub">' +
-      '<header class="page-head"><div><h1 class="page-title">📚 複習資料</h1>' +
+      '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-library" aria-hidden="true"></span> 複習資料</h1>' +
       '<p class="page-sub">從錯因複習到整卷回顧，選擇今天的閱讀方向。</p></div>' +
       '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
       '<div class="library-hub-grid">' +
         '<a class="library-hub-card library-hub-books" href="#/library/books">' +
-          '<span class="library-hub-icon" aria-hidden="true">📚</span><span class="library-hub-kicker">按課題複習</span>' +
+          '<span class="library-hub-icon" aria-hidden="true"><span class="persona-icon persona-icon-library" aria-hidden="true"></span></span><span class="library-hub-kicker">按課題複習</span>' +
           '<h2>錯題庫</h2><p class="library-hub-description">把做錯的題、錯因與得分要點放在一起，逐個知識點讀懂。</p>' +
           '<div class="library-hub-stats"><span><b>' + total + '</b><small>收錄題目</small></span>' +
             '<span><b>' + pending + '</b><small>本輪待複習</small></span>' +
@@ -889,7 +889,7 @@
           }).join('') + '</div><p class="library-hub-note">未練過或最新未全對的題目列為待複習。</p>' +
           '<span class="library-hub-action">按課題查看錯題 <span aria-hidden="true">↗</span></span></a>' +
         '<a class="library-hub-card library-hub-papers" href="#/library/papers">' +
-          '<span class="library-hub-icon" aria-hidden="true">🖊️</span><span class="library-hub-kicker">按年份回顧</span>' +
+          '<span class="library-hub-icon" aria-hidden="true"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span></span><span class="library-hub-kicker">按年份回顧</span>' +
           '<h2>紅筆批改卷</h2><p class="library-hub-description">回到原卷看批注，再用成績與等級差距找到下一步的目標。</p>' +
           '<div class="library-hub-stats"><span><b id="libraryPaperCount">—</b><small>已發布批改卷</small></span>' +
             '<span><b id="libraryPaperSubjects">—</b><small>收錄科目</small></span>' +
@@ -1004,7 +1004,7 @@
   }
   function renderPaperSubjects() {
     $('#app').innerHTML = '<section class="page library-page">' +
-      '<header class="page-head"><div><h1 class="page-title">🖊️ 紅筆批改卷</h1>' +
+      '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> 紅筆批改卷</h1>' +
       '<p class="page-sub">先選科目，再選年份；只會列出已發布的批改版本。</p></div>' +
       '<a class="btn btn-ghost" href="#/library">← 返回資料入口</a></header>' +
       '<div class="library-choices">' + SUBJECT_ORDER.map(function (code) {
@@ -1142,7 +1142,7 @@
     paperSubject = subject;
     paperYear = year;
     $('#app').innerHTML = '<section class="page library-page">' +
-      '<header class="page-head"><div><h1 class="page-title">🖊️ ' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷</h1>' +
+      '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> ' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷</h1>' +
       '<p class="page-sub">保留原答與紅筆批注，使用分部導航直接跳到需要的位置。</p></div>' +
       '<a class="btn btn-ghost" href="#/library/papers/' + subject + '">← 返回年份</a></header>' +
       '<div class="panel"><div class="library-toolbar"><div class="record-tools">' +
@@ -1192,7 +1192,7 @@
       if (remain <= 0) {
         clearInterval(cycleTimerId);
         if (ensureCycle()) {
-          toast('🔄 新嘅雙週開始，進度已重置！');
+          toast('新嘅雙週開始，進度已重置！');
           route();
         }
         return;
@@ -1225,7 +1225,7 @@
   /* ---------------- 練習頁：年份 → 課題，科目切換保留可用年份 ---------------- */
   function renderPractice(code, requestedYear) {
     if (SUBJECT_META[code] && SUBJECT_META[code].soon) {
-      $('#app').innerHTML = '<section class="page"><div class="soon-banner">📐 ' +
+      $('#app').innerHTML = '<section class="page"><div class="soon-banner"><span class="persona-icon persona-icon-math" aria-hidden="true"></span> ' +
         esc(SUBJECT_META[code].name) + ' 錯題庫即將推出，考完好試卷就會自動出現。</div>' +
         '<a class="btn btn-primary" href="#/practice/chem">← 返化學</a></section>';
       return;
@@ -1267,7 +1267,7 @@
           '<span class="practice-topic-count" aria-label="' + row.n + ' 道錯題"><small>×</small> ' + String(row.n).padStart(2, '0') + '</span></a>';
       }).join('') + (rows.length ? '' : '<div class="empty-note">此科目尚未收錄錯題，加入題庫後會自動顯示年份與課題。</div>') + '</div>' +
       '<section class="topic-info" aria-label="課題資訊"><span aria-hidden="true">INFO</span><div id="practiceTopicInfo" aria-live="polite"></div></section>' +
-      (filtered.length ? '<a class="btn btn-random" href="' + practiceSessionHref(code, '__random__', selected) + '">🎲 ' + yearLabel + '隨機抽 10 題</a>' : '') +
+      (filtered.length ? '<a class="btn btn-random" href="' + practiceSessionHref(code, '__random__', selected) + '"><span class="persona-icon persona-icon-random" aria-hidden="true"></span> ' + yearLabel + '隨機抽 10 題</a>' : '') +
       '</section></div></section>';
     function drawYears() {
       $('#practiceYears').innerHTML = ['all'].concat(years).map(function (year) {
@@ -1342,7 +1342,7 @@
     }).join('');
     $('#app').innerHTML =
       '<section class="page">' +
-        '<header class="page-head"><div><h1 class="page-title">🎲 隨機十題</h1>' +
+        '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-random" aria-hidden="true"></span> 隨機十題</h1>' +
         '<p class="page-sub">揀一科，由全部錯題隨機抽 10 題出嚟，入面仲可以隨時「換一組」。</p></div>' +
         '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
         '<div class="rand-grid">' + cards + '</div>' +
@@ -1371,7 +1371,7 @@
     if (!topic) { location.hash = '#/practice'; return; }
     if (code === 'math' || !subjOf(code)) {
       $('#app').innerHTML =
-        '<section class="page"><div class="soon-banner">📐 ' + esc(SUBJECT_META[code] ? SUBJECT_META[code].name : code) +
+        '<section class="page"><div class="soon-banner"><span class="persona-icon persona-icon-math" aria-hidden="true"></span> ' + esc(SUBJECT_META[code] ? SUBJECT_META[code].name : code) +
         ' 嘅錯題庫暫時未有題，改完好試卷就會自動出現。</div>' +
         '<a class="btn btn-primary" href="#/random">← 返隨機十題</a></section>';
       return;
@@ -1394,7 +1394,7 @@
     reviewState = null;
 
     var title = topic === '__random__'
-      ? (mcOnly ? '🎲 隨機十題（選擇題）' : '🎲 隨機十題')
+      ? (mcOnly ? '<span class="persona-icon persona-icon-random" aria-hidden="true"></span> 隨機十題（選擇題）' : '<span class="persona-icon persona-icon-random" aria-hidden="true"></span> 隨機十題')
       : esc(topic + ' ' + topicName(code, topic));
     var nMc = renderItems.filter(function (it) { return it.kind === 'mc'; }).length;
     var nSub = renderItems.length - nMc;
@@ -1407,11 +1407,11 @@
             items.length + '</span> 題已作答 · MC 自動批改，大題照踩分點自己勾分</p></div>' +
           '<div class="head-actions">' +
             (topic === '__random__'
-              ? '<button class="btn btn-gold" id="rerollBtn" type="button">🔄 換一組十題</button>' : '') +
+              ? '<button class="btn btn-gold" id="rerollBtn" type="button"><span class="persona-icon persona-icon-random" aria-hidden="true"></span> 換一組十題</button>' : '') +
             '<label class="mc-toggle" title="時間唔夠就只刷選擇題，大題會收起、唔計分、唔入記錄">' +
               '<input type="checkbox" id="mcOnlyChk"' + (mcOnly ? ' checked' : '') +
                 (nMc ? '' : ' disabled') + '><span class="mc-switch"></span>' +
-              '<span class="mc-toggle-lbl">⚡ 只做選擇題' +
+              '<span class="mc-toggle-lbl"><span class="persona-icon persona-icon-fast" aria-hidden="true"></span> 只做選擇題' +
                 (nSub ? '<small>' + nMc + ' MC / ' + nSub + ' 大題</small>' : '') + '</span>' +
             '</label>' +
             '<a class="btn btn-ghost" href="' +
@@ -1430,14 +1430,14 @@
                   m.icon + ' ' + m.name + '</a>';
               }).join('') +
             '</div>' : '') +
-        (mcOnly && nSub ? '<div class="mc-only-note">⚡ 已切為只做選擇題：' + nSub +
+        (mcOnly && nSub ? '<div class="mc-only-note"><span class="persona-icon persona-icon-fast" aria-hidden="true"></span> 已切為只做選擇題：' + nSub +
           ' 道大題已收起，今次唔使答、唔計分、唔入記錄。</div>' : '') +
         '<div class="q-paper" id="qPaper">' +
           renderItems.map(function (it, idx) { return questionHtml(it, idx, draft, mcOnly); }).join('') +
         '</div>' +
         '<div class="submit-bar" id="submitBar">' +
           '<button class="btn btn-primary btn-lg" id="submitBtn" type="button">' +
-            (mcOnly ? '✅ 提交 ' + nMc + ' 道選擇題' : '✅ 全部做完，一次過提交') + '</button>' +
+            (mcOnly ? '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 提交 ' + nMc + ' 道選擇題' : '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 全部做完，一次過提交') + '</button>' +
         '</div>' +
         '<div class="result-panel" id="resultPanel" hidden></div>' +
       '</section>';
@@ -1503,9 +1503,9 @@
     }
     function submitLabel() {
       var nMc = activeItems.filter(function (it) { return it.kind === 'mc'; }).length;
-      $('#submitBtn').textContent = sessState.mcOnly
-        ? '✅ 提交 ' + nMc + ' 道選擇題'
-        : '✅ 全部做完，一次過提交';
+      $('#submitBtn').innerHTML = sessState.mcOnly
+        ? '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 提交 ' + nMc + ' 道選擇題'
+        : '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 全部做完，一次過提交';
     }
     updateAnswered(); submitLabel();
 
@@ -1519,7 +1519,7 @@
         });
         save();
         renderSession(code, topic, sessState.mcOnly, sessState.year);
-        toast('🎲 已換一組新題');
+        toast('已換一組新題');
       });
     }
 
@@ -1538,7 +1538,7 @@
       if (mc && nSub && !oldNote) {
         var note = document.createElement('div');
         note.className = 'mc-only-note';
-        note.textContent = '⚡ 已切為只做選擇題：' + nSub +
+        note.innerHTML = '<span class="persona-icon persona-icon-fast" aria-hidden="true"></span> 已切為只做選擇題：' + nSub +
           ' 道大題已收起，今次唔使答、唔計分、唔入記錄。';
         sec.insertBefore(note, qPaper);
       } else if (!mc && oldNote) {
@@ -1603,7 +1603,7 @@
 
     // 渲染批改面板（MC 直接出結果；大題出踩分點表單）
     var html = '<div class="rp-head">' +
-      '<h2>📋 批改結果' + (mcOnly ? '（只做選擇題，已自動批改）' : '（MC 已自動改，大題自己照踩分點剔分）') + '</h2>' +
+      '<h2><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 批改結果' + (mcOnly ? '（只做選擇題，已自動批改）' : '（MC 已自動改，大題自己照踩分點剔分）') + '</h2>' +
       '<div class="rp-score">MC <b id="mcScore">' + mcMarks + ' / ' + mcFull + '</b> 分' +
       (mcOnly ? '' : '　·　大題 <b id="subScore">0 / ' + subFull + '</b> 分') +
       '　·　總分 <b id="allScore">' + mcMarks + ' / ' + (mcFull + subFull) + '</b></div></div>';
@@ -1617,12 +1617,12 @@
         var correctL = letterOf(it.correctOpt), picked = draft.pick[it.id];
         var ok = picked === correctL;
         html += '<div class="judge ' + (ok ? 'j-ok' : 'j-bad') + '">' +
-          (ok ? '✅ 答對（' + picked + '）' : '❌ 你揀 ' + picked + ' · 正解 ' + correctL) + '</div>' +
+          (ok ? '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 答對（' + picked + '）' : '<span class="persona-icon persona-icon-warning" aria-hidden="true"></span> 你揀 ' + picked + ' · 正解 ' + correctL) + '</div>' +
           answerBlocks(it, false, '');
       } else {
         var draftText = draft.text[it.id] || '';
         if (draftText.trim()) {
-          html += '<div class="ans-block ans-type"><div class="ans-title">✍️ 你今次默寫</div>' +
+          html += '<div class="ans-block ans-type"><div class="ans-title"><span class="persona-icon persona-icon-practice" aria-hidden="true"></span> 你今次默寫</div>' +
             '<div class="ans-body">' + highlight(draftText, keywordsOf(it)) + '</div></div>';
         }
         html += answerBlocks(it, true, '');
@@ -1631,9 +1631,9 @@
         var wTot = wList.reduce(function (a, b) { return a + b; }, 0);
         html += '<div class="chk-form" data-id="' + esc(it.id) + '" data-marks="' + marksOf(it) +
           '" data-wtot="' + wTot + '">' +
-          '<div class="chk-form-h">🎯 你寫到邊個踩分點？（剔中 ' +
+          '<div class="chk-form-h"><span class="persona-icon persona-icon-notes" aria-hidden="true"></span> 你寫到邊個踩分點？（剔中 ' +
             '<span class="chk-got">0</span>/<span class="chk-tot">' + wTot + '</span>' +
-            '　→　<b class="chk-score">0</b>/' + marksOf(it) + ' 分；⚠️ 項只係防錯提醒，唔計分）</div>' +
+            '　→　<b class="chk-score">0</b>/' + marksOf(it) + ' 分；<span class="persona-icon persona-icon-warning" aria-hidden="true"></span> 項只係防錯提醒，唔計分）</div>' +
           checks.map(function (c, i) {
             return '<label class="chk-line' + (wList[i] ? '' : ' is-warn') + '">' +
               '<input type="checkbox" data-i="' + i + '" data-w="' + wList[i] + '">' +
@@ -1644,7 +1644,7 @@
     });
 
     html += '<div class="rp-actions">' +
-      '<button class="btn btn-primary btn-lg" id="saveSessionBtn" type="button">💾 儲存做題記錄</button>' +
+      '<button class="btn btn-primary btn-lg" id="saveSessionBtn" type="button"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> 儲存做題記錄</button>' +
       '<a class="btn btn-ghost" href="' + practiceHref(code, sessState.year) + '">返課題列表</a></div>';
 
     var panel = $('#resultPanel');
@@ -1729,14 +1729,14 @@
       var pct = Math.round(totalGot / totalFull * 100);
       panel.innerHTML =
         '<div class="saved-card">' +
-          '<div class="saved-emoji">🎉</div>' +
+          '<div class="saved-icon"><span class="persona-icon persona-icon-celebrate" aria-hidden="true"></span></div>' +
           '<h2>已存入做題記錄</h2>' +
           '<div class="saved-score">' + totalGot + ' / ' + totalFull +
             ' 分（' + pct + '%）</div>' +
           '<div class="saved-sub">' + (mcOnly
-            ? '⚡ 只做選擇題 · MC ' + mcMarks + '/' + mcFull
+            ? '<span class="persona-icon persona-icon-fast" aria-hidden="true"></span> 只做選擇題 · MC ' + mcMarks + '/' + mcFull
             : 'MC ' + mcMarks + '/' + mcFull + '　大題 ' + subGotFinal + '/' + subFull) + '</div>' +
-          '<div class="rp-actions"><a class="btn btn-primary" href="#/records">📈 睇記錄</a>' +
+          '<div class="rp-actions"><a class="btn btn-primary" href="#/records"><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 睇記錄</a>' +
           '<a class="btn btn-ghost" href="' + practiceHref(code, sessState.year) + '">繼續練習 →</a></div>' +
         '</div>';
       panel.scrollIntoView({ behavior: motionBehavior(), block: 'center' });
@@ -1751,26 +1751,26 @@
     body.split(/「([^」]+)」/).forEach(function (p, i) {
       html += (i % 2 === 1) ? '<b class="kw">' + esc(p) + '</b>' : esc(p);
     });
-    return (warn ? '<span class="chk-warn">⚠️ 防錯：</span>' : '') + html;
+    return (warn ? '<span class="chk-warn"><span class="persona-icon persona-icon-warning" aria-hidden="true"></span> 防錯：</span>' : '') + html;
   }
   function answerBlocks(it, withMine, draftHtml) {
     var h = '';
     if (withMine && it.my && it.my.length) {
-      h += '<div class="ans-block ans-mine"><div class="ans-title">📝 你當年嘅答案</div><div class="ans-body">' +
+      h += '<div class="ans-block ans-mine"><div class="ans-title"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> 你當年嘅答案</div><div class="ans-body">' +
         it.my.map(function (s) {
           return s[1] ? '<span class="bad-seg">' + esc(s[0]) + '</span>' : esc(s[0]);
         }).join('<br>') + '</div></div>';
     }
     if (it.kind === 'mc') {
-      h += '<div class="ans-block ans-mine"><div class="ans-title">📝 當年你揀</div>' +
+      h += '<div class="ans-block ans-mine"><div class="ans-title"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> 當年你揀</div>' +
         '<div class="ans-body">' + esc(it.option || '—') + '</div></div>';
     }
-    h += '<div class="ans-block ans-deduct"><div class="ans-title">❌ 錯因分析</div>' +
+    h += '<div class="ans-block ans-deduct"><div class="ans-title"><span class="persona-icon persona-icon-warning" aria-hidden="true"></span> 錯因分析</div>' +
       '<div class="ans-body">' + esc(it.deduct || '—') + '</div></div>';
-    h += '<div class="ans-block ans-correct"><div class="ans-title">✅ 正解詳解</div>' +
+    h += '<div class="ans-block ans-correct"><div class="ans-title"><span class="persona-icon persona-icon-success" aria-hidden="true"></span> 正解詳解</div>' +
       '<div class="ans-body">' + esc(it.kind === 'mc' ? (it.correctOpt || '—') : (it.correct || '—')) + '</div></div>';
     if (it.points) {
-      h += '<div class="ans-block ans-points"><div class="ans-title">📌 評分備註</div>' +
+      h += '<div class="ans-block ans-points"><div class="ans-title"><span class="persona-icon persona-icon-notes" aria-hidden="true"></span> 評分備註</div>' +
         '<div class="ans-body">' + esc(it.points) + '</div></div>';
     }
     return h;
@@ -1839,7 +1839,7 @@
     }).join('') + '</div>';
   }
   function cycleReportHtml() {
-    if (PRIVATE_BANK && !bankLoaded) return '<div class="panel cycle-report"><h2 class="panel-h">📋 雙週復習報告</h2>' +
+    if (PRIVATE_BANK && !bankLoaded) return '<div class="panel cycle-report"><h2 class="panel-h"><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 雙週復習報告</h2>' +
       '<p class="review-note">登入並載入私人題庫後，即可查看本期與往期報告。</p></div>';
     var now = Date.now(), current = cycleStartOf(now), periods = reportPeriodStarts(now);
     if (selectedReportCycle == null || periods.indexOf(selectedReportCycle) < 0) selectedReportCycle = current;
@@ -1847,7 +1847,7 @@
     var pct = report.total ? Math.round(report.correct / report.total * 1000) / 10 : 0;
     var pctText = String(pct).replace(/\.0$/, '');
     var label = start === current ? '本期' : '該期';
-    return '<div class="panel cycle-report"><div class="panel-h-row"><div><h2 class="panel-h">📋 雙週復習報告</h2>' +
+    return '<div class="panel cycle-report"><div class="panel-h-row"><div><h2 class="panel-h"><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 雙週復習報告</h2>' +
       '<p class="cycle-report-period">' + (start === current ? '進行中' : '已結束') + ' · ' +
       fmtDate(start) + '—' + fmtDate(start + CYCLE_MS - 1) + '（北京時間）</p></div>' +
       '<label class="cycle-report-picker">選擇週期 <select id="cycleReportPeriod">' + periods.map(function (period) {
@@ -1866,7 +1866,7 @@
       '<p class="cycle-report-note">以每題在這個週期最後一次已儲存的批改為準；大題滿分才算答對。' +
         '「首次解決」指歷來第一次答對且最新仍答對；「答對後再錯」指最新答錯、之前曾答對。' +
         '刷新後可在此切換回看；往期比例按目前題庫計算。</p>' +
-      '<div class="cycle-report-lists"><div><h3>✨ ' + label + '首次解決（' + report.newSolved.length + '）</h3>' +
+      '<div class="cycle-report-lists"><div><h3><span class="persona-icon persona-icon-success" aria-hidden="true"></span> ' + label + '首次解決（' + report.newSolved.length + '）</h3>' +
         reportRowsHtml(report.newSolved, '還沒有首次解決的題目。', false) + '</div>' +
         '<div><h3>↩️ ' + label + '答對後再錯（' + report.regressed.length + '）</h3>' +
         reportRowsHtml(report.regressed, '目前沒有答對後再錯的題目。', true) + '</div></div></div>';
@@ -1926,14 +1926,14 @@
 
     $('#app').innerHTML =
       '<section class="page">' +
-        '<header class="page-head"><div><h1 class="page-title">📈 做題記錄</h1>' +
+        '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 做題記錄</h1>' +
         '<p class="page-sub">每完成一次課題練習就留一個印；滑鼠移上去睇詳情。</p></div>' +
           '<div class="record-tools"><button class="btn btn-ghost" id="exportDataBtn" type="button">⬇️ 匯出記錄</button>' +
           '<button class="btn btn-ghost" id="importDataBtn" type="button">⬆️ 匯入備份</button>' +
           '<input id="importDataFile" type="file" accept="application/json,.json" hidden></div>' +
           '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
 
-        '<div class="panel sync-panel"><div class="panel-h-row"><h2 class="panel-h">☁️ ' + (PASSWORD_AUTH ? '做題記錄自動同步' : 'GitHub 私有仓库自动同步') + '</h2>' +
+        '<div class="panel sync-panel"><div class="panel-h-row"><h2 class="panel-h"><span class="persona-icon persona-icon-sync" aria-hidden="true"></span> ' + (PASSWORD_AUTH ? '做題記錄自動同步' : 'GitHub 私有仓库自动同步') + '</h2>' +
           '<div class="record-tools">' +
             (!SYNC_API ? '<button class="btn btn-ghost" id="syncConnectBtn" type="button" disabled>同步服务待部署</button>' : (PASSWORD_AUTH ? passwordTools :
               (localStorage.getItem(LS_SYNC_SESSION)
@@ -1945,9 +1945,9 @@
           (PASSWORD_AUTH && SYNC_API && !connected ? passwordForm() : '') + '</div>' +
 
         '<div class="stat-cards">' +
-          statCard('✍️', '累計作答', totalDone + ' 題') +
-          statCard('🗓️', '練習次數', sessions.length + ' 次') +
-          statCard('🔁', '上次仍錯', wrongRows.length + ' 題', wrongRows.length ? 'c-red' : 'c-green') +
+          statCard('<span class="persona-icon persona-icon-practice" aria-hidden="true"></span>', '累計作答', totalDone + ' 題') +
+          statCard('<span class="persona-icon persona-icon-home" aria-hidden="true"></span>', '練習次數', sessions.length + ' 次') +
+          statCard('<span class="persona-icon persona-icon-random" aria-hidden="true"></span>', '上次仍錯', wrongRows.length + ' 題', wrongRows.length ? 'c-red' : 'c-green') +
         '</div>' +
 
         sessionTimelineHtml() +
@@ -1961,7 +1961,7 @@
           '<p class="review-note">答對後依次隔 15、21、30、45、60 日重練；未滿分亦至少隔 15 日再試。複習進度會跨雙週保留。</p>' +
           '<div class="wrong-list" id="reviewDueList"></div></div>' +
 
-        '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">🔍 錯題複習狀態（仍錯在上、已通過嘅沉底）</h2>' +
+        '<div class="panel"><div class="panel-h-row"><h2 class="panel-h"><span class="persona-icon persona-icon-sync" aria-hidden="true"></span> 錯題複習狀態（仍錯在上、已通過嘅沉底）</h2>' +
           '<div class="filter-seg" id="wrongFilter">' +
             ['ALL', 'chem', 'bio'].map(function (c) {
               var lbl = c === 'ALL' ? '全部' : SUBJECT_META[c].name;
@@ -2216,7 +2216,7 @@
     var el = $('#reviewDueList');
     if (!el) return;
     if (!dueRows.length) {
-      el.innerHTML = '<div class="empty-ok">✅ 暫時沒有到期複習；新作答會自動排入複習。</div>';
+      el.innerHTML = '<div class="empty-ok"><span class="persona-icon persona-icon-success" aria-hidden="true"></span> 暫時沒有到期複習；新作答會自動排入複習。</div>';
       return;
     }
     el.innerHTML = dueRows.map(function (r) {
@@ -2261,7 +2261,7 @@
     passStrong.sort(byRecent);
     var el = $('#wrongList');
     if (!due.length && !passOnce.length && !passStrong.length) {
-      el.innerHTML = '<div class="empty-ok">🎉 呢科嘅錯題全部征服咗！</div>';
+      el.innerHTML = '<div class="empty-ok"><span class="persona-icon persona-icon-celebrate" aria-hidden="true"></span> 呢科嘅錯題全部征服咗！</div>';
       return;
     }
 
@@ -2301,9 +2301,9 @@
         }).join('');
     }
     el.innerHTML =
-      group('🔴 待處理', due, 'due', null) +
-      group('🟢 已答對（再刷可鞏固）', passOnce, 'once', null) +
-      group('🌟 反複測試通過', passStrong, 'strong', null);
+      group('<span class="persona-icon persona-icon-warning" aria-hidden="true"></span> 待處理', due, 'due', null) +
+      group('<span class="persona-icon persona-icon-passed" aria-hidden="true"></span> 已答對（再刷可鞏固）', passOnce, 'once', null) +
+      group('<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 反複測試通過', passStrong, 'strong', null);
   }
   function beijingDayIndex(t) { return Math.floor((new Date(t).getTime() + BEIJING_OFFSET_MS) / DAY_MS); }
   function beijingClock(t) { return new Date(new Date(t).getTime() + BEIJING_OFFSET_MS); }
@@ -2339,7 +2339,7 @@
   seedReviewPlan();
   normalizeReviewPlan();
   if (ensureCycle()) {
-    setTimeout(function () { toast('🔄 新嘅雙週開始，進度已重置！'); }, 300);
+    setTimeout(function () { toast('新嘅雙週開始，進度已重置！'); }, 300);
   }
   route();
   initSync(startupHash);
