@@ -90,7 +90,9 @@ jobs:
           const versionedAssets = [...index.matchAll(/(?:src|href)="((?:app|library|appearance)\.js\?v=[^"\s]+|(?:style|library|appearance)\.css\?v=[^"\s]+|images\/avatar\.jpg\?v=[^"\s]+)"/g)].map(m => m[1]);
           if (versionedAssets.length !== 7) throw new Error('Missing versioned website assets or avatar favicon');
           const visualAssets = [...readFileSync('appearance.css', 'utf8').matchAll(/url\(['"]?(visual\/[^)'"\s]+)['"]?\)/g)].map(m => m[1]);
-          if (new Set(visualAssets).size !== 4) throw new Error('Missing character, water or font assets');
+          for (const file of ['home-day.webp', 'home-night.webp', 'archive-day.webp', 'archive-night.webp', 'Barlow-BlackItalic.ttf']) {
+            if (!visualAssets.includes('visual/' + file)) throw new Error('Missing theme artwork or font: ' + file);
+          }
           const iconAssets = [...readFileSync('appearance.css', 'utf8').matchAll(/url\(['"]?(images\/persona3\/[^)'"\s]+)['"]?\)/g)].map(m => m[1]);
           const iconSources = JSON.parse(readFileSync('images/persona3/sources.json', 'utf8'));
           if (!iconAssets.length || !Object.keys(iconSources.assets).every(file => iconAssets.includes('images/persona3/' + file))) throw new Error('Missing Persona theme icon assets');
