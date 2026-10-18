@@ -6,7 +6,7 @@
     { key: 'learning', label: '待鞏固' }, { key: 'mastered', label: '已掌握' },
     { key: 'regressed', label: '回退' }
   ];
-  var labels = {}, positions = {}, filters = {}, activeKey = '', context;
+  var labels = {}, positions = {}, filters = {}, selectedYears = {}, topicGeneration = 0, activeKey = '', context;
   states.forEach(function (s) { labels[s.key] = s.label; });
   function esc(value) {
     return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -116,31 +116,91 @@
       bar(stats) + legend(stats) + '</div>';
   }
   function topicPage(code) {
-    var subject = context.data.subjects[code], rows = subject.topics.map(function (topic) {
-      var items = subject.items.filter(function (item) { return item.topic === topic.code; });
-      return { topic: topic, stats: summarize(items, context.index) };
-    });
-    frame(code, header(icon(code) + ' ' + subjectName(code) + '錯題庫', '先看整體，再選課題；每條進度都可以追溯到具體錯題。', '#/library/books', '科目') +
-      summary(code, subject.items, subjectName(code) + ' · 從錯因找下一步') +
-      '<div class="ml-section-head"><h2>課題目錄</h2><label>排序 <select id="mlTopicSort"><option value="syllabus">考綱順序</option>' +
-        '<option value="pending">待複習最多</option></select></label></div><div class="ml-topics" id="mlTopics"></div>' +
-      '<p class="library-note">只列出已有錯題的課題；未收錄不代表已掌握整個課題。雙周新解決表示歷來首次全對，且目前仍全對。</p>');
-    function draw(sort) {
-      var sorted = rows.slice();
-      if (sort === 'pending') sorted.sort(function (a, b) {
-        return (b.stats.total - b.stats.mastered) - (a.stats.total - a.stats.mastered);
-      });
-      context.root.querySelector('#mlTopics').innerHTML = sorted.map(function (row) {
-        var s = row.stats;
-        return '<a class="ml-topic" href="#/library/books/' + code + '/' + encodeURIComponent(row.topic.code) + '">' +
-          '<div class="ml-topic-title"><span class="ml-topic-code">' + esc(row.topic.code) + '</span><div><h3>' + esc(row.topic.name) +
-          '</h3><p>' + s.total + ' 張錯題卡' + (s.lostKnown === s.total && s.total ? ' · 原卷失分 ' + s.lost + ' 分' : '') + '</p></div><span class="ml-topic-arrow">→</span></div>' +
-          bar(s) + legend(s) + '</a>';
-      }).join('') || '<div class="empty-ok">此科目尚未收錄錯題。</div>';
+    var api = context, generation = ++topicGeneration, subject = api.data.subjects[code];
+    var years = Array.from(new Set(subject.items.map(function (item) { return String(item.year); }))).sort().reverse();
+    var selected = selectedYears[code] || 'all', catalog = null;
+    if (selected !== 'all' && years.indexOf(selected) < 0) selected = 'all';
+    var other = code === 'bio' ? 'chem' : 'bio';
+    frame(code, header('錯題庫與歸納', '選年份，再選課題。原答案、錯因與正解依次展開。', '#/library/books', '科目') +
+      '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="#/library/books/' + other + '" aria-label="上一個學科：' + subjectName(other) + '">‹ LB</a>' +
+      '<strong>' + subjectName(code) + '</strong><a class="shoulder-link" href="#/library/books/' + other + '" aria-label="下一個學科：' + subjectName(other) + '">RB ›</a></div>' +
+      '<div class="inventory-layout"><section class="inventory-years" aria-label="年份與原卷成績"><h2>YEAR SELECT / 年份與狀態</h2>' +
+      '<div class="year-list" id="mlYears"></div><p class="year-grade-note">LV＝原卷已記錄等級；HP＝原卷分數；SP＝收錄錯題數。沒有已記錄等級時顯示「—」，不按分數推算。</p>' +
+      '<p class="year-grade-note" id="mlGradeStatus" role="status">正在核對原卷成績…</p><div id="mlYearSummary"></div></section>' +
+      '<section class="inventory-topics" aria-label="課題目錄"><div class="ml-section-head"><h2>TOPIC LIST / 課題</h2><label>排序 <select id="mlTopicSort"><option value="syllabus">考綱順序</option>' +
+      '<option value="pending">待複習最多</option></select></label></div><div class="ml-topics" id="mlTopics"></div>' +
+      '<section class="topic-info" aria-label="課題資訊"><span aria-hidden="true">INFO</span><div id="mlTopicInfo" aria-live="polite"></div></section></section></div>' +
+      '<p class="library-note">長期已掌握＝兩次獨立練習連續全對；閱讀不計作答。數學尚未收錄。</p>');
+    var root = api.root, sort = root.querySelector('#mlTopicSort');
+    sort.value = (filters[code] || {}).sort || 'syllabus';
+    function currentItems() { return subject.items.filter(function (item) { return selected === 'all' || String(item.year) === selected; }); }
+    function drawYears() {
+      root.querySelector('#mlYears').innerHTML = ['all'].concat(years).map(function (year) {
+        var items = subject.items.filter(function (item) { return year === 'all' || String(item.year) === year; });
+        var detail = catalog && catalog.papers && catalog.papers[code] && catalog.papers[code][year];
+        var assessment = detail && detail.assessment;
+        var level = assessment && ['U','1','2','3','4','5','5*','5**'].indexOf(String(assessment.level)) >= 0 ? String(assessment.level) : '—';
+        var score = assessment && Number.isInteger(assessment.earned) && Number.isInteger(assessment.total) &&
+          assessment.total > 0 && assessment.earned >= 0 && assessment.earned <= assessment.total ? assessment.earned + '/' + assessment.total : '—';
+        return '<button class="inventory-year" type="button" data-year="' + esc(year) + '" aria-pressed="' + (selected === year) + '">' +
+          '<span class="year-number" aria-hidden="true">' + (year === 'all' ? 'ALL' : esc(year.slice(-2))) + '</span><span class="year-body"><span class="year-name">' +
+          (year === 'all' ? '全部年份' : esc(year + ' ' + subjectName(code))) + '</span><span class="year-meters">' +
+          (year === 'all' ? '' : '<span><abbr title="試卷等級">LV</abbr> <b>' + esc(level) + '</b></span><span><abbr title="原卷分數">HP</abbr> <b>' + score + '</b></span>') +
+          '<span><abbr title="錯題數">SP</abbr> <b>' + items.length + '</b></span></span></span></button>';
+      }).join('');
     }
-    var sort = context.root.querySelector('#mlTopicSort');
-    sort.value = (filters[code] || {}).sort || 'syllabus'; draw(sort.value);
-    sort.addEventListener('change', function () { filters[code] = { sort: sort.value }; draw(sort.value); });
+    function inspect(row) {
+      root.querySelector('#mlTopicInfo').innerHTML = '<h3>' + esc(row.topic.code + ' ' + row.topic.name) + '</h3><p>' +
+        (selected === 'all' ? '全部年份' : esc(selected + ' 年')) + ' · ' + row.stats.total + ' 張錯題卡 · ' +
+        (row.stats.total - row.stats.mastered) + ' 題待複習／鞏固 · ' + row.stats.mastered + ' 題長期已掌握。</p>' +
+        '<a href="#/library/books/' + code + '/' + encodeURIComponent(row.topic.code) + '">展開本課題歸納 ↗</a>';
+      Array.prototype.forEach.call(root.querySelectorAll('.ml-topic'), function (link) { link.classList.toggle('inspected', link.getAttribute('data-topic') === row.topic.code); });
+    }
+    function draw() {
+      var items = currentItems();
+      var rows = subject.topics.map(function (topic) {
+        return { topic: topic, stats: summarize(items.filter(function (item) { return item.topic === topic.code; }), api.index) };
+      }).filter(function (row) { return row.stats.total > 0; });
+      if (sort.value === 'pending') rows.sort(function (a, b) { return (b.stats.total - b.stats.mastered) - (a.stats.total - a.stats.mastered); });
+      root.querySelector('#mlYearSummary').innerHTML = summary(code, items, selected === 'all' ? '全部年份學習總覽' : selected + ' 年學習總覽');
+      root.querySelector('#mlTopics').innerHTML = rows.map(function (row) {
+        var st = row.stats;
+        return '<a class="ml-topic" data-topic="' + esc(row.topic.code) + '" href="#/library/books/' + code + '/' + encodeURIComponent(row.topic.code) + '">' +
+          '<div class="ml-topic-title"><span class="ml-topic-code">' + esc(row.topic.code) + '</span><div><h3>' + esc(row.topic.name) +
+          '</h3><p>' + st.total + ' 張錯題卡 · ' + (st.total - st.mastered) + ' 題待複習／鞏固' +
+          (st.lostKnown === st.total ? ' · 原卷失分 ' + st.lost + ' 分' : '') + '</p></div><span class="ml-topic-arrow" aria-hidden="true">↗</span></div>' + bar(st) + legend(st) + '</a>';
+      }).join('') || '<p class="review-note">此年份尚未收錄錯題。</p>';
+      Array.prototype.forEach.call(root.querySelectorAll('.ml-topic'), function (link) {
+        var row = rows.filter(function (r) { return r.topic.code === link.getAttribute('data-topic'); })[0];
+        link.addEventListener('mouseenter', function () { inspect(row); });
+        link.addEventListener('focus', function () { inspect(row); });
+      });
+      if (rows.length) inspect(rows[0]); else root.querySelector('#mlTopicInfo').textContent = '尚未有可查看的課題。';
+    }
+    root.querySelector('#mlYears').addEventListener('click', function (event) {
+      var button = event.target.closest('[data-year]');
+      if (!button) return;
+      selected = button.getAttribute('data-year'); selectedYears[code] = selected;
+      subject.topics.forEach(function (topic) {
+        var remembered = filters[code + '/' + topic.code];
+        if (remembered) remembered.year = selected === 'all' ? '' : selected;
+      });
+      // Keep the pressed year button mounted so keyboard focus is preserved.
+      Array.prototype.forEach.call(root.querySelectorAll('[data-year]'), function (node) { node.setAttribute('aria-pressed', String(node === button)); });
+      draw();
+    });
+    sort.addEventListener('change', function () { filters[code] = { sort: sort.value }; draw(); });
+    drawYears(); draw();
+    if (api.catalog) api.catalog().then(function (result) {
+      if (activeKey !== code || context !== api || generation !== topicGeneration) return;
+      catalog = result;
+      var focused = document.activeElement, year = focused && focused.getAttribute && focused.getAttribute('data-year');
+      drawYears();
+      if (year) { var replacement = root.querySelector('[data-year="' + year + '"]'); if (replacement && replacement.focus) replacement.focus(); }
+      root.querySelector('#mlGradeStatus').textContent = result ? '已核對私人批改卷目錄。未提供等級的原卷顯示「—」。' : '登入後可核對原卷分數；題目數與學習狀態仍可查看。';
+    }).catch(function () {
+      if (activeKey === code && context === api && generation === topicGeneration) root.querySelector('#mlGradeStatus').textContent = '原卷成績暫未能讀取。可先查看錯題；重新進入此頁可重試。';
+    });
   }
   function card(item) {
     var row = context.index[item.id], state = row ? row.state : 'unseen';
@@ -177,7 +237,7 @@
     var subject = context.data.subjects[code], topic = subject.topics.filter(function (t) { return t.code === topicCode; })[0];
     if (!topic) return topicPage(code);
     var items = subject.items.filter(function (item) { return item.topic === topicCode; });
-    var key = code + '/' + topicCode, f = filters[key] || { query: '', status: '', kind: '', year: '' }, limit = 12;
+    var key = code + '/' + topicCode, f = filters[key] || { query: '', status: '', kind: '', year: selectedYears[code] && selectedYears[code] !== 'all' ? selectedYears[code] : '' }, limit = 12;
     filters[key] = f; context.code = code;
     var years = Array.from(new Set(items.map(function (it) { return it.year; }))).sort().reverse();
     frame(key, header(esc(topic.code + ' · ' + topic.name), '原答案、扣分點與正解放在一起，按需要展開閱讀。', '#/library/books/' + code, subjectName(code) + '課題') +
@@ -232,6 +292,6 @@
     try { topic = decodeURIComponent(parts[1]); } catch (_) { return topicPage(parts[0]); }
     return questions(parts[0], topic);
   }
-  function reset() { context = null; activeKey = ''; positions = {}; filters = {}; }
+  function reset() { context = null; activeKey = ''; positions = {}; filters = {}; selectedYears = {}; topicGeneration++; }
   global.DSELibrary = { render: render, remember: remember, reset: reset, indexHistory: indexHistory, summarize: summarize, full: full };
 })(window);

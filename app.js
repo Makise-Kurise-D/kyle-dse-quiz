@@ -677,6 +677,11 @@
   }
   window.addEventListener('hashchange', route);
 
+  function motionBehavior() {
+    return (document.documentElement && document.documentElement.dataset.appearance === 'simple') ||
+      (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) ? 'auto' : 'smooth';
+  }
+
   function toast(msg) {
     var t = $('#toast');
     t.textContent = msg; t.hidden = false;
@@ -711,32 +716,40 @@
     recs.sort(function (a, b) { return (b.due > 0 ? b.marks : -1) - (a.due > 0 ? a.marks : -1) || b.marks - a.marks; });
     var top = recs.slice(0, 3);
 
+    var historyIndex = window.DSELibrary.indexHistory(allSessions());
+    var mastered = SUBJECT_ORDER.reduce(function (n, code) {
+      return n + itemsOf(code).filter(function (item) { return historyIndex[item.id] && historyIndex[item.id].state === 'mastered'; }).length;
+    }, 0);
+    var remainingDays = Math.ceil((cycleEndOf(Date.now()) - Date.now()) / DAY_MS);
+    var resume = top.filter(function (r) { return r.due > 0; })[0] || top[0];
+    var resumeHref = resume ? '#/session/' + resume.code + '/' + encodeURIComponent(resume.topic) : '#/practice/chem';
     $('#app').innerHTML =
-      '<section class="home">' +
+      '<section class="home"><div class="home-stage">' +
         '<div class="hero">' +
-          '<div class="hero-kicker">DSE · 化學 / 生物</div>' +
-          '<h1 class="hero-title">Kyle 嘅錯題本</h1>' +
-          '<p class="hero-sub">錯過嘅唔可以再錯 —— 逐課題清，每個踩分點都執返。</p>' +
-          '<p class="review-note" id="syncStatus" role="status" aria-live="polite"' + (syncMessage ? '' : ' hidden') + '>' + esc(syncMessage) + '</p>' +
+          '<div class="hero-kicker">Kyle 嘅錯題本 / DSE</div>' +
+          '<h1 class="hero-title">從上次的<br>錯題繼續。</h1>' +
+          '<p class="hero-sub hero-bubble bubble-intro">錯過嘅唔可以再錯 —— 逐課題清，每個踩分點都執返。</p>' +
+          '<p class="review-note hero-bubble bubble-sync" id="syncStatus" role="status" aria-live="polite"' + (syncMessage ? '' : ' hidden') + '>' + esc(syncMessage) + '</p>' +
           bankStatusHtml() +
-          '<div class="hero-stat">' +
-            '<span><b>' + (bankLoaded ? totalItems : '—') + '</b> 題在庫</span>' +
-            '<span><b class="c-green">' + conquered + '</b> 已征服</span>' +
-            '<span><b class="c-red">' + (bankLoaded ? due : '—') + '</b> 待清</span>' +
-          '</div>' +
-          '<div class="hero-cycle" id="heroCycle">' +
-            '<span class="cycle-ico">🔄</span>' +
-            '<span>雙週重置：<b id="cycleTimer">—</b></span>' +
-            '<span class="cycle-note">到時進度歸零、重新征服（題庫同記錄圖保留）</span>' +
-          '</div>' +
+          '<p class="home-bank-total hero-bubble bubble-bank"><b>' + (bankLoaded ? totalItems : '—') + '</b> 題在庫<span class="bank-privacy">題庫及原卷僅供登入後讀取</span></p>' +
+          '<a class="continue-command" href="' + esc(resumeHref) + '"><b aria-hidden="true">CONTINUE</b><span>繼續練習 ↗</span></a>' +
         '</div>' +
-
         '<div class="tile-grid">' +
-          tile('#/practice/chem', '✏️', '開始練習', '按課題失分由高到低排，逐個擊破', 'tile-blue') +
-          tile('#/library/books', '📚', '錯題庫', '按課題查答案、扣分點與掌握情況', 'tile-gold') +
-          tile('#/library/papers', '🖊️', '紅筆批改卷', '按年份回顧原答，快捷跳轉各分部', 'tile-green') +
-          tile('#/records', '📈', '做題記錄', '刷題熱力圖＋分數走勢', 'tile-gold') +
-          tile('#/random', '🎲', '隨機十題', '化學／生物隨機抽 10 題速測', 'tile-green') +
+          tile('#/practice/chem', '✏️', '開始練習', '按課題逐個擊破', 'tile-blue') +
+          tile('#/library/books', '📚', '錯題庫', '歸納原答案、錯因與正解', 'tile-gold') +
+          tile('#/library/papers', '🖊️', '紅筆批改卷', '按年份回顧原答與批注', 'tile-green') +
+          tile('#/records', '📈', '做題記錄', '查看歷次練習與雙周進度', 'tile-gold') +
+          tile('#/random', '🎲', '隨機十題', '化學／生物十題速測', 'tile-green') +
+        '</div></div>' +
+        '<div class="home-stat-strip">' +
+          '<div>本輪待複習<strong class="c-red">' + (bankLoaded ? due : '—') + '<small>題</small></strong></div>' +
+          '<div>本輪已全對<strong class="c-green">' + conquered + '<small>題</small></strong></div>' +
+          '<div>長期已掌握<strong>' + (bankLoaded ? mastered : '—') + '<small>題</small></strong></div>' +
+          '<div>距離下一輪<strong>' + remainingDays + '<small>天</small></strong></div>' +
+        '</div>' +
+        '<div class="hero-cycle" id="heroCycle">' +
+          '<span>下輪開始：<b id="cycleTimer">—</b></span>' +
+          '<span class="cycle-note">本輪進度重新計算；歷史、草稿與長期掌握狀態保留。北京時間。</span>' +
         '</div>' +
 
         '<div class="home-sec">' +
@@ -809,7 +822,20 @@
     parts = parts || [];
     if (parts[0] === 'books') return window.DSELibrary.render(parts.slice(1), {
       root: $('#app'), data: DATA, history: allSessions(), cycleStart: cycleStartOf(Date.now()),
-      normalize: norm, formatDate: fmtDateTime, hydrate: hydratePrivateImages
+      normalize: norm, formatDate: fmtDateTime, hydrate: hydratePrivateImages,
+      catalog: function () {
+        var session = localStorage.getItem(LS_SYNC_SESSION);
+        if (!session || !SYNC_API) return Promise.resolve(null);
+        var controller = new AbortController();
+        paperController = controller;
+        var timeout = setTimeout(function () { controller.abort(); }, 15000);
+        return fetchPaperCatalog(session, controller.signal).then(function (catalog) {
+          return localStorage.getItem(LS_SYNC_SESSION) === session ? catalog : null;
+        }).catch(function (error) {
+          expireConnection(error, session);
+          throw error;
+        }).finally(function () { clearTimeout(timeout); });
+      }
     });
     if (parts[0] === 'papers') {
       if (parts.length === 1) return renderPaperSubjects();
@@ -1158,7 +1184,7 @@
   function tile(href, ico, title, desc, cls) {
     return '<a class="tile ' + cls + '" href="' + href + '">' +
       '<div class="tile-ico">' + ico + '</div>' +
-      '<div class="tile-body"><div class="tile-title">' + title + '</div>' +
+      '<div class="tile-body"><div class="tile-title"><span class="tile-en" aria-hidden="true">' + ({ '開始練習': 'TOPICS', '錯題庫': 'ARCHIVE', '紅筆批改卷': 'PAPERS', '做題記錄': 'RECORDS', '隨機十題': 'RANDOM' }[title] || '') + '</span><span class="tile-cn">' + title + '</span></div>' +
       '<div class="tile-desc">' + desc + '</div></div>' +
       '<div class="tile-arrow">→</div></a>';
   }
@@ -1337,7 +1363,7 @@
         (mcOnly && nSub ? '<div class="mc-only-note">⚡ 已切為只做選擇題：' + nSub +
           ' 道大題已收起，今次唔使答、唔計分、唔入記錄。</div>' : '') +
         '<div class="q-paper" id="qPaper">' +
-          renderItems.map(function (it, idx) { return questionHtml(it, idx, draft); }).join('') +
+          renderItems.map(function (it, idx) { return questionHtml(it, idx, draft, mcOnly); }).join('') +
         '</div>' +
         '<div class="submit-bar" id="submitBar">' +
           '<button class="btn btn-primary btn-lg" id="submitBtn" type="button">' +
@@ -1350,7 +1376,7 @@
     hydratePrivateImages();
   }
 
-  function questionHtml(it, idx, draft) {
+  function questionHtml(it, idx, draft, mcOnly) {
     var head =
       '<div class="sq-head">' +
         '<span class="sq-no">' + (idx + 1) + '</span>' +
@@ -1365,22 +1391,22 @@
       body =
         (it.img ? '<img class="q-img" ' + (PRIVATE_BANK ? 'data-bank-image="' + esc(it.img) + '"' : 'src="' + esc(it.img) + '"') + ' alt="原題裁圖">' :
                   '<div class="q-stem">' + esc(it.stem) + '</div>') +
-        '<div class="opts" data-id="' + esc(it.id) + '">' +
+        '<div class="opts" role="group" aria-label="第 ' + (idx + 1) + ' 題，選擇答案" data-id="' + esc(it.id) + '">' +
           ['A', 'B', 'C', 'D'].map(function (l) {
             return '<button type="button" class="opt' + (picked === l ? ' picked' : '') +
-              '" data-l="' + l + '">' + l + '</button>';
+              '" data-l="' + l + '" aria-pressed="' + (picked === l) + '">' + l + '</button>';
           }).join('') +
         '</div>';
     } else {
       var v = draft.text[it.id] || '';
       body =
         '<div class="q-stem">' + esc(it.stem) + '</div>' +
-        '<textarea class="ans-box" data-id="' + esc(it.id) + '" rows="4" ' +
+        '<textarea class="ans-box" aria-label="第 ' + (idx + 1) + ' 題默寫答案" data-id="' + esc(it.id) + '" rows="4" ' +
           'placeholder="默寫答案（可留白，改用紙寫就剔下面格仔）……">' + esc(v) + '</textarea>' +
         '<label class="paper-lbl"><input type="checkbox" class="paper-chk" data-id="' + esc(it.id) + '"' +
           (draft.paper[it.id] ? ' checked' : '') + '> 我已喺紙上寫完</label>';
     }
-    return '<article class="sq" data-id="' + esc(it.id) + '" data-kind="' + it.kind + '">' + head + body + '</article>';
+    return '<article class="sq" data-id="' + esc(it.id) + '" data-kind="' + it.kind + '" aria-label="第 ' + (idx + 1) + ' 題"' + (mcOnly && it.kind === 'sub' ? ' hidden' : '') + '>' + head + body + '</article>';
   }
 
   function bindSession(code, topic, dkey, renderItems, initialActive, mcOnly) {
@@ -1435,6 +1461,7 @@
       activeItems = sessionItems(code, topic, mc);
       var sec = $('.session');
       sec.classList.toggle('mc-only', mc);
+      $all('.sq[data-kind="sub"]', sec).forEach(function (question) { question.hidden = mc; });
       var qPaper = $('#qPaper');
       var oldNote = $('.mc-only-note', sec);
       var nSub = renderItems.filter(function (it) { return it.kind === 'sub'; }).length;
@@ -1458,6 +1485,7 @@
         draft.pick[id] = (draft.pick[id] === l) ? '' : l;
         $all('.opt', box).forEach(function (x) {
           x.classList.toggle('picked', x.dataset.l === draft.pick[id]);
+          x.setAttribute('aria-pressed', String(x.dataset.l === draft.pick[id]));
         });
         persist('pick', id);
       });
@@ -1479,7 +1507,7 @@
           ? '仲有 ' + miss.length + ' 題 MC 未揀'
           : '仲有 ' + miss.length + ' 題未作答（MC 要揀，大題要默寫或剔紙上寫完）');
         var el = $('.sq[data-id="' + miss[0].id + '"]');
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (el) el.scrollIntoView({ behavior: motionBehavior(), block: 'center' });
         return;
       }
       submitSession(code, topic, dkey, activeItems, draft, sessState.mcOnly);
@@ -1552,7 +1580,7 @@
     var panel = $('#resultPanel');
     panel.hidden = false;
     panel.innerHTML = html;
-    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    panel.scrollIntoView({ behavior: motionBehavior(), block: 'start' });
 
     function recalcSub() {
       var got = 0;
@@ -1638,7 +1666,7 @@
           '<div class="rp-actions"><a class="btn btn-primary" href="#/records">📈 睇記錄</a>' +
           '<a class="btn btn-ghost" href="#/practice/' + code + '">繼續練習 →</a></div>' +
         '</div>';
-      panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      panel.scrollIntoView({ behavior: motionBehavior(), block: 'center' });
       toast('記錄已儲存 ✔');
     });
   }
@@ -1770,6 +1798,34 @@
         '<div><h3>↩️ ' + label + '答對後再錯（' + report.regressed.length + '）</h3>' +
         reportRowsHtml(report.regressed, '目前沒有答對後再錯的題目。', true) + '</div></div></div>';
   }
+  function sessionTimelineHtml() {
+    var rows = allSessions().filter(function (s) { return s && Number.isFinite(s.t) && s.t <= Date.now() && s.results; })
+      .slice().sort(function (a, b) { return b.t - a.t; });
+    // Replayed cloud copies of one submission appear only once.
+    var seen = new Set();
+    rows = rows.filter(function (s) {
+      var key = JSON.stringify([s.t, s.subj, s.topic]);
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+    return '<div class="panel"><div class="panel-h-row"><h2 class="panel-h">練習時間線</h2>' +
+      '<label>顯示 <select id="historyScope"><option value="all">全部記錄</option><option value="cycle">本雙周</option></select></label></div>' +
+      '<p class="history-summary">按提交時間排列 · 北京時間 · 本次正確題數與原卷成績分開記錄。最多顯示最近 30 次。</p>' +
+      '<div class="session-history">' + (rows.slice(0, 30).map(function (s) {
+        var ids = Object.keys(s.results), correct = ids.filter(function (id) { return window.DSELibrary.full(s.results[id]); }).length;
+        var meta = SUBJECT_META[s.subj], name = meta ? meta.name : '未分類';
+        return '<details class="session-entry" data-in-cycle="' + (s.t >= cycleStartOf(Date.now())) + '"><summary>' +
+          '<time>' + esc(fmtDateTime(s.t)) + '</time><span class="session-entry-title">' + esc(name + ' · ' +
+          (s.topic === '__random__' ? '隨機十題' : s.topic + ' ' + topicName(s.subj, s.topic))) +
+          '<small>已提交' + (s.mcOnly ? ' · 只做選擇題' : '') + ' · 展開詳情</small></span>' +
+          '<span class="session-entry-score">' + correct + ' / ' + ids.length + '</span></summary>' +
+          '<div class="session-entry-body">本次全對 ' + correct + ' 題；尚未全對 ' + (ids.length - correct) + ' 題。' +
+          '<div><a href="#/library/books/' + esc(s.subj) + '">查看錯題歸納</a>' +
+          '<a href="#/session/' + esc(s.subj) + '/' + encodeURIComponent(s.topic) + '">再練一次</a></div></div></details>';
+      }).join('') || '<p class="review-note">尚未有已提交的練習；閱讀和草稿不計作答。</p>') + '</div>' +
+      '<p id="historyEmpty" class="review-note" hidden>本雙周尚未有已提交的練習。</p></div>';
+  }
+
   function renderRecords() {
     var connected = !!localStorage.getItem(LS_SYNC_SESSION);
     var passwordTools = connected
@@ -1821,6 +1877,7 @@
           statCard('🔁', '上次仍錯', wrongRows.length + ' 題', wrongRows.length ? 'c-red' : 'c-green') +
         '</div>' +
 
+        sessionTimelineHtml() +
         cycleReportHtml() +
 
         '<div class="panel"><h2 class="panel-h">刷題活躍圖（近 6 個月，按答題數）</h2><div id="heat"></div>' +
@@ -1842,6 +1899,14 @@
         '</div>' +
       '</section>';
 
+    $('#historyScope').addEventListener('change', function (event) {
+      var visible = 0;
+      $all('.session-entry').forEach(function (row) {
+        row.hidden = event.target.value === 'cycle' && row.getAttribute('data-in-cycle') !== 'true';
+        if (!row.hidden) visible++;
+      });
+      $('#historyEmpty').hidden = visible > 0;
+    });
     renderHeat();
     renderReviewDue();
     renderWrongList('ALL');
@@ -2011,7 +2076,13 @@
             colsHtml + '</div>' +
         '</div>' +
       '</div>' +
-      '<div class="heat-tip" id="heatTip" hidden></div>';
+      '<div class="heat-tip" id="heatTip" hidden></div>' +
+      '<details class="text-activity"><summary>查看文字活動記錄（北京時間）</summary><ul>' +
+      Object.keys(byDay).map(Number).filter(function (d) { return d >= start && d <= today; }).sort(function (a, b) { return b - a; }).map(function (d) {
+        var date = new Date(d * DAY_MS);
+        return '<li>' + date.getUTCFullYear() + '-' + pad(date.getUTCMonth() + 1) + '-' + pad(date.getUTCDate()) +
+          '：作答 ' + byDay[d].q + ' 題，' + byDay[d].n + ' 次練習。</li>';
+      }).join('') + (Object.keys(byDay).some(function (d) { return Number(d) >= start && Number(d) <= today; }) ? '' : '<li>近六個月尚未有已提交的練習。</li>') + '</ul></details>';
     bindHeatTip();
   }
 

@@ -58,7 +58,7 @@ test('structured library uses the loaded private bank without book requests and 
   assert.match(app.node('#app').innerHTML, /化學/);
   assert.match(app.node('#app').innerHTML, /數學/);
   app.location.hash = '#/library/books/chem'; app.events.hashchange();
-  assert.match(app.node('#app').innerHTML, /100/);
+  assert.match(app.node('#mlYearSummary').innerHTML, /100/);
   assert.match(app.node('#mlTopics').innerHTML, /示例課題/);
   app.location.hash = '#/library/books/chem/T3'; app.events.hashchange();
   assert.match(app.node('#mlQuestions').innerHTML, /我的原答案/);
@@ -352,11 +352,11 @@ test('a returning browser opens home before either private request completes and
   finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
   await settle();
   assert.match(app.node('#app').innerHTML, /<b>1<\/b> 題在庫/);
-  assert.match(app.node('#app').innerHTML, /class="c-green">0<\/b> 已征服/);
+  assert.match(app.node('#app').innerHTML, /本輪已全對<strong class="c-green">0<small>/);
   finishSync({ ok: true, json: async () => ({ data: remote }) });
   await settle();
-  assert.match(app.node('#app').innerHTML, /class="c-green">1<\/b> 已征服/);
-  assert.match(app.node('#app').innerHTML, /class="c-red">0<\/b> 待清/);
+  assert.match(app.node('#app').innerHTML, /本輪已全對<strong class="c-green">1<small>/);
+  assert.match(app.node('#app').innerHTML, /本輪待複習<strong class="c-red">0<small>/);
   assert.match(app.node('#syncStatus').textContent, /已更新本機記錄/);
   assert.equal(calls.length, 2);
   assert.ok([...app.saved.values()].every(value => !value.includes('示例題')));
@@ -645,13 +645,14 @@ test('an answer changed during an upload stays visibly pending until a later syn
   app.node('#syncNowBtn').listeners.click();
   await settle();
   assert.equal(typeof finishPut, 'function');
-  const choice = { dataset: { l: 'A' }, classList: { toggle() {} } };
+  const choice = { dataset: { l: 'A' }, classList: { toggle() {} }, attrs: {}, setAttribute(key, value) { this.attrs[key] = value; } };
   const box = { dataset: { id: 'example-mc' }, listeners: {},
     addEventListener(type, fn) { this.listeners[type] = fn; },
     querySelectorAll(selector) { return selector === '.opt' ? [choice] : []; } };
   app.node('#app').querySelectorAll = selector => selector === '.opts' ? [box] : [];
   app.location.hash = '#/session/chem/T3'; app.events.hashchange();
   box.listeners.click({ target: { closest: () => choice } });
+  assert.equal(choice.attrs['aria-pressed'], 'true', 'selected answer is announced without relying on colour');
   finishPut({ ok: true, json: async () => ({ savedAt: '2026-10-12T16:00:00Z' }) });
   await settle();
   assert.match(app.node('#syncStatus').textContent, /本機有新變更，等待自動同步/);
@@ -679,7 +680,7 @@ test('visible sync times and the review calendar use Beijing time across midnigh
   const calendar = boot('', async () => { throw new Error('offline'); },
     { dse_quiz_sessions_v2: JSON.stringify(sessions) });
   calendar.location.hash = '#/records'; calendar.events.hashchange();
-  assert.equal((calendar.node('#heat').innerHTML.match(/1 次練習/g) || []).length, 2);
+  assert.equal((calendar.node('#heat').innerHTML.match(/data-tip="[^"]*1 次練習/g) || []).length, 2);
 });
 
 test('an expired session offers reconnection without deleting local records or uploading', async () => {
