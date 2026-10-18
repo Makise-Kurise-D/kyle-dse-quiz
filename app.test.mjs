@@ -32,7 +32,8 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
     localStorage: { getItem: k => saved.get(k) ?? null, setItem: (k, v) => saved.set(k, v), removeItem: k => saved.delete(k) },
     history: { replaceState(_, __, url) { location.hash = url.slice(url.indexOf('#')); } },
     setTimeout(fn, delay) { timers.push({ fn, delay }); return timers.length; },
-    clearTimeout() {}, setInterval(fn, delay) { intervals.push({ fn, delay }); }, clearInterval() {},
+    clearTimeout(id) { if (timers[id - 1]) timers[id - 1].cleared = true; },
+    setInterval(fn, delay) { intervals.push({ fn, delay }); }, clearInterval() {},
     confirm: () => true,
     scrollTo() {}, addEventListener(type, fn) { events[type] = fn; },
     QUIZ_SYNC_API: 'https://sync.example.workers.dev', QUIZ_PRIVATE_BANK: privateBank, QUIZ_PASSWORD_AUTH: passwordAuth,
@@ -633,6 +634,156 @@ test('sync combines answers from two computers and reports an upload only when o
   assert.equal(sentSha, 'a'.repeat(40), 'the upload reuses the version just read');
   assert.deepEqual(uploaded.drafts[key].pick, { a: 'A', b: 'B' });
   assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
+});
+
+test('sync deadlines cover slow headers and bodies for both reads and writes, then recover automatically', async () => {
+  for (const method of ['GET', 'PUT']) for (const phase of ['headers', 'body']) {
+    const calls = [];
+    let failed = false;
+    const records = JSON.stringify([{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }]);
+    const app = boot('', async (url, options) => {
+      calls.push(options.method);
+      if (!failed && options.method === method) {
+        failed = true;
+        const stall = () => new Promise((resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        });
+        return phase === 'headers' ? stall() : { ok: true, json: stall };
+      }
+      return { ok: true, json: async () => options.method === 'GET' ? { data: null } : { ok: true } };
+    }, { dse_quiz_sync_session_v1: 'valid-session', dse_quiz_auth_mode_v1: 'password', dse_quiz_sessions_v2: records }, false, true);
+    app.location.hash = '#/records'; app.events.hashchange();
+    app.node('#syncNowBtn').listeners.click(); await settle();
+    const deadline = app.timers.find(timer => timer.delay === 60000 && !timer.cleared);
+    assert.ok(deadline, `${method} ${phase} retains its deadline until the body is read`);
+    assert.equal(app.timers.some(timer => timer.delay === 15000), false, 'sync allows upstream refresh and conflict resolution beyond 15 seconds');
+    deadline.fn(); await settle();
+    assert.match(app.node('#syncStatus').textContent, /正在自動重試/);
+    assert.equal(app.saved.has('dse_quiz_sync_at_v1'), false);
+    assert.equal(app.saved.get('dse_quiz_sessions_v2'), records);
+    app.events.focus(); await settle();
+    assert.deepEqual(calls, method === 'GET' ? ['GET'] : ['GET', 'PUT'], 'concurrent triggers share the retry');
+    app.timers.find(timer => timer.delay === 1000).fn(); await settle();
+    assert.deepEqual(calls.slice(-2), ['GET', 'PUT']);
+    assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
+    assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'valid-session');
+    assert.ok(app.saved.has('dse_quiz_sync_at_v1'));
+  }
+});
+
+test('a lost upload response rechecks the cloud without duplicating an already saved exercise', async () => {
+  let remote = null, puts = 0;
+  const records = JSON.stringify([{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }]);
+  const app = boot('', async (_, options) => {
+    if (options.method === 'GET') return { ok: true, json: async () => ({ data: remote, sha: 'a'.repeat(40) }) };
+    puts++; remote = JSON.parse(options.body).data;
+    return { ok: true, json: async () => { throw new TypeError('Response stream disconnected after commit'); } };
+  }, { dse_quiz_sync_session_v1: 'valid-session', dse_quiz_auth_mode_v1: 'password', dse_quiz_sessions_v2: records }, false, true);
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.node('#syncNowBtn').listeners.click(); await settle();
+  assert.equal(app.saved.has('dse_quiz_sync_at_v1'), false, 'a lost acknowledgement cannot report upload success');
+  app.timers.find(timer => timer.delay === 1000).fn(); await settle();
+  assert.equal(puts, 1);
+  assert.equal(remote.sessions.length, 1);
+  assert.equal(app.saved.get('dse_quiz_sessions_v2'), records);
+  assert.match(app.node('#syncStatus').textContent, /雲端已核對/);
+});
+
+test('retrying a failed write re-reads the cloud version and includes new local and remote answers', async () => {
+  const cycle = boot().saved.get('dse_quiz_cycle_v1');
+  const local = { pick: { a: 'A' }, text: {}, paper: {}, changedAt: { 'pick:a': 110 }, deletedAt: 0 };
+  const remote = { app: 'kyle-dse-quiz', sessions: [], archive: [], drafts: {}, reviewPlan: {}, cycle };
+  const uploads = [];
+  let gets = 0;
+  const app = boot('', async (_, options) => {
+    if (options.method === 'GET') {
+      gets++;
+      if (gets > 1) remote.drafts['chem:T3'] = { ...local, pick: { b: 'B' }, changedAt: { 'pick:b': 120 } };
+      return { ok: true, json: async () => ({ data: remote, sha: (gets === 1 ? 'a' : 'b').repeat(40) }) };
+    }
+    uploads.push(JSON.parse(options.body));
+    return uploads.length === 1 ? { ok: false, status: 409, json: async () => ({ error: 'conflict' }) }
+      : { ok: true, json: async () => ({ ok: true }) };
+  }, { dse_quiz_sync_session_v1: 'valid-session', dse_quiz_auth_mode_v1: 'password', dse_quiz_cycle_v1: cycle,
+    dse_quiz_draft_v2: JSON.stringify({ 'chem:T3': local }) }, false, true);
+  app.location.hash = '#/records'; app.events.hashchange();
+  app.node('#syncNowBtn').listeners.click(); await settle();
+  const choice = { dataset: { l: 'C' }, classList: { toggle() {} }, setAttribute() {} };
+  const box = { dataset: { id: 'example-mc' }, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; },
+    querySelectorAll: () => [choice] };
+  app.node('#app').querySelectorAll = selector => selector === '.opts' ? [box] : [];
+  app.location.hash = '#/session/chem/T3'; app.events.hashchange();
+  box.listeners.click({ target: { closest: () => choice } });
+  app.timers.find(timer => timer.delay === 1000).fn(); await settle();
+  assert.equal(uploads.length, 2);
+  assert.equal(uploads[1].sha, 'b'.repeat(40), 'retry uses the latest cloud version');
+  assert.deepEqual(uploads[1].data.drafts['chem:T3'].pick, { a: 'A', b: 'B', 'example-mc': 'C' });
+  assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
+});
+
+test('temporary network and HTTP failures have bounded retries and later recover on the minute poll', async () => {
+  for (const failure of ['network', 408, 429, 500, 502, 503, 504]) {
+    let calls = 0;
+    const app = boot('', async (_, options) => {
+      if (++calls <= 3) {
+        if (failure === 'network') throw new TypeError('Failed to fetch');
+        return { ok: false, status: failure, json: async () => ({ error: 'storage_unavailable' }) };
+      }
+      return { ok: true, json: async () => options.method === 'GET' ? { data: null } : { ok: true } };
+    }, { dse_quiz_sync_session_v1: 'valid-session', dse_quiz_auth_mode_v1: 'password' }, false, true);
+    app.location.hash = '#/records'; app.events.hashchange();
+    app.node('#syncNowBtn').listeners.click(); await settle();
+    app.timers.find(timer => timer.delay === 1000).fn(); await settle();
+    app.timers.find(timer => timer.delay === 3000).fn(); await settle();
+    assert.equal(calls, 3);
+    assert.match(app.node('#syncStatus').textContent, /稍後會自動重試；本機記錄已保留/);
+    assert.equal(app.saved.has('dse_quiz_sync_at_v1'), false);
+    assert.equal(app.saved.get('dse_quiz_sync_session_v1'), 'valid-session');
+    app.intervals.find(timer => timer.delay === 60000).fn(); await settle();
+    assert.equal(calls, 5);
+    assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
+  }
+});
+
+test('sync never retries permanent failures or writes over an invalid successful read', async () => {
+  for (const kind of [401, 403, 404, 'service_not_configured', 'owner_connection_required', 'html', 'empty', 'wrong-app']) {
+    const calls = [];
+    const records = JSON.stringify([{ t: Date.now(), subj: 'chem', topic: 'T3', results: {} }]);
+    const app = boot('', async (_, options) => {
+      calls.push(options.method);
+      if (typeof kind === 'number') return { ok: false, status: kind, json: async () => ({ error: 'denied' }) };
+      if (kind.endsWith('required') || kind.endsWith('configured')) return { ok: false, status: 503, json: async () => ({ error: kind }) };
+      return { ok: true, json: async () => {
+        if (kind === 'html') throw new SyntaxError('Unexpected HTML');
+        return kind === 'empty' ? {} : { data: { app: 'wrong-app' } };
+      } };
+    }, { dse_quiz_sync_session_v1: 'valid-session', dse_quiz_auth_mode_v1: 'password', dse_quiz_sessions_v2: records }, false, true);
+    app.location.hash = '#/records'; app.events.hashchange();
+    app.node('#syncNowBtn').listeners.click(); await settle();
+    assert.deepEqual(calls, ['GET']);
+    assert.equal(app.timers.some(timer => timer.delay === 1000 || timer.delay === 3000), false);
+    assert.equal(app.saved.has('dse_quiz_sync_at_v1'), false);
+    assert.equal(app.saved.get('dse_quiz_sessions_v2'), records);
+    assert.match(app.node('#syncStatus').textContent, /同步失敗/);
+  }
+});
+
+test('logout or session replacement cancels queued sync retries before any further request', async () => {
+  for (const next of [null, 'new-session']) {
+    const calls = [];
+    const app = boot('', async (_, options) => {
+      calls.push(options.headers.Authorization);
+      throw new TypeError('Failed to fetch');
+    }, { dse_quiz_sync_session_v1: 'old-session', dse_quiz_auth_mode_v1: 'password' }, false, true);
+    app.location.hash = '#/records'; app.events.hashchange();
+    app.node('#syncNowBtn').listeners.click(); await settle();
+    if (next) app.saved.set('dse_quiz_sync_session_v1', next);
+    else app.saved.delete('dse_quiz_sync_session_v1');
+    app.timers.find(timer => timer.delay === 1000).fn(); await settle();
+    assert.deepEqual(calls, ['Bearer old-session']);
+    assert.equal(app.saved.get('dse_quiz_sync_session_v1'), next || undefined);
+    assert.equal(app.saved.has('dse_quiz_sync_at_v1'), false);
+  }
 });
 
 test('an answer changed during an upload stays visibly pending until a later sync', async () => {

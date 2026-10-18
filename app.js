@@ -139,19 +139,20 @@
     if (cycle) localStorage.setItem(LS_CYCLE, String(cycle));
     return true;
   }
-  function syncRequest(method, body) {
-    var session = localStorage.getItem(LS_SYNC_SESSION);
+  function syncRequest(method, body, session) {
+    session = session || localStorage.getItem(LS_SYNC_SESSION);
     if (!SYNC_API || !session) return Promise.reject(new Error('未設定同步服務或尚未連接 GitHub'));
     return syncFetch('/sync', {
       method: method,
       headers: { 'Authorization': 'Bearer ' + session, 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
       cache: 'no-store'
-    }).then(readSyncResponse);
+    }, readSyncResponse);
   }
   function readSyncResponse(r) {
     return Promise.resolve().then(function () { return r.json(); }).catch(function (err) {
       if (err.name === 'AbortError' || err.name === 'TypeError') throw err;
+      if (r.ok) throw Object.assign(new Error('同步服務回應格式有誤；本機記錄已保留'), { code: 'invalid_response' });
       return {};
     }).then(function (data) {
       if (r.ok) return data;
@@ -182,8 +183,9 @@
   }
   function syncFetch(path, options, readResponse) {
     var controller = new AbortController();
-    // 題庫可能先續期儲存授權再讀取資料，需容納兩次各有 8 秒上限的上游請求。
-    var timer = setTimeout(function () { controller.abort(); }, path === '/bank' ? 30000 : 15000);
+    // 同步可能先續期授權，再因多裝置衝突重讀及寫入；每次上游請求最多 8 秒。
+    // 期限同時涵蓋回應正文，避免只收到 headers 就取消計時後一直卡住。
+    var timer = setTimeout(function () { controller.abort(); }, path === '/sync' ? 60000 : path === '/bank' ? 30000 : 15000);
     return fetch(SYNC_API + path, Object.assign({}, options, { signal: controller.signal }))
       .then(function (response) { return readResponse ? readResponse(response) : response; })
       .catch(function (err) {
@@ -204,18 +206,35 @@
     }
     var before = state(backupData());
     var sentRevision = syncRevision;
-    return syncRequest('GET').then(function (remote) {
-      if (localStorage.getItem(LS_SYNC_SESSION) !== session) return null;
-      if (remote.data) mergeData(remote.data);
-      var backup = backupData();
-      sentRevision = syncRevision;
-      if (remote.data && state(remote.data) === state(backup)) {
-        return { savedAt: new Date().toISOString(), kind: before === state(backup) ? 'checked' : 'downloaded' };
-      }
-      return syncRequest('PUT', { data: backup, sha: remote.sha || null }).then(function (result) {
-        result.kind = 'uploaded'; return result;
+    function current() { return localStorage.getItem(LS_SYNC_SESSION) === session; }
+    function attemptSync(attempt) {
+      if (!current()) return Promise.resolve(null);
+      // 寫入可能已成功而回應途中斷線；每次重試必須重讀及合併，不能重送舊 sha。
+      return syncRequest('GET', null, session).then(function (remote) {
+        if (!current()) return null;
+        if (!remote || !Object.prototype.hasOwnProperty.call(remote, 'data') ||
+            (remote.data !== null && (!remote.data || remote.data.app !== 'kyle-dse-quiz'))) {
+          throw Object.assign(new Error('雲端記錄回應格式有誤；本機記錄已保留'), { code: 'invalid_response' });
+        }
+        if (remote.data) mergeData(remote.data);
+        var backup = backupData();
+        sentRevision = syncRevision;
+        if (remote.data && state(remote.data) === state(backup)) {
+          return { savedAt: new Date().toISOString(), kind: before === state(backup) ? 'checked' : 'downloaded' };
+        }
+        return syncRequest('PUT', { data: backup, sha: remote.sha || null }, session).then(function (result) {
+          result.kind = 'uploaded'; return result;
+        });
+      }).catch(function (err) {
+        if (!current()) return null;
+        if (attempt >= 2 || (!transientDataError(err) && err.status !== 409)) throw err;
+        setSyncStatus('同步暫時未完成，正在自動重試（' + (attempt + 1) + '/2）；本機記錄已保留' +
+          (err.status ? ' [HTTP ' + err.status + ']' : '') + '…');
+        return new Promise(function (resolve) { setTimeout(resolve, attempt === 0 ? 1000 : 3000); })
+          .then(function () { return attemptSync(attempt + 1); });
       });
-    }).then(function (result) {
+    }
+    return attemptSync(0).then(function (result) {
       if (!result || localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       var checkedAt = new Date().toISOString();
       localStorage.setItem(LS_SYNCED_AT, checkedAt);
@@ -231,7 +250,9 @@
     }).catch(function (err) {
       if (localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
       expireConnection(err, session);
-      setSyncStatus('同步失敗：' + err.message);
+      var detail = err.name === 'TypeError' ? '網絡未能連接同步服務，請檢查目前網絡' : err.message;
+      setSyncStatus((transientDataError(err) || err.status === 409
+        ? '同步暫未完成，稍後會自動重試；本機記錄已保留：' : '同步失敗：') + detail);
       return false;
     }).finally(function () {
       syncBusy = false;
@@ -299,7 +320,7 @@
         }).finally(function () { passwordLoginBusy = false; button.disabled = false; });
     });
   }
-  function transientBankError(err) {
+  function transientDataError(err) {
     if (err.code === 'service_not_configured' || err.code === 'owner_connection_required') return false;
     return err.code === 'connection_timeout' || err.name === 'TypeError' ||
       [408, 429, 500, 502, 503, 504].indexOf(err.status) >= 0;
@@ -319,7 +340,7 @@
         method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store'
       }, readSyncResponse).catch(function (err) {
         if (!current()) return null;
-        var retryable = transientBankError(err);
+        var retryable = transientDataError(err);
         if (!retryable || attempt >= 2) { bankAutoRetry = retryable; throw err; }
         bankMessage = '錯題庫暫時未有回應，正在自動重試（' + (attempt + 1) + '/2）…';
         var status = $('#bankStatus');
