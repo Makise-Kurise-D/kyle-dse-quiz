@@ -5,12 +5,12 @@
  --blue:#aad8ff;--blue-bg:#123355;--red:#ffb9c4;--red-bg:#472330;--green:#b4efcc;--green-bg:#163d32;
  --gold:#ffe296;--gold-line:#c9ae68;--gold-soft:#3b321e;--shadow:0 6px 24px #001b3733;--shadow-l:0 12px 35px #00132933;
  --rail-width:218px;--shell-height:136px;--radius:3px;--world-background:linear-gradient(160deg,#22bade 0%,#135ce4 36%,#05245e 100%);
- --character:url('visual/blue-character.webp?v=8');--art-opacity:.62;--read-background:#0b2358;
+ --character:url('visual/home-day.webp');--archive-art:url('visual/archive-day.webp');--art-opacity:.62;--read-background:#0b2358;
 }
 html[data-theme=night]{
  --paper:#491635;--card:#291026;--ink:#fff2f8;--ink2:#f0d9e7;--gray:#dfbfd4;--line:#df9bb655;
  --accent:#ffadd3;--accent-ink:#420e2a;--header:#ffcee2;--header-ink:#4a0c2a;--deep:#200d24;--radius:12px;
- --world-background:linear-gradient(155deg,#ba80ac,#792652 42%,#2b112d);--character:url('visual/pink-character.webp?v=11');
+ --world-background:linear-gradient(155deg,#ba80ac,#792652 42%,#2b112d);--character:url('visual/home-night.webp');--archive-art:url('visual/archive-night.webp');
  --art-opacity:.5;--read-background:#2b1529;
 }
 html[data-appearance=simple]{
@@ -172,8 +172,6 @@ html[data-appearance=full][data-theme=night]{
  --header:rgba(255,211,231,.84);--line:rgba(255,209,232,.3);--radius:0px;
  --glass-shadow:0 10px 30px rgba(43,5,31,.14),inset 0 1px 0 rgba(255,234,245,.15);
 }
-html[data-appearance=full] body:not([data-view=home]) .visual-character{opacity:.64}
-html[data-appearance=full][data-theme=night] body:not([data-view=home]) .visual-character{opacity:.56}
 html[data-appearance=full] :is(.shell-header,.rail,.tabbar){
  -webkit-backdrop-filter:var(--glass-filter);backdrop-filter:var(--glass-filter);
  box-shadow:var(--glass-shadow);
@@ -323,4 +321,49 @@ html[data-appearance=simple] .home-stage .tile-ico{font-size:24px}
 }
 @media screen and (max-width:860px){
  .shell-header{padding-top:calc(16px + env(safe-area-inset-top,0px))}
+}
+
+/* Full wallpapers stay inside the unobscured viewport. The soft fill covers
+   letterboxing; the sharp layer contains the whole composition on desktops. */
+html[data-appearance=full] .visual-world{
+ inset:var(--header-offset,var(--shell-height)) 0 0 var(--rail-width);
+ background:#0719b7;
+}
+html[data-appearance=full][data-theme=night] .visual-world{background:#b7134d}
+html[data-appearance=full] .visual-world:before{
+ content:'';position:absolute;inset:-30px;background:var(--character) left center/cover no-repeat;
+ filter:blur(24px);opacity:.72;
+}
+html[data-appearance=full] .visual-world:after{display:none}
+html[data-appearance=full] body .visual-character{
+ inset:0;opacity:1;filter:none;background:var(--character) left center/contain no-repeat;
+}
+.archive-backdrop,.archive-tint,.archive-art{display:none;position:absolute;inset:0;pointer-events:none}
+html[data-appearance=full] body[data-library=books] .archive-backdrop{display:block;overflow:hidden}
+.archive-home-content{margin:0 auto;opacity:.62;filter:blur(1px);user-select:none}
+.archive-home-content .hero{background:transparent}
+html[data-appearance=full] body[data-library=books] .archive-tint{
+ display:block;background:linear-gradient(180deg,rgba(0,207,247,.60),rgba(5,54,202,.73) 45%,rgba(7,10,175,.87));
+}
+html[data-appearance=full][data-theme=night] body[data-library=books] .archive-tint{
+ background:linear-gradient(180deg,rgba(255,190,122,.55),rgba(239,47,116,.72) 40%,rgba(158,7,58,.85));
+}
+html[data-appearance=full] body[data-library=books] .archive-art{
+ display:block;background:var(--archive-art) right center/contain no-repeat;
+}
+html[data-appearance=full][data-theme] .hero-title{
+ color:#fff;text-shadow:0 2px 3px #031541,0 0 15px #031541;
+}
+html[data-appearance=full][data-theme] .home-stage .hero-kicker{
+ color:#fff;text-shadow:0 1px 4px #031541,0 0 12px #031541;
+}
+@media screen and (max-width:860px){
+ html[data-appearance=full] .visual-world{left:0;bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+}
+@media screen and (max-aspect-ratio:4/5){
+ html[data-appearance=full] body .visual-character{background-size:auto 100%;background-position:left center}
+ html[data-appearance=full] body[data-library=books] .archive-art{background-size:auto 100%;background-position:82% center}
+}
+@media(prefers-reduced-transparency:reduce){
+ .archive-home-content{opacity:.25;filter:none}
 }

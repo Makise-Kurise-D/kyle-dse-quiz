@@ -275,6 +275,7 @@
     releasePaper();
     if (imageObserver) { imageObserver.disconnect(); imageObserver = null; }
     window.DSELibrary.reset();
+    clearArchiveBackdrop();
     imageReads.clear();
     paperCatalogSnapshot = null;
     imageUrls.forEach(function (url) { URL.revokeObjectURL(url); });
@@ -676,6 +677,7 @@
     var h = location.hash.replace(/^#/, '').split('?')[0] || '/';
     var parts = h.split('/').filter(Boolean);
     var view = parts[0] || 'home';
+    renderArchiveBackdrop(view === 'library' && parts[1] === 'books');
     if (view !== 'library') releasePaper();
     $all('.rail-item,.tab-item').forEach(function (a) {
       a.classList.toggle('active', a.dataset.route === (view === 'library' && parts[1] === 'papers' ? 'papers' : view));
@@ -711,7 +713,7 @@
   }
 
   /* ---------------- 主頁 ---------------- */
-  function renderHome() {
+  function homeMarkup() {
     var latest = latestMap();
     var totalItems = SUBJECT_ORDER.reduce(function (n, c) { return n + itemsOf(c).length; }, 0);
     var doneIds = {}; sessions.forEach(function (s) {
@@ -744,7 +746,7 @@
     var remainingDays = Math.ceil((cycleEndOf(Date.now()) - Date.now()) / DAY_MS);
     var resume = top.filter(function (r) { return r.due > 0; })[0] || top[0];
     var resumeHref = resume ? '#/session/' + resume.code + '/' + encodeURIComponent(resume.topic) : '#/practice/chem';
-    $('#app').innerHTML =
+    return (
       '<section class="home"><div class="home-stage">' +
         '<div class="hero">' +
           '<div class="hero-kicker">Kyle 嘅錯題本 / DSE</div>' +
@@ -790,7 +792,25 @@
             }).join('') : '<p class="review-note">錯題庫載入後顯示推薦課題。</p>') +
           '</div>' +
         '</div>' +
-      '</section>';
+      '</section>');
+  }
+  function clearArchiveBackdrop() {
+    var backdrop = $('#archiveBackdrop');
+    if (backdrop) { backdrop.hidden = true; backdrop.innerHTML = ''; }
+  }
+  function renderArchiveBackdrop(active) {
+    if (!active || (PRIVATE_BANK && !localStorage.getItem(LS_SYNC_SESSION))) return clearArchiveBackdrop();
+    var backdrop = $('#archiveBackdrop');
+    if (!backdrop) return;
+    // Reuse the current home view without duplicate IDs, live regions or handlers.
+    // The inert, aria-hidden layer is memory-only and is cleared on exit/logout.
+    backdrop.innerHTML = '<div class="app archive-home-content">' + homeMarkup()
+      .replace(/\sid="[^"]*"/g, '').replace(/\saria-live="[^"]*"/g, '')
+      .replace(/\srole="status"/g, '') + '</div>';
+    backdrop.hidden = false;
+  }
+  function renderHome() {
+    $('#app').innerHTML = homeMarkup();
     bindBankRetry();
     startCycleTimer();
   }

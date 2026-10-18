@@ -48,6 +48,37 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+test('archive backdrop reuses current home, has no duplicate IDs, and clears when leaving books', () => {
+  const app = boot();
+  app.location.hash = '#/library/books'; app.events.hashchange();
+  const backdrop = app.node('#archiveBackdrop');
+  assert.equal(backdrop.hidden, false);
+  assert.match(backdrop.innerHTML, /開始練習/);
+  assert.match(backdrop.innerHTML, /<b>1<\/b> 題在庫/);
+  assert.doesNotMatch(backdrop.innerHTML, /\sid=|aria-live=|role="status"/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /archive-home-content/);
+  app.location.hash = '#/library/papers'; app.events.hashchange();
+  assert.equal(backdrop.hidden, true);
+  assert.equal(backdrop.innerHTML, '');
+});
+
+test('private home backdrop is cleared when another tab removes the session', async () => {
+  let finishBank;
+  const app = boot('', async url => url.endsWith('/bank') ? new Promise(resolve => { finishBank = resolve; }) : { ok: true, json: async () => ({ data: null }) },
+    { dse_quiz_sync_session_v1: 'p'.repeat(43), dse_quiz_auth_mode_v1: 'password' }, true, true);
+  finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
+  await settle();
+  app.location.hash = '#/library/books'; app.events.hashchange();
+  assert.equal(app.node('#archiveBackdrop').hidden, false);
+  const saved = [...app.saved.entries()];
+  assert.ok(saved.every(([, value]) => !value.includes('archive-home-content')));
+  app.saved.delete('dse_quiz_sync_session_v1');
+  app.events.storage({ key: 'dse_quiz_sync_session_v1' });
+  assert.equal(app.node('#archiveBackdrop').hidden, true);
+  assert.equal(app.node('#archiveBackdrop').innerHTML, '');
+  assert.match(app.node('#app').innerHTML, /passwordLoginForm/);
+});
+
 function practiceFixture(app) {
   const subjects = app.context.QUIZ_DATA.subjects;
   subjects.chem.items[0].lost = 2;

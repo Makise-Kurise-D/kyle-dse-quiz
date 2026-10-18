@@ -68,6 +68,7 @@
     var heading = document.getElementById('shellHeading');
     if (heading) { heading.querySelector('b').textContent = title[0]; heading.querySelector('span').textContent = title[1]; }
     document.body.dataset.view = part || 'home';
+    document.body.dataset.library = part === 'library' ? location.hash.split('?')[0].split('/')[2] || '' : '';
     document.querySelectorAll('.rail-item[data-route],.tab-item[data-route]').forEach(function (link) {
       var active = link.dataset.route === (part === 'library' && location.hash.indexOf('/papers') >= 0 ? 'papers' : part || 'home');
       if (active) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
