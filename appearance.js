@@ -27,6 +27,8 @@
     var theme = override ? override.theme : scheduled(now);
     root.dataset.theme = theme;
     root.dataset.appearance = view;
+    var world = document.getElementById('visualWorld');
+    if (world) world.dataset.theme = theme;
     root.style.colorScheme = theme === 'night' ? 'dark' : 'light';
     document.querySelectorAll('[data-appearance-choice]').forEach(function (button) {
       button.setAttribute('aria-pressed', String(button.dataset.appearanceChoice === view));

@@ -9,12 +9,13 @@ function boot(time, initial = {}, blocked = false) {
   let now = Date.parse(time);
   const saved = new Map(Object.entries(initial)), events = {}, timers = [];
   const root = { dataset: {}, style: {} };
+  const world = { dataset: {} };
   class Clock extends Date {
     constructor(...args) { super(...(args.length ? args : [now])); }
     static now() { return now; }
   }
   const context = {
-    Date: Clock, document: { documentElement: root, getElementById() { return null; }, querySelectorAll() { return []; }, addEventListener() {} },
+    Date: Clock, document: { documentElement: root, getElementById(id) { return id === 'visualWorld' ? world : null; }, querySelectorAll() { return []; }, addEventListener() {} },
     localStorage: {
       getItem(key) { if (blocked) throw new Error('storage unavailable'); return saved.get(key) ?? null; },
       setItem(key, value) { if (blocked) throw new Error('storage unavailable'); saved.set(key, value); }
@@ -24,8 +25,20 @@ function boot(time, initial = {}, blocked = false) {
   };
   context.window = context;
   vm.createContext(context); vm.runInContext(source, context);
-  return { api: context.DSEAppearance, root, saved, events, timers, at(time) { now = Date.parse(time); } };
+  return { api: context.DSEAppearance, root, world, saved, events, timers, at(time) { now = Date.parse(time); } };
 }
+
+test('archive world follows the current home theme through manual and automatic changes', () => {
+  const app = boot('2026-10-18T01:00:00Z');
+  assert.equal(app.world.dataset.theme, 'day');
+  app.api.toggle();
+  assert.equal(app.root.dataset.theme, 'night');
+  assert.equal(app.world.dataset.theme, 'night');
+  app.api.toggle();
+  assert.equal(app.world.dataset.theme, 'day');
+  app.at('2026-10-18T11:00:00Z'); app.api.apply();
+  assert.equal(app.world.dataset.theme, 'night');
+});
 
 test('Beijing schedule changes at exactly 07:00 and 19:00 regardless of host time zone', () => {
   const { api } = boot('2026-10-18T00:00:00Z');
