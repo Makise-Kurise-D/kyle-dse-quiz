@@ -309,3 +309,15 @@ html[data-appearance=simple] .home-stage .tile-ico{font-size:24px}
 @media(max-width:360px){.home-stage .tile-ico{width:49px;font-size:20px}.home-stage .tile{gap:10px}}
 @media(forced-colors:active){.persona-icon{display:none}.tab-ico{display:none}}
 @media print{.persona-icon{display:none}}
+
+/* Keep mobile status and appearance controls available while reading. */
+@media screen and (max-width:860px){
+ :root{--mobile-header-offset:calc(var(--shell-height) + env(safe-area-inset-top,0px));--paper-sections-height:68px}
+ html{scroll-padding-top:calc(var(--mobile-header-offset) + 12px)}
+ body{padding-top:var(--mobile-header-offset)}
+ .shell-header{position:fixed;top:0;z-index:80;min-height:var(--mobile-header-offset);padding-top:calc(16px + env(safe-area-inset-top,0px))}
+ .rp-head{top:calc(var(--mobile-header-offset) + 12px)}
+ .paper-sections{top:var(--mobile-header-offset);height:var(--paper-sections-height);align-items:center}
+ .book-page-controls{top:calc(var(--mobile-header-offset) + 8px)}
+ .paper-sections:not([hidden]) + .book-reader .book-page-controls{top:calc(var(--mobile-header-offset) + var(--paper-sections-height) + 8px)}
+}
