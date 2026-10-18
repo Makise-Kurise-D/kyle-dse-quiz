@@ -70,7 +70,7 @@
     }).join('') + '</div>';
   }
   function subjectName(code) { return code === 'chem' ? '化學' : '生物'; }
-  function icon(code) { return code === 'chem' ? '⚗️' : '🧬'; }
+  function icon(code) { return code === 'chem' ? '<span class="persona-icon persona-icon-chem" aria-hidden="true"></span>' : '<span class="persona-icon persona-icon-bio" aria-hidden="true"></span>'; }
   function header(title, sub, back, label) {
     return '<header class="page-head"><div><h1 class="page-title">' + title + '</h1><p class="page-sub">' + sub +
       '</p></div><a class="btn btn-ghost" href="' + back + '">← ' + label + '</a></header>';
@@ -85,7 +85,7 @@
   }
   function overview() {
     var subjects = context.data.subjects;
-    frame('subjects', header('📚 錯題庫', '從科目到課題，直接找到需要重溫的錯題。', '#/', '主頁') +
+    frame('subjects', header('<span class="persona-icon persona-icon-library" aria-hidden="true"></span> 錯題庫', '從科目到課題，直接找到需要重溫的錯題。', '#/', '主頁') +
       '<div class="ml-subjects">' + ['bio', 'chem'].map(function (code) {
         var stats = summarize(subjects[code].items, context.index);
         var percent = stats.total ? Math.round(stats.mastered / stats.total * 100) : 0;
@@ -95,7 +95,7 @@
           '<div class="ml-subject-metrics"><span><b>' + (stats.total - stats.mastered) + '</b>待複習／鞏固</span>' +
           '<span><b>' + percent + '%</b>已掌握</span></div>' + bar(stats) + legend(stats) +
           '<span class="ml-open">查看課題與錯因 <span aria-hidden="true">→</span></span></a>';
-      }).join('') + '<div class="ml-subject ml-subject-math" aria-disabled="true"><span class="ml-subject-icon">📐</span>' +
+      }).join('') + '<div class="ml-subject ml-subject-math" aria-disabled="true"><span class="ml-subject-icon"><span class="persona-icon persona-icon-math" aria-hidden="true"></span></span>' +
         '<h2>數學</h2><p>尚未收錄 · 為之後的錯題預留位置</p><span class="ml-badge ml-unseen">準備中</span></div></div>' +
       '<p class="library-note">已掌握＝兩次獨立練習連續全對；之後未全對會標為回退。掌握狀態跨雙周保留，閱讀解析不計作答。</p>');
   }

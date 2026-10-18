@@ -1,0 +1,141 @@
+{
+  "rights": "Original game artwork belongs to ATLUS / SEGA. Source listings are not an open-source artwork license.",
+  "assets": {
+    "p3r-home.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Full_Moon_Icon.png",
+      "image": "https://megatenwiki.com/images/7/72/P3R_Full_Moon_Icon.png",
+      "bytes": 2716
+    },
+    "p3r-library.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Item_Icon.png",
+      "image": "https://megatenwiki.com/images/5/56/P3R_Item_Icon.png",
+      "bytes": 5518
+    },
+    "p3r-practice.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Skill_Icon.png",
+      "image": "https://megatenwiki.com/images/5/5c/P3R_Skill_Icon.png",
+      "bytes": 3657
+    },
+    "p3r-papers.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Essential_Icon.png",
+      "image": "https://megatenwiki.com/images/2/28/P3R_Essential_Icon.png",
+      "bytes": 3093
+    },
+    "p3r-records.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Support_Icon.png",
+      "image": "https://megatenwiki.com/images/3/34/P3R_Support_Icon.png",
+      "bytes": 4339
+    },
+    "p3r-random.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Fortune_Icon.png",
+      "image": "https://megatenwiki.com/images/e/ef/P3R_Fortune_Icon.png",
+      "bytes": 3041
+    },
+    "p3r-chem.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Fire_Resistance_Icon.png",
+      "image": "https://megatenwiki.com/images/a/a2/P3R_Fire_Resistance_Icon.png",
+      "bytes": 3929
+    },
+    "p3r-bio.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Plant_Icon.png",
+      "image": "https://megatenwiki.com/images/1/19/P3R_Plant_Icon.png",
+      "bytes": 3367
+    },
+    "p3r-math.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Magic_Icon.png",
+      "image": "https://megatenwiki.com/images/0/05/P3R_Magic_Icon.png",
+      "bytes": 4971
+    },
+    "p3r-fast.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Elec_Resistance_Icon.png",
+      "image": "https://megatenwiki.com/images/b/b2/P3R_Elec_Resistance_Icon.png",
+      "bytes": 4303
+    },
+    "p3r-sync.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Navigator_Icon.png",
+      "image": "https://megatenwiki.com/images/0/08/P3R_Navigator_Icon.png",
+      "bytes": 4366
+    },
+    "p3r-notes.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Treasure_Icon.png",
+      "image": "https://megatenwiki.com/images/f/fd/P3R_Treasure_Icon.png",
+      "bytes": 4378
+    },
+    "p3p-warning.png": {
+      "game": "Persona 3 Portable (PS4)",
+      "page": "https://www.spriters-resource.com/playstation_4/persona3portableps4/asset/255687/",
+      "originalFile": "Icons/ICON01_0.png",
+      "uploader": "Penguin140"
+    },
+    "p3p-success.png": {
+      "game": "Persona 3 Portable (PS4)",
+      "page": "https://www.spriters-resource.com/playstation_4/persona3portableps4/asset/255687/",
+      "originalFile": "Icons/ICON08_0.png",
+      "uploader": "Penguin140"
+    },
+    "p3p-celebrate.png": {
+      "game": "Persona 3 Portable (PS4)",
+      "page": "https://www.spriters-resource.com/playstation_4/persona3portableps4/asset/255687/",
+      "originalFile": "Icons/ICON07_0.png",
+      "uploader": "Penguin140"
+    },
+    "p3p-passed.png": {
+      "game": "Persona 3 Portable (PS4)",
+      "page": "https://www.spriters-resource.com/playstation_4/persona3portableps4/asset/255687/",
+      "originalFile": "Icons/ICON13_0.png",
+      "uploader": "Penguin140"
+    },
+    "p3p-menu.png": {
+      "game": "Persona 3 Portable (PS4)",
+      "page": "https://www.spriters-resource.com/playstation_4/persona3portableps4/asset/255692/",
+      "originalFile": "c_main_01.png",
+      "uploader": "Penguin140"
+    },
+    "p3p-calendar.png": {
+      "game": "Persona 3 Portable (PS4)",
+      "page": "https://www.spriters-resource.com/playstation_4/persona3portableps4/asset/255692/",
+      "originalFile": "f_main_02_13.png",
+      "uploader": "Penguin140"
+    },
+    "p3r-success.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Light_Resistance_Icon.png",
+      "image": "https://megatenwiki.com/images/9/99/P3R_Light_Resistance_Icon.png",
+      "bytes": 4369
+    },
+    "p3r-warning.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Fire_Resistance_Icon.png",
+      "image": "https://megatenwiki.com/images/a/a2/P3R_Fire_Resistance_Icon.png",
+      "bytes": 3929
+    },
+    "p3r-celebrate.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Gift_Icon.png",
+      "image": "https://megatenwiki.com/images/4/44/P3R_Gift_Icon.png",
+      "bytes": 4025
+    },
+    "p3r-passed.png": {
+      "game": "Persona 3 Reload",
+      "page": "https://megatenwiki.com/wiki/File:P3R_Recovery_Icon.png",
+      "image": "https://megatenwiki.com/images/b/b6/P3R_Recovery_Icon.png",
+      "bytes": 2754
+    }
+  },
+  "themes": {
+    "day": "Persona 3 Reload",
+    "night": "Persona 3 Portable"
+  }
+}

@@ -247,3 +247,65 @@ html[data-appearance=full] :is(.home-stat-strip,.stat-cards .stat-card,.topic-in
   background:#fff;color:#000;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;border-color:#777;clip-path:none;
  }
 }
+
+/* Original P3R menu plaques and P3P feedback sprites, hosted with the app.
+   All icons accompany readable labels; game artwork never conveys state alone. */
+.persona-icon{display:inline-block;flex:none;width:2.6em;height:1em;vertical-align:-.14em;
+ background:var(--persona-art) center/contain no-repeat;pointer-events:none}
+.persona-icon-home{--persona-art:url('images/persona3/p3r-home.png');width:1em}
+.persona-icon-practice{--persona-art:url('images/persona3/p3r-practice.png')}
+.persona-icon-library{--persona-art:url('images/persona3/p3r-library.png')}
+.persona-icon-papers{--persona-art:url('images/persona3/p3r-papers.png')}
+.persona-icon-records{--persona-art:url('images/persona3/p3r-records.png')}
+.persona-icon-random{--persona-art:url('images/persona3/p3r-random.png')}
+.persona-icon-chem{--persona-art:url('images/persona3/p3r-chem.png');width:1.08em}
+.persona-icon-bio{--persona-art:url('images/persona3/p3r-bio.png')}
+.persona-icon-math{--persona-art:url('images/persona3/p3r-math.png')}
+.persona-icon-fast{--persona-art:url('images/persona3/p3r-fast.png');width:1.08em}
+.persona-icon-sync{--persona-art:url('images/persona3/p3r-sync.png')}
+.persona-icon-notes{--persona-art:url('images/persona3/p3r-notes.png')}
+.persona-icon-warning{--persona-art:url('images/persona3/p3r-warning.png');width:1em}
+.persona-icon-success{--persona-art:url('images/persona3/p3r-success.png');width:1em}
+.persona-icon-celebrate{--persona-art:url('images/persona3/p3r-celebrate.png')}
+.persona-icon-passed{--persona-art:url('images/persona3/p3r-passed.png')}
+/* Pink / night uses P3P's actual menu atlas. CSS clips one 64px cell from
+   the unchanged atlas; foreground colour keeps it legible in the simple view. */
+html[data-theme=night] .persona-icon{width:1em;height:1em;background:currentColor;
+ --persona-art:url('images/persona3/p3p-menu.png');--sprite-x:0;--sprite-y:0;
+ -webkit-mask:var(--persona-art) calc(var(--sprite-x) * -.015625em) calc(var(--sprite-y) * -.015625em)/16em 16em no-repeat;
+ mask:var(--persona-art) calc(var(--sprite-x) * -.015625em) calc(var(--sprite-y) * -.015625em)/16em 16em no-repeat}
+html[data-theme=night] .persona-icon-practice{--sprite-x:4}
+html[data-theme=night] .persona-icon-library{--sprite-x:752;--sprite-y:72}
+html[data-theme=night] .persona-icon-papers{--sprite-x:952;--sprite-y:72}
+html[data-theme=night] .persona-icon-records{--sprite-x:888}
+html[data-theme=night] .persona-icon-random{--sprite-x:820;--sprite-y:72}
+html[data-theme=night] .persona-icon-chem{--sprite-x:140;--sprite-y:72}
+html[data-theme=night] .persona-icon-bio{--sprite-x:820}
+html[data-theme=night] .persona-icon-math{--sprite-x:752}
+html[data-theme=night] .persona-icon-fast{--sprite-x:276;--sprite-y:72}
+html[data-theme=night] .persona-icon-sync{--sprite-x:820;--sprite-y:72}
+html[data-theme=night] .persona-icon-notes{--sprite-x:684}
+html[data-theme=night] .persona-icon-home{--persona-art:url('images/persona3/p3p-calendar.png');
+ -webkit-mask-position:0 0;mask-position:0 0;-webkit-mask-size:10.666667em 10.666667em;mask-size:10.666667em 10.666667em}
+html[data-theme=night] :is(.persona-icon-warning,.persona-icon-success,.persona-icon-celebrate,.persona-icon-passed){
+ background:var(--persona-art) center/contain no-repeat;-webkit-mask:none;mask:none}
+html[data-theme=night] .persona-icon-warning{--persona-art:url('images/persona3/p3p-warning.png')}
+html[data-theme=night] .persona-icon-success{--persona-art:url('images/persona3/p3p-success.png');background:currentColor;
+ -webkit-mask:var(--persona-art) center/contain no-repeat;mask:var(--persona-art) center/contain no-repeat}
+html[data-theme=night] .persona-icon-celebrate{--persona-art:url('images/persona3/p3p-celebrate.png')}
+html[data-theme=night] .persona-icon-passed{--persona-art:url('images/persona3/p3p-passed.png')}
+.home-stage .tile-ico{display:flex;width:62px;height:38px;background:transparent;gap:0;
+ border-radius:0;font-size:24px}
+.home-stage .tile-ico .persona-icon{max-width:100%}
+.tab-ico{display:flex;align-items:center;justify-content:center;width:48px;height:25px;font-size:23px}
+.tab-ico .persona-icon{width:46px;height:23px}
+.tab-ico .persona-icon-home{width:23px}
+html[data-theme=night] .tab-ico .persona-icon{width:23px;height:23px}
+.rand-ico .persona-icon{max-width:60px}
+.stat-ico .persona-icon{max-width:36px}
+.saved-icon .persona-icon{width:1em;height:1em}
+.page-title .persona-icon,.ans-title .persona-icon,.panel-h .persona-icon{margin-right:.1em}
+html[data-appearance=simple] .home-stage .tile-ico{font-size:24px}
+@media(max-width:360px){.home-stage .tile-ico{width:49px;font-size:20px}.home-stage .tile{gap:10px}}
+@media(forced-colors:active){.persona-icon{display:none}.tab-ico{display:none}}
+@media print{.persona-icon{display:none}}
