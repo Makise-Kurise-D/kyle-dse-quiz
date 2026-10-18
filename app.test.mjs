@@ -48,6 +48,116 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+function practiceFixture(app) {
+  const subjects = app.context.QUIZ_DATA.subjects;
+  subjects.chem.items[0].lost = 2;
+  subjects.chem.topics.push({ code: 'T4', name: '另一個示例課題' });
+  subjects.chem.items.push(
+    { id: 'new-mc', kind: 'mc', topic: 'T3', year: '2023', paper: '卷一', qref: '示例 2', stem: '新年份選擇題', correctOpt: 'B', lost: 1 },
+    { id: 'new-sub', kind: 'sub', topic: 'T3', year: '2023', paper: '卷一', qref: '示例 3', stem: '新年份主觀題', checks: ['示例給分點'], lost: 1 },
+    { id: 'other-topic', kind: 'mc', topic: 'T4', year: '2023', paper: '卷一', qref: '示例 4', stem: '另一課題選擇題', correctOpt: 'C', lost: 1 }
+  );
+  subjects.bio.topics.push({ code: 'I', name: '生物示例課題' });
+  subjects.bio.items.push({ id: 'bio-mc', kind: 'mc', topic: 'I', year: '2023', paper: '卷一', qref: '示例 5', stem: '生物選擇題', correctOpt: 'D', lost: 1 });
+}
+
+test('TOPICS filters years, subject switches, topic counts, information and random practice together', () => {
+  const app = boot(); practiceFixture(app);
+  app.location.hash = '#/practice/chem/2023'; app.events.hashchange();
+  const html = app.node('#app').innerHTML;
+  assert.match(html, /2023 年 · 化學 · 3 道錯題/);
+  assert.match(html, /02 TOPICS/);
+  assert.match(html, /href="#\/session\/chem\/T3\/2023"/);
+  assert.match(html, /href="#\/session\/chem\/__random__\/2023"/);
+  assert.match(html, /href="#\/practice\/bio\/2023"/);
+  assert.match(app.node('#practiceYears').innerHTML, /data-practice-year="2023" aria-pressed="true"/);
+  assert.match(app.node('#practiceTopicInfo').innerHTML, /2023 年 · 2 道錯題 · 2 題待複習 · 原卷失分 2 分/);
+  app.node('#practiceYears').listeners.click({ target: { closest: () => ({ dataset: { practiceYear: '2022' } }) } });
+  assert.equal(app.location.hash, '#/practice/chem/2022');
+  app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /2022 年 · 化學 · 1 道錯題/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /另一個示例課題/);
+  assert.match(app.node('#app').innerHTML, /href="#\/practice\/bio"/, 'a subject without the selected year falls back to all its available years');
+  app.node('#practiceYears').listeners.click({ target: { closest: () => ({ dataset: { practiceYear: 'all' } }) } });
+  app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /全部年份 · 化學 · 4 道錯題/);
+  app.location.hash = '#/practice/bio/2023'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /生物示例課題/);
+  assert.doesNotMatch(app.node('#practiceYears').innerHTML, /data-practice-year="2022"/);
+});
+
+test('year-scoped sessions and MC-only toggles exclude other years while unscoped links retain all questions', () => {
+  const app = boot(); practiceFixture(app);
+  app.location.hash = '#/session/chem/T3/2023'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /data-id="new-mc"/);
+  assert.match(app.node('#app').innerHTML, /data-id="new-sub"/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /data-id="example-mc"|data-id="other-topic"/);
+  assert.match(app.node('#app').innerHTML, /href="#\/practice\/chem\/2023"/);
+  assert.equal(app.node('#totalCount').textContent, 2);
+  app.node('#mcOnlyChk').listeners.change.call({ checked: true });
+  assert.equal(app.node('#totalCount').textContent, 1);
+  app.location.hash = '#/session/chem/T3'; app.events.hashchange();
+  assert.equal(app.node('#totalCount').textContent, 3, 'existing topic links still include every year');
+});
+
+test('year-scoped random practice keeps its filter on reroll and on switching to MC only', () => {
+  const app = boot(); practiceFixture(app);
+  app.location.hash = '#/session/chem/__random__/2023'; app.events.hashchange();
+  assert.equal(app.node('#totalCount').textContent, 3);
+  assert.doesNotMatch(app.node('#app').innerHTML, /data-id="example-mc"/);
+  app.node('#rerollBtn').listeners.click();
+  assert.equal(app.node('#totalCount').textContent, 3);
+  assert.doesNotMatch(app.node('#app').innerHTML, /data-id="example-mc"/);
+  app.node('#mcOnlyChk').listeners.change.call({ checked: true });
+  assert.equal(app.node('#totalCount').textContent, 2);
+  assert.doesNotMatch(app.node('#app').innerHTML, /data-id="new-sub"|data-id="example-mc"/);
+});
+
+test('library year filters carry through both practice entrances and clearing them restores all-year practice', () => {
+  const app = boot(); practiceFixture(app);
+  app.location.hash = '#/library/books/chem/T3'; app.events.hashchange();
+  app.node('#mlYear').value = '2023'; app.node('#mlYear').listeners.change();
+  assert.equal(app.node('#mlPracticeLink').href, '#/session/chem/T3/2023');
+  assert.match(app.node('#mlQuestions').innerHTML, /href="#\/session\/chem\/T3\/2023"/);
+  assert.doesNotMatch(app.node('#mlQuestions').innerHTML, /id="question-example-mc"/);
+  app.node('#mlYear').value = ''; app.node('#mlYear').listeners.change();
+  assert.equal(app.node('#mlPracticeLink').href, '#/session/chem/T3');
+});
+
+test('saving a year-scoped exercise records only submitted questions and preserves other-year drafts', () => {
+  const draft = { pick: { 'example-mc': 'A', 'new-mc': 'B' }, text: {}, paper: {}, changedAt: {} };
+  const app = boot('', undefined, { dse_quiz_draft_v2: JSON.stringify({ 'chem:T3': draft }) });
+  practiceFixture(app);
+  app.node('#resultPanel').scrollIntoView = () => {};
+  app.location.hash = '#/session/chem/T3/2022'; app.events.hashchange();
+  app.node('#submitBtn').listeners.click();
+  assert.match(app.node('#resultPanel').innerHTML, /href="#\/practice\/chem\/2022"/);
+  app.node('#saveSessionBtn').listeners.click();
+  const sessions = JSON.parse(app.saved.get('dse_quiz_sessions_v2'));
+  assert.deepEqual(Object.keys(sessions.at(-1).results), ['example-mc']);
+  const remaining = JSON.parse(app.saved.get('dse_quiz_draft_v2'))['chem:T3'];
+  assert.equal(remaining.pick['new-mc'], 'B');
+  assert.equal(remaining.pick['example-mc'], '');
+  assert.match(app.node('#resultPanel').innerHTML, /href="#\/practice\/chem\/2022"/);
+});
+
+test('late grade requests cannot overwrite a different subject and missing grades stay unknown', async () => {
+  let finish;
+  const app = boot('', async () => new Promise(resolve => { finish = resolve; }), { dse_quiz_sync_session_v1: 'test-session' });
+  practiceFixture(app);
+  app.location.hash = '#/practice/chem/2022'; app.events.hashchange();
+  const resolveOld = finish;
+  app.location.hash = '#/practice/bio/2023'; app.events.hashchange();
+  const catalog = { subjects: { chem: ['2022'], bio: ['2023'] }, papers: { chem: { '2022': { assessment: { earned: 75, total: 100 } } } } };
+  finish({ ok: true, json: async () => catalog }); await settle();
+  resolveOld({ ok: true, json: async () => catalog }); await settle();
+  assert.match(app.node('#practiceYears').innerHTML, /2023 生物/);
+  assert.doesNotMatch(app.node('#practiceYears').innerHTML, /2022 化學|75/);
+  app.location.hash = '#/practice/chem/2022'; app.events.hashchange(); await settle();
+  assert.match(app.node('#practiceYears').innerHTML, /HP<\/abbr> <b>75<small>\/100/);
+  assert.match(app.node('#practiceYears').innerHTML, /LV<\/abbr> <b>—/);
+});
+
 test('structured library uses the loaded private bank without book requests and preserves history across cycle rollover', async () => {
   const calls = [], now = Date.UTC(2026, 9, 15);
   const archive = [{ t: now - 30 * 864e5, subj: 'chem', topic: 'T3', results: { 'example-mc': { ok: true, marks: 1, tot: 1 } } },
