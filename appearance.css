@@ -648,7 +648,11 @@ html[data-appearance=full] .rail-portrait{background-image:url('images/sidebar-d
 html[data-appearance=full][data-theme=night] .rail-portrait{background-image:url('images/sidebar-night.webp')}
 /* Double the image-to-HOME gap relative to the menu's spacing.
    Account for their inset, tilted artwork; the simple view needs no offset. */
-.rail{--rail-link-gap:18px;padding-top:max(calc(2.5 * var(--rail-link-gap)),env(safe-area-inset-top,0px))}
+/* Plaque backgrounds sit inside their link boxes. Use their visible spacing
+   for the top clearance, rather than only the smaller CSS row gap. */
+.rail{--rail-link-gap:18px;--rail-frame-gap:23px;--rail-visible-gap:calc(var(--rail-link-gap) + var(--rail-frame-gap));padding-top:max(calc(2.5 * var(--rail-visible-gap)),env(safe-area-inset-top,0px))}
+html[data-theme=night] .rail{--rail-frame-gap:17px}
+html[data-appearance=simple] .rail{--rail-frame-gap:0px}
 .rail-links{display:flex;flex-direction:column;flex:1 0 auto;--rail-image-inset:12px}
 .rail-menu{display:flex;flex:none;flex-direction:column;gap:var(--rail-link-gap);margin:calc(2 * (var(--rail-link-gap) + var(--rail-image-inset))) 0 var(--rail-link-gap)}
 html[data-theme=night] .rail-links{--rail-image-inset:17px}
