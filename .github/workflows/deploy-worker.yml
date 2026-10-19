@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Test website and Worker
-        run: node --test app.test.mjs library.test.mjs sync-worker/worker.test.mjs
+        run: node --test app.test.mjs library.test.mjs appearance.test.mjs sync-worker/worker.test.mjs
       - name: Check deployment credential
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -62,6 +62,7 @@ jobs:
                 throw new Error(`Unexpected /health response: ${JSON.stringify(health)}`);
               }
               console.log(`Verified ${health.service} ${health.version}; password configured`);
+              console.log(`AI configured: ${health.aiConfigured === true}`);
               lastError = null;
               break;
             } catch (error) {

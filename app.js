@@ -16,6 +16,10 @@
   var LS_ARCHIVE = 'dse_quiz_archive_v1';
   var LS_CYCLE = 'dse_quiz_cycle_v1';
   var LS_REVIEW = 'dse_quiz_review_v1';
+  var LS_TODAY = 'dse_quiz_today_v1';
+  var LS_AI = 'dse_quiz_ai_reviews_v1';
+  var aiReviews = load(LS_AI, {});
+  var todaySelection = null;
   var LS_SYNC_SESSION = 'dse_quiz_sync_session_v1';
   var LS_SYNCED_AT = 'dse_quiz_sync_at_v1';
   var LS_AUTH_MODE = 'dse_quiz_auth_mode_v1';
@@ -41,6 +45,7 @@
   var reviewPlan = load(LS_REVIEW, {});
   var SUBJECT_ORDER = ['chem', 'bio', 'math'];
   var SUBJECT_META = {
+    all: { name: '全部科目', icon: '<span class="persona-icon persona-icon-practice" aria-hidden="true"></span>' },
     chem: { name: '化學', icon: '<span class="persona-icon persona-icon-chem" aria-hidden="true"></span>', soon: false },
     bio: { name: '生物', icon: '<span class="persona-icon persona-icon-bio" aria-hidden="true"></span>', soon: false },
     math: { name: '數學', icon: '<span class="persona-icon persona-icon-math" aria-hidden="true"></span>', soon: false }
@@ -54,6 +59,7 @@
     localStorage.setItem(LS_SESS, JSON.stringify(sessions));
     localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
     localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
+    localStorage.setItem(LS_AI, JSON.stringify(aiReviews));
     syncRevision++;
     scheduleSync();
   }
@@ -61,7 +67,7 @@
   function backupData() {
     return {
       app: 'kyle-dse-quiz', version: 1, exportedAt: new Date().toISOString(),
-      sessions: sessions, archive: archive, drafts: drafts, reviewPlan: reviewPlan,
+      sessions: sessions, archive: archive, drafts: drafts, reviewPlan: reviewPlan, aiReviews: aiReviews,
       cycle: localStorage.getItem(LS_CYCLE) || null
     };
   }
@@ -133,10 +139,12 @@
       if (!plans[id] || (reviewPlan[id].lastAt || 0) >= (plans[id].lastAt || 0)) plans[id] = reviewPlan[id];
     });
     reviewPlan = plans;
+    aiReviews = Object.assign({}, remote.aiReviews || {}, aiReviews);
     localStorage.setItem(LS_SESS, JSON.stringify(sessions));
     localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
     localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
     localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
+    localStorage.setItem(LS_AI, JSON.stringify(aiReviews));
     if (cycle) localStorage.setItem(LS_CYCLE, String(cycle));
     return true;
   }
@@ -186,7 +194,7 @@
     var controller = new AbortController();
     // 同步可能先續期授權，再因多裝置衝突重讀及寫入；每次上游請求最多 8 秒。
     // 期限同時涵蓋回應正文，避免只收到 headers 就取消計時後一直卡住。
-    var timer = setTimeout(function () { controller.abort(); }, path === '/sync' ? 60000 : path === '/bank' ? 30000 : 15000);
+    var timer = setTimeout(function () { controller.abort(); }, path === '/sync' ? 60000 : path === '/bank' ? 30000 : path.indexOf('/ai/') === 0 ? 40000 : 15000);
     return fetch(SYNC_API + path, Object.assign({}, options, { signal: controller.signal }))
       .then(function (response) { return readResponse ? readResponse(response) : response; })
       .catch(function (err) {
@@ -203,7 +211,7 @@
     var session = localStorage.getItem(LS_SYNC_SESSION);
     setSyncStatus('同步中…');
     function state(data) {
-      return stableStringify([data.sessions || [], data.archive || [], data.drafts || {}, data.reviewPlan || {}, String(data.cycle || '')]);
+      return stableStringify([data.sessions || [], data.archive || [], data.drafts || {}, data.reviewPlan || {}, data.aiReviews || {}, String(data.cycle || '')]);
     }
     var before = state(backupData());
     var sentRevision = syncRevision;
@@ -279,6 +287,7 @@
     clearArchiveBackdrop();
     imageReads.clear();
     paperCatalogSnapshot = null;
+    aiStatusSnapshot = null; todaySelection = null;
     imageUrls.forEach(function (url) { URL.revokeObjectURL(url); });
     imageUrls.clear();
     if (PRIVATE_BANK) { DATA = emptyBank(); bankLoaded = false; }
@@ -531,9 +540,10 @@
   }
 
   /* ---------------- 數據派生 ---------------- */
-  function subjOf(code) { return DATA.subjects[code]; }
+  function subjOf(code) { return code === 'all' ? { topics: [], items: SUBJECT_ORDER.reduce(function (all, c) { return all.concat(DATA.subjects[c].items); }, []) } : DATA.subjects[code]; }
   function itemsOf(code) { return subjOf(code).items; }
   function topicName(code, t) {
+    if (t === '__today__') return '今日複習';
     var x = subjOf(code).topics.filter(function (q) { return q.code === t; })[0];
     return x ? x.name : t;
   }
@@ -602,7 +612,7 @@
     return !!(p && p.dueAt <= (now || Date.now()));
   }
   function seedReviewPlan() {
-    var history = allSessions().slice().sort(function (a, b) { return a.t - b.t; });
+    var history = window.DSELibrary.independentHistory(allSessions());
     var needsSeed = {};
     history.forEach(function (s) {
       Object.keys(s.results || {}).forEach(function (id) {
@@ -632,7 +642,6 @@
   }
 
   // 簡體→繁體（數據裡少量簡體術語，學生默寫多為繁體；只收斂到繁體）
-  var S2T_CHARS = '细质线双补转录应达尔体肠运输长营养纤维粪传杂种叶绿矿气压脏脑岛门静脉韧卫饱缩横肾茎腾浓';
   var S2T_MAP = {
     '细':'細','质':'質','线':'線','双':'雙','补':'補','转':'轉','录':'錄','应':'應',
     '达':'達','尔':'爾','体':'體','肠':'腸','运':'運','输':'輸','长':'長','营':'營',
@@ -642,9 +651,10 @@
     '横':'橫','肾':'腎','茎':'莖','腾':'騰','浓':'濃'
   };
   function norm(s) {
-    return String(s).replace(new RegExp('[' + S2T_CHARS + ']', 'g'),
+    return String(s).replace(new RegExp('[' + Object.keys(S2T_MAP).join('') + ']', 'g'),
       function (ch) { return S2T_MAP[ch] || ch; });
   }
+  '扩擴 题題 学學 识識 点點 误誤 错錯 因因 审審 漏漏 计計 算算 实實 验驗 电電 离離 阳陽 阴陰 极極 酸酸 碱鹼 盐鹽 铜銅 铁鐵 锌鋅 铝鋁 镁鎂 钠鈉 钾鉀 钙鈣 氢氫 氧氧 氯氯 还還 复復 习習 状狀 态態 过過 滤濾 温溫 热熱 冷冷 度度 溶溶 液液 变變 化化 产產 物物 结結 构構 均均 衡衡 见見 植植 动動 样樣 本本 红紅 血血 浆漿 渗滲 透透 蒸蒸 发發 胆膽 胰胰 肺肺 历歷 细細 胞胞 膜膜 质質 线線 粒粒 筛篩 选選 择擇 进進 概概 念念 混混 淆淆 达達 测測 试試 图圖 表表 数數 据據 说說 明明 条條 件件 减減 增增 关關 键鍵 无無 为為 于於 与與 从從 时時 间間 这這 个個 后後 体體 内內 对對 组組 合合 认認 维維 持持 资資 料料 导導 致致 率率 连連 续續 独獨 立立 掌掌 握握 传傳 遗遺 码碼 核核 调調 节節 生生 长長 几幾 何何 圆圓 轴軸 斜斜 线線 负負 正正 函函 数數 术術 语語 开開 释釋 适適 应應'.split(' ').forEach(function (pair) { if(pair.length===2) S2T_MAP[pair[0]]=pair[1]; });
 
   var KW_ALIAS = { '蛋白合成': ['蛋白質合成'], '蛋白': ['蛋白質'] };
   function keywordsOf(it) {
@@ -698,7 +708,9 @@
     if (view === 'practice') return renderPractice(parts[1] || 'chem', parts[2]);
     if (view === 'library') return renderLibrary(parts.slice(1));
     if (view === 'random') return renderRandomPicker();
+    if (view === 'today') return renderToday(parts[1], parts[2]);
     if (view === 'session') {
+      if (parts[2] === '__today__') return renderToday(parts[1], 5);
       renderSession(parts[1], decodeURIComponent(parts[2] || ''), undefined, parts[3]);
       return;
     }
@@ -751,20 +763,19 @@
       return n + itemsOf(code).filter(function (item) { return historyIndex[item.id] && historyIndex[item.id].state === 'mastered'; }).length;
     }, 0);
     var remainingDays = Math.ceil((cycleEndOf(Date.now()) - Date.now()) / DAY_MS);
-    var resume = top.filter(function (r) { return r.due > 0; })[0] || top[0];
-    var resumeHref = resume ? '#/session/' + resume.code + '/' + encodeURIComponent(resume.topic) : '#/practice/chem';
+    var todayDue = todayRows('all').filter(function (r) { return r.due; }).length;
     return (
       '<section class="home"><div class="home-stage">' +
         '<div class="hero">' +
           '<div class="hero-kicker">Kyle 嘅錯題本 / DSE</div>' +
           '<h1 class="hero-title">從上次的<br>錯題繼續。</h1>' +
+          '<a class="continue-command" href="#/today/all/5"><b aria-hidden="true">TODAY</b><span>開始今日複習 ↗ · 到期 ' + (bankLoaded ? todayDue : '—') + ' 題</span></a>' +
           '<div class="home-info" role="group" aria-label="學習與同步資訊">' +
           '<p class="hero-sub hero-bubble bubble-intro">錯過嘅唔可以再錯 —— 逐課題清，每個踩分點都執返。</p>' +
           '<p class="review-note hero-bubble bubble-sync" id="syncStatus" role="status" aria-live="polite"' + (syncMessage ? '' : ' hidden') + '>' + esc(syncMessage) + '</p>' +
           bankStatusHtml() +
           '<p class="home-bank-total hero-bubble bubble-bank"><b>' + (bankLoaded ? totalItems : '—') + '</b> 題在庫<span class="bank-privacy">題庫及原卷僅供登入後讀取</span></p>' +
           '</div>' +
-          '<a class="continue-command" href="' + esc(resumeHref) + '"><b aria-hidden="true">CONTINUE</b><span>繼續練習 ↗</span></a>' +
         '</div>' +
         '<div class="tile-grid">' +
           tile('#/practice/chem', '<span class="persona-icon persona-icon-practice" aria-hidden="true"></span>', '開始練習', '按課題逐個擊破', 'tile-blue') +
@@ -773,7 +784,7 @@
           tile('#/records', '<span class="persona-icon persona-icon-records" aria-hidden="true"></span>', '做題記錄', '查看歷次練習與雙周進度', 'tile-gold') +
           tile('#/random', '<span class="persona-icon persona-icon-random" aria-hidden="true"></span>', '隨機十題', '化學／生物十題速測', 'tile-green') +
         '</div></div>' +
-        '<div class="home-stat-strip">' +
+        todayMarkup() + '<div class="home-stat-strip">' +
           '<div>本輪待複習<strong class="c-red">' + (bankLoaded ? due : '—') + '<small>題</small></strong></div>' +
           '<div>本輪已全對<strong class="c-green">' + conquered + '<small>題</small></strong></div>' +
           '<div>長期已掌握<strong>' + (bankLoaded ? mastered : '—') + '<small>題</small></strong></div>' +
@@ -822,6 +833,38 @@
     $('#app').innerHTML = homeMarkup();
     bindBankRetry();
     startCycleTimer();
+    var subject = $('#todaySubject'), count = $('#todayCount');
+    function updateToday() {
+      var rows = todayRows(subject.value || 'all'), n = Math.min(Number(count.value) || 5, rows.length);
+      $('#todayStart').href = '#/today/' + (subject.value || 'all') + '/' + (count.value || '5');
+      $('#todaySummary').textContent = bankLoaded ? rows.filter(function (r) { return r.due; }).length + ' 題到期 · 本次 ' + n + ' 題（北京時間）' : '題庫尚未載入';
+    }
+    subject.addEventListener('change', updateToday); count.addEventListener('change', updateToday);
+  }
+  function todayRows(code) { return window.DSELibrary.dailyCandidates(DATA, allSessions(), reviewPlan, code, Date.now()); }
+  function todayMarkup() {
+    var rows = todayRows('all'), due = rows.filter(function (r) { return r.due; }).length;
+    return '<section class="panel today-review" aria-label="今日複習"><h2>今日複習</h2>' +
+      '<p id="todaySummary" role="status">' + (bankLoaded ? due + ' 題到期 · 本次 ' + Math.min(5, rows.length) + ' 題（北京時間）' : '題庫尚未載入') + '</p>' +
+      '<p class="review-note">優先安排到期、答對後回退和連續答錯的題目，再參考已核實原卷失分。</p>' +
+      '<div class="today-controls"><label>科目 <select id="todaySubject"><option value="all">全部科目</option>' + SUBJECT_ORDER.map(function (c) { return '<option value="' + c + '">' + SUBJECT_META[c].name + '</option>'; }).join('') + '</select></label>' +
+      '<label>短練習 <select id="todayCount"><option value="5">5 題</option><option value="10">10 題</option><option value="15">15 題</option></select></label>' +
+      '<a class="btn btn-primary" id="todayStart" href="#/today/all/5">開始今日複習</a></div></section>';
+  }
+  function renderToday(code, limit) {
+    code = SUBJECT_ORDER.indexOf(code) >= 0 ? code : 'all';
+    limit = [5, 10, 15].indexOf(Number(limit)) >= 0 ? Number(limit) : 5;
+    var rows = todayRows(code), saved = load(LS_TODAY, null), day = beijingDayIndex(Date.now());
+    if (saved && saved.day === day && saved.code === code && saved.limit === limit && Array.isArray(saved.ids)) {
+      var ids = new Set(saved.ids); rows = rows.filter(function (r) { return ids.has(r.item.id); });
+      rows.sort(function (a, b) { return saved.ids.indexOf(a.item.id) - saved.ids.indexOf(b.item.id); });
+    } else rows = rows.slice(0, limit);
+    todaySelection = { day: day, code: code, limit: limit, ids: rows.map(function (r) { return r.item.id; }), rows: rows };
+    localStorage.setItem(LS_TODAY, JSON.stringify({ day: day, code: code, limit: limit, ids: todaySelection.ids }));
+    if (!rows.length) {
+      $('#app').innerHTML = '<section class="page"><h1 class="page-title">今日複習</h1><p>目前沒有可練習的題目。</p><a class="btn btn-primary" href="#/">返回主頁</a></section>'; return;
+    }
+    renderSession(code, '__today__');
   }
 
   /* ---------------- 私人錯題集與批改卷閱讀器 ---------------- */
@@ -871,8 +914,9 @@
     releasePaper();
     parts = parts || [];
     if (parts[0] === 'books') return window.DSELibrary.render(parts.slice(1), {
-      root: $('#app'), scrollRoot: $('#contentScroll'), data: DATA, history: allSessions(), cycleStart: cycleStartOf(Date.now()),
-      normalize: norm, formatDate: fmtDateTime, hydrate: hydratePrivateImages, gradeMetrics: paperGradeMetrics,
+      root: $('#app'), scrollRoot: $('#contentScroll'), data: DATA, history: allSessions(), cycleStart: cycleStartOf(Date.now()), loaded: bankLoaded,
+      normalize: norm, formatDate: fmtDateTime, hydrate: hydratePrivateImages, gradeMetrics: paperGradeMetrics, tags: confirmedTags,
+      aiHtml: function (id) { var row=latestAI(id);return row ? '<details class="ai-saved"><summary>已確認 AI 輔評 · '+esc(fmtDateTime(row.confirmedAt))+'</summary><p>與原卷判分分開保存 · 標籤：'+esc((row.tags||[]).join('、')||'未選擇')+'</p>'+aiFeedbackHtml(row.feedback)+'</details>' : ''; },
       catalog: function () {
         var session = localStorage.getItem(LS_SYNC_SESSION);
         if (!session || !SYNC_API) return Promise.resolve(null);
@@ -1390,6 +1434,13 @@
   var sessState = { code: null, topic: null, mcOnly: false };
 
   function sessionItems(code, topic, mcOnly, year) {
+    if (topic === '__today__') {
+      if (!todaySelection) {
+        var rows = todayRows(code).slice(0, 5);
+        todaySelection = { ids: rows.map(function (r) { return r.item.id; }), rows: rows };
+      }
+      return todaySelection.rows.map(function (r) { return r.item; }).filter(function (it) { return !mcOnly || it.kind === 'mc'; });
+    }
     var pool = itemsOf(code).filter(function (it) {
       return it.topic === topic && (!mcOnly || it.kind === 'mc') && (!year || String(it.year) === year);
     });
@@ -1418,20 +1469,20 @@
     var items = sessionItems(code, topic, mcOnly, year);
     if (!items.length) { location.hash = practiceHref(code, year); return; }
     // 課題模式仍渲染全部題（大題靠 CSS 動畫收起）；隨機模式只渲染抽出的題
-    var renderItems = (topic === '__random__') ? items :
+    var renderItems = (topic === '__random__' || topic === '__today__') ? items :
       itemsOf(code).filter(function (it) { return it.topic === topic && (!year || String(it.year) === year); });
     var activeIds = {};
     items.forEach(function (it) { activeIds[it.id] = true; });
 
     var dkey = code + ':' + topic +
-      (topic === '__random__' ? ':' + (mcOnly ? 'mc:' : '') +
+      (topic === '__random__' || topic === '__today__' ? ':' + (mcOnly ? 'mc:' : '') +
         items.map(function (i) { return i.id; }).join(',') : '');
     var draft = drafts[dkey] || { pick: {}, text: {}, paper: {} };
     reviewState = null;
 
     var title = topic === '__random__'
       ? (mcOnly ? '<span class="persona-icon persona-icon-random" aria-hidden="true"></span> 隨機十題（選擇題）' : '<span class="persona-icon persona-icon-random" aria-hidden="true"></span> 隨機十題')
-      : esc(topic + ' ' + topicName(code, topic));
+      : topic === '__today__' ? '今日複習' : esc(topic + ' ' + topicName(code, topic));
     var nMc = renderItems.filter(function (it) { return it.kind === 'mc'; }).length;
     var nSub = renderItems.length - nMc;
     $('#app').innerHTML =
@@ -1490,6 +1541,10 @@
         '<span class="sq-kind ' + (it.kind === 'mc' ? 'k-mc' : 'k-sub') + '">' +
           (it.kind === 'mc' ? '選擇 ' + marksOf(it) + ' 分' : '大題 ' + marksOf(it) + ' 分') + '</span>' +
       '</div>';
+    if (sessState.topic === '__today__' && todaySelection) {
+      var recommendation = todaySelection.rows.filter(function (r) { return r.item.id === it.id; })[0];
+      if (recommendation) head += '<p class="today-reason">' + esc(SUBJECT_META[recommendation.code].name + ' · ' + recommendation.reason) + '</p>';
+    }
 
     var body = '';
     if (it.kind === 'mc') {
@@ -1510,7 +1565,7 @@
         '<textarea class="ans-box" aria-label="第 ' + (idx + 1) + ' 題默寫答案" data-id="' + esc(it.id) + '" rows="4" ' +
           'placeholder="默寫答案（可留白，改用紙寫就剔下面格仔）……">' + esc(v) + '</textarea>' +
         '<label class="paper-lbl"><input type="checkbox" class="paper-chk" data-id="' + esc(it.id) + '"' +
-          (draft.paper[it.id] ? ' checked' : '') + '> 我已喺紙上寫完</label>';
+          (draft.paper[it.id] ? ' checked' : '') + '> 我已喺紙上寫完</label>' + aiPanelHtml(it, v, false);
     }
     return '<article class="sq" data-id="' + esc(it.id) + '" data-kind="' + it.kind + '" aria-label="第 ' + (idx + 1) + ' 題"' + (mcOnly && it.kind === 'sub' ? ' hidden' : '') + '>' + head + body + '</article>';
   }
@@ -1544,6 +1599,7 @@
         : '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 全部做完，一次過提交';
     }
     updateAnswered(); submitLabel();
+    bindAIPanels($('#qPaper'), renderItems);
 
     // 隨機十題「換一組」：清走之前未提交嘅隨機草稿，重新抽題打亂
     var rerollBtn = $('#rerollBtn');
@@ -1604,6 +1660,7 @@
     });
 
     $('#submitBtn').addEventListener('click', function () {
+      if (reviewState) return;
       var miss = activeItems.filter(function (it) {
         if (it.kind === 'mc') return !draft.pick[it.id];
         return !((draft.text[it.id] && draft.text[it.id].trim()) || draft.paper[it.id]);
@@ -1623,6 +1680,7 @@
   /* ---------- 提交批改 ---------- */
   function submitSession(code, topic, dkey, items, draft, mcOnly) {
     reviewState = { results: {} };
+    var submitted = false;
     var mcFull = 0, mcMarks = 0, subFull = 0;
 
     items.forEach(function (it) {
@@ -1674,7 +1732,7 @@
             return '<label class="chk-line' + (wList[i] ? '' : ' is-warn') + '">' +
               '<input type="checkbox" data-i="' + i + '" data-w="' + wList[i] + '">' +
               '<span class="chk-text">' + checkText(c) + '</span></label>';
-          }).join('') + '</div>';
+          }).join('') + '</div>' + aiPanelHtml(it, draftText);
       }
       html += '</article>';
     });
@@ -1686,6 +1744,7 @@
     var panel = $('#resultPanel');
     panel.hidden = false;
     panel.innerHTML = html;
+    bindAIPanels(panel, items);
     panel.scrollIntoView({ behavior: motionBehavior(), block: 'start' });
 
     function recalcSub() {
@@ -1715,6 +1774,8 @@
     });
 
     $('#saveSessionBtn').addEventListener('click', function () {
+      if (submitted) return;
+      submitted = true;
       // 落齊大題結果（未剔任何項也要存 0 分）
       items.forEach(function (it) {
         if (it.kind !== 'sub' || mcOnly) return;
@@ -1760,6 +1821,7 @@
         deleteDraft(dkey);
       }
       save();
+      if (topic === '__today__') localStorage.removeItem(LS_TODAY);
       var totalGot = mcMarks + (mcOnly ? 0 : subGotFinal);
       var totalFull = mcFull + (mcOnly ? 0 : subFull);
       var pct = Math.round(totalGot / totalFull * 100);
@@ -1772,6 +1834,11 @@
           '<div class="saved-sub">' + (mcOnly
             ? '<span class="persona-icon persona-icon-fast" aria-hidden="true"></span> 只做選擇題 · MC ' + mcMarks + '/' + mcFull
             : 'MC ' + mcMarks + '/' + mcFull + '　大題 ' + subGotFinal + '/' + subFull) + '</div>' +
+          (topic === '__today__' ? '<div class="today-followup"><h3>仍需鞏固</h3>' +
+            (items.filter(function (it) { return !window.DSELibrary.full(reviewState.results[it.id]); }).map(function (it) {
+              var subject = SUBJECT_ORDER.filter(function (c) { return itemsOf(c).some(function (q) { return q.id === it.id; }); })[0];
+              return '<p><a href="#/library/books/' + subject + '/' + encodeURIComponent(it.topic) + '">' + esc(SUBJECT_META[subject].name + ' · ' + it.qref) + ' → 查看錯因與解析</a></p>';
+            }).join('') || '<p>本次全部答對，可按下一次間隔繼續鞏固。</p>') + '<a class="btn btn-primary" href="#/">返回今日複習</a></div>' : '') +
           '<div class="rp-actions"><a class="btn btn-primary" href="#/records"><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 睇記錄</a>' +
           '<a class="btn btn-ghost" href="' + practiceHref(code, sessState.year) + '">繼續練習 →</a></div>' +
         '</div>';
@@ -1780,6 +1847,102 @@
     });
   }
 
+  var AI_TAGS = ['概念混淆', '審題遺漏', '計算失誤', '表達不完整'];
+  var aiStatusSnapshot = null;
+  function latestAI(id) {
+    return Object.values(aiReviews).filter(function (r) { return r && r.questionId === id && r.confirmedAt; })
+      .sort(function (a,b) { return b.confirmedAt-a.confirmedAt; })[0];
+  }
+  function confirmedTags(id) { var row = latestAI(id); return row && Array.isArray(row.tags) ? row.tags.filter(function (t) { return AI_TAGS.indexOf(t)>=0; }) : []; }
+  function aiFeedbackHtml(data) {
+    var labels = { hit:'命中', partial:'部分命中', missed:'未命中', uncertain:'未能確定' };
+    return '<p>' + esc(data.summary) + '</p>' + (data.uncertainty ? '<p class="ai-uncertainty">判斷限制：' + esc(data.uncertainty) + '</p>' : '') +
+      (data.materialNotes ? '<p class="ai-uncertainty">' + esc(data.materialNotes) + '</p>' : '') +
+      (data.points || []).map(function (p) { return '<div class="ai-point"><h4>' + esc((p.scoring ? '給分依據' : '防錯提醒（不計分）') + ' ' + (p.index+1) + ' · ' + (labels[p.status] || '未能確定')) + '</h4>' +
+        '<p><b>依據：</b>' + esc(p.basis) + '</p><p><b>你的表達：</b>' + esc(p.evidence || '未找到對應表達') + '</p><p><b>判斷原因：</b>' + esc(p.reason) + '</p><p><b>建議補充：</b>' + esc(p.suggestion || '無補充建議') + '</p></div>'; }).join('') +
+      (data.reply ? '<p class="ai-reply">' + esc(data.reply) + '</p>' : '');
+  }
+  function aiPanelHtml(item, answer, canReview) {
+    canReview = canReview !== false;
+    return '<section class="ai-panel" data-ai-id="' + esc(item.id) + '" data-can-review="' + canReview + '"><h3>AI 逐點輔評與提示</h3>' +
+      '<p class="review-note">' + (canReview ? '先完成自評，再主動請 AI 檢查。輔評確認後另行儲存，不改原卷分數或 DSE 參考等級。' : '先自行作答；需要時逐層查看提示。提交並自評後可請 AI 逐點檢查。') + '</p>' +
+      '<p class="ai-status" role="status">正在核對 AI 連線…</p>' +
+      (canReview ? '<label>供 AI 檢查的本次答案<textarea class="ai-answer" maxlength="6000" rows="4">' + esc(answer) + '</textarea></label>' : '') +
+      '<label class="ai-figure-choice" hidden><input class="ai-figures" type="checkbox"> 同時提供本題相關圖表</label>' +
+      '<div class="ai-actions">' + (canReview ? '<button class="btn btn-primary" data-ai-mode="review" type="button" disabled>檢查我的答案</button>' : '') +
+      '<button class="btn btn-ghost" data-ai-mode="hint" data-level="1" type="button" disabled>1 方向提示</button>' +
+      '<button class="btn btn-ghost" data-ai-mode="hint" data-level="2" type="button" disabled>2 關鍵概念</button>' +
+      '<button class="btn btn-ghost" data-ai-mode="hint" data-level="3" type="button" disabled>3 完整解析</button>' +
+      '<button class="btn btn-ghost ai-reconnect" type="button">重新檢查連線</button></div>' +
+      '<div class="ai-feedback" aria-live="polite"></div><div class="ai-confirm" hidden><p>確認本次錯因標籤（可取消或補選）</p>' +
+      AI_TAGS.map(function (tag) { return '<label><input type="checkbox" value="' + tag + '"> ' + tag + '</label>'; }).join('') +
+      '<button class="btn btn-primary ai-save" type="button">確認並儲存輔評</button></div>' +
+      '<div class="ai-chat" hidden><label>繼續追問本題<input class="ai-question" type="text" maxlength="2000"></label>' +
+      '<button class="btn btn-ghost" data-ai-mode="followup" type="button" disabled>送出追問</button><div class="ai-conversation" aria-live="polite"></div></div></section>';
+  }
+  function aiError(code) {
+    return { ai_not_configured:'AI 服務尚未配置，暫時不能取得真實輔評。', ai_empty_answer:'請先填寫文字答案，再請 AI 檢查。', ai_insufficient_basis:'本題尚未提供給分依據，無法可靠輔評。',
+      ai_rate_limited:'已達暫時或今日用量限制，請稍後重試；每日最多 20 次。', ai_in_progress:'上一個 AI 請求仍在處理，請稍後再試。', ai_timeout:'AI 回應逾時，請重試。',
+      ai_provider_busy:'AI 服務暫時繁忙，請稍後重試。', ai_invalid_evidence:'AI 回傳的引文未能對應答案，未予採用。請重試。', ai_invalid_response:'AI 回傳資料未能對應給分點，未予採用。請重試。',
+      ai_figure_unavailable:'相關圖表未能讀取，請重試或取消附圖。', not_connected:'登入已失效，請重新登入。' }[code] || 'AI 暫時未能完成，請按原按鈕重試。';
+  }
+  function bindAIPanels(root, items) {
+    $all('.ai-panel', root).forEach(function (widget) {
+      var item = items.filter(function (it) { return it.id === widget.dataset.aiId; })[0], auth = localStorage.getItem(LS_SYNC_SESSION);
+      var status = $('.ai-status',widget), output = $('.ai-feedback',widget), pending = null, ready = false, busy = false, hintLevel = 0, messages = [];
+      function current() { return widget.isConnected && localStorage.getItem(LS_SYNC_SESSION) === auth; }
+      function enable() { $all('[data-ai-mode]',widget).forEach(function (b) { b.disabled = !ready || busy || (b.dataset.aiMode==='hint' && Number(b.dataset.level)>hintLevel+1); }); }
+      function call(path, body) {
+        if (!auth || !SYNC_API) return Promise.reject({code:'not_connected'});
+        return syncFetch(path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+auth,'Content-Type':'application/json'},cache:'no-store',body:body?JSON.stringify(body):undefined},function (response) {
+          return response.json().then(function (data) { if (!response.ok) throw Object.assign(new Error(aiError(data.error)),{code:data.error,status:response.status});return data; });
+        });
+      }
+      function connect() {
+        status.textContent='正在核對 AI 連線…';ready=false;enable();
+        var check = aiStatusSnapshot && aiStatusSnapshot.auth===auth && aiStatusSnapshot.until>Date.now() ? aiStatusSnapshot.promise : call('/ai/status');
+        aiStatusSnapshot={auth:auth,until:Date.now()+30000,promise:check};
+        check.then(function (config) {
+          if(!current())return;
+          ready=config.configured===true;status.textContent=ready?'AI 服務已配置 · 每日最多 20 次，請求間隔至少 10 秒。':'AI 尚未配置：需先設定服務、模型及服務端密鑰。自評與練習仍可正常使用。';
+          $('.ai-figure-choice',widget).hidden=!(config.figuresEnabled && (item.figures || []).length);enable();
+        }).catch(function (err) { if(current()){status.textContent=aiError(err.code);enable();} });
+      }
+      $('.ai-reconnect',widget).addEventListener('click',function () { aiStatusSnapshot=null;connect(); });
+      $all('[data-ai-mode]',widget).forEach(function (button) { button.addEventListener('click',function () {
+        if(!ready || busy)return;
+        var mode=button.dataset.aiMode, field=$('.ai-answer',widget), source=field || $('.ans-box[data-id="'+item.id+'"]');
+        var answer=source?source.value:'', question=$('.ai-question',widget).value;
+        if(mode==='review' && !answer.trim()){status.textContent=aiError('ai_empty_answer');return;}
+        if(mode==='followup' && !question.trim()){status.textContent='請輸入關於本題的問題。';return;}
+        busy=true;enable();status.textContent='AI 正在核對本題資料…';
+        call('/ai/review',{questionId:item.id,answer:answer,mode:mode,hintLevel:Number(button.dataset.level)||1,question:question,messages:messages.slice(-6),includeFigures:$('.ai-figures',widget).checked}).then(function (data) {
+          if(!current())return;
+          if(data.questionId!==item.id || !Array.isArray(data.points))throw {code:'ai_invalid_response'};
+          status.textContent='AI 輔助建議 · 請核對給分依據及判斷限制。';
+          if(mode==='review') {
+            pending={questionId:item.id,answer:answer,feedback:data,tags:data.tags||[],generatedAt:data.generatedAt};
+            output.innerHTML=aiFeedbackHtml(data);$('.ai-confirm',widget).hidden=false;
+            $all('.ai-confirm input',widget).forEach(function (cb) { cb.checked=pending.tags.indexOf(cb.value)>=0; });
+            $('.ai-save',widget).disabled=false;
+          } else if(mode==='hint') { pending=null;$('.ai-confirm',widget).hidden=true;hintLevel=Math.max(hintLevel,Number(button.dataset.level));output.innerHTML=aiFeedbackHtml(data); }
+          else {
+            var row=document.createElement('div');row.className='ai-reply';row.textContent='你：'+question+'\nAI：'+(data.reply||data.summary);$('.ai-conversation',widget).appendChild(row);$('.ai-question',widget).value='';
+          }
+          messages.push({role:'user',content:(mode==='followup'?question:mode==='hint'?'提示第 '+button.dataset.level+' 層':'請逐點核對本次答案').slice(0,3000)},{role:'assistant',content:JSON.stringify(data).slice(0,3000)});
+          $('.ai-chat',widget).hidden=false;
+        }).catch(function (err) { if(current()){status.textContent=aiError(err.code);if(err.status===401)expireConnection(err,auth);} }).finally(function () {busy=false;if(current())enable();});
+      }); });
+      $('.ai-save',widget).addEventListener('click',function () {
+        if(!pending || busy)return;
+        if($('.ai-answer',widget).value!==pending.answer){status.textContent='答案已更改，請重新檢查後再儲存。';return;}
+        var at=Date.now(), id='ai-'+at+'-'+Math.random().toString(36).slice(2);
+        aiReviews[id]=Object.assign({},pending,{confirmedAt:at,tags:$all('.ai-confirm input:checked',widget).map(function (cb) { return cb.value; })});
+        pending=null;$('.ai-save',widget).disabled=true;save();status.textContent='已獨立儲存輔評與你確認的標籤 · '+fmtDateTime(at)+'。原卷成績及練習次數不變。';
+      });
+      connect();
+    });
+  }
   function checkText(text) {
     var warn = /^✗/.test(text);
     var body = warn ? text.slice(1).trim() : text;
@@ -1925,7 +2088,7 @@
         var meta = SUBJECT_META[s.subj], name = meta ? meta.name : '未分類';
         return '<details class="session-entry" data-in-cycle="' + (s.t >= cycleStartOf(Date.now())) + '"><summary>' +
           '<time>' + esc(fmtDateTime(s.t)) + '</time><span class="session-entry-title">' + esc(name + ' · ' +
-          (s.topic === '__random__' ? '隨機十題' : s.topic + ' ' + topicName(s.subj, s.topic))) +
+          (s.topic === '__random__' ? '隨機十題' : s.topic === '__today__' ? '今日複習' : s.topic + ' ' + topicName(s.subj, s.topic))) +
           '<small>已提交' + (s.mcOnly ? ' · 只做選擇題' : '') + ' · 展開詳情</small></span>' +
           '<span class="session-entry-score">' + correct + ' / ' + ids.length + '</span></summary>' +
           '<div class="session-entry-body">本次全對 ' + correct + ' 題；尚未全對 ' + (ids.length - correct) + ' 題。' +
@@ -2078,10 +2241,12 @@
       }
       if (!confirm('匯入會以備份內容取代這個瀏覽器目前的練習記錄、草稿與複習進度。確定繼續？')) return;
       sessions = data.sessions; archive = data.archive || []; drafts = data.drafts; reviewPlan = data.reviewPlan;
+      aiReviews = data.aiReviews || {};
       localStorage.setItem(LS_SESS, JSON.stringify(sessions));
       localStorage.setItem(LS_ARCHIVE, JSON.stringify(archive));
       localStorage.setItem(LS_DRAFT, JSON.stringify(drafts));
       localStorage.setItem(LS_REVIEW, JSON.stringify(reviewPlan));
+      localStorage.setItem(LS_AI, JSON.stringify(aiReviews));
       if (data.cycle) localStorage.setItem(LS_CYCLE, String(data.cycle));
       syncRevision++;
       scheduleSync();
@@ -2360,6 +2525,8 @@
         localStorage.removeItem(LS_ARCHIVE);
         localStorage.removeItem(LS_DRAFT);
         localStorage.removeItem(LS_REVIEW);
+        localStorage.removeItem(LS_AI); localStorage.removeItem(LS_TODAY);
+        aiReviews = {}; todaySelection = null;
         sessions = []; archive = []; drafts = {}; reviewPlan = {};
         if (localStorage.getItem(LS_SYNC_SESSION) && SYNC_API) {
           syncRequest('DELETE').catch(function (err) { toast('本機已清除；雲端清除失敗：' + err.message); });

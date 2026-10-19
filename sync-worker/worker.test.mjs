@@ -1,11 +1,55 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import worker, { mergeBackup } from './worker.js';
+import worker, { mergeBackup, aiConfiguration, aiMessages, validateAIFeedback, requestAIFeedback } from './worker.js';
 
 const ORIGIN = 'https://makise-kurisu-d.github.io';
 const BASE = 'https://sync.example.workers.dev';
 const SECRET = 'test-only-session-secret-with-enough-entropy';
+
+const aiItem={id:'synthetic-ai',kind:'sub',stem:'解釋擴散方向與能量需求。',correct:'從高濃度向低濃度移動，不需能量。',checks:['由高濃度向低濃度移動','不需要能量','✗ 勿混淆主動運輸']};
+const aiEnv={AI_BASE_URL:'https://ai.example/v1',AI_MODEL:'synthetic-model',AI_API_KEY:'test-only-key'};
+function aiFixture(answer,status='hit') { return {summary:'合成服務測試回應',points:aiItem.checks.map((_,index)=>({index,status,evidence:answer,reason:'依本題提供的給分點比較。',suggestion:status==='hit'?'':'補上方向及能量條件。'})),tags:status==='hit'?[]:['概念混淆'],reply:'只限本題的合成說明',uncertainty:''}; }
+
+test('AI stays unconfigured without an authorized provider, model and server key',()=>{
+  assert.equal(aiConfiguration({}).configured,false);
+  assert.deepEqual(aiConfiguration({}).missing,['AI_BASE_URL','AI_MODEL','AI_API_KEY']);
+  assert.equal(aiConfiguration({...aiEnv,AI_BASE_URL:'http://example.com'}).configured,false);
+  assert.equal(aiConfiguration(aiEnv).configured,true);
+});
+
+test('synthetic provider fixtures map synonymous, partial and incorrect answers to the supplied checks',async()=>{
+  for(const [answer,status] of [['粒子從較濃的地方走向較稀的地方，不耗能。','hit'],['向低濃度移動。','partial'],['從低濃度到高濃度並需要能量。','missed']]) {
+    const out=await requestAIFeedback(aiItem,{answer,mode:'review'},aiEnv,[],async(url,init)=>{
+      assert.equal(url,'https://ai.example/v1/chat/completions');
+      const payload=JSON.parse(init.body);assert.match(payload.messages[0].content,/同義表達/);
+      assert.match(payload.messages.at(-1).content,/由高濃度向低濃度移動/);
+      return Response.json({choices:[{message:{content:JSON.stringify(aiFixture(answer,status))}}]});
+    });
+    assert.equal(out.points.length,3);assert.equal(out.points[0].status,status);assert.equal(out.points[0].basis,aiItem.checks[0]);assert.equal(out.points[2].scoring,false);
+  }
+});
+
+test('AI rejects invented evidence, missing or duplicate checks, and never accepts model scores',()=>{
+  assert.throws(()=>validateAIFeedback(aiFixture('編造引文'),aiItem,'真正原答','review'),/ai_invalid_evidence/);
+  const missing=aiFixture('原答');missing.points.pop();assert.throws(()=>validateAIFeedback(missing,aiItem,'原答','review'),/ai_invalid_response/);
+  const duplicate=aiFixture('原答');duplicate.points[2].index=0;assert.throws(()=>validateAIFeedback(duplicate,aiItem,'原答','review'),/ai_invalid_response/);
+  const valid={...aiFixture('原答'),score:100,level:'5**'};
+  const out=validateAIFeedback(valid,aiItem,'原答','review');assert.equal(out.score,undefined);assert.equal(out.level,undefined);
+});
+
+test('AI hints carry their requested depth, explicit figure uncertainty and bounded question chat',()=>{
+  const messages=aiMessages({...aiItem,figures:[{path:'unused'}]},{answer:'合成答覆',mode:'hint',hintLevel:1,messages:[{role:'user',content:'追問本題'}]});
+  assert.match(messages.at(-1).content,/圖表未提供/);assert.match(messages.at(-1).content,/"hintLevel":1/);assert.match(messages[0].content,/第1層只指方向/);
+  const withFigures=aiMessages(aiItem,{answer:'答案'},['data:image/jpeg;base64,test']);assert.equal(withFigures.at(-1).content[1].type,'image_url');
+});
+
+test('AI provider errors, malformed payloads and timeouts expose safe retry errors',async()=>{
+  const call=fetcher=>requestAIFeedback(aiItem,{answer:'合成答案'},aiEnv,[],fetcher);
+  await assert.rejects(call(async()=>new Response('secret provider message',{status:503})),/ai_provider_error/);
+  await assert.rejects(call(async()=>Response.json({choices:[]})),/ai_invalid_response/);
+  await assert.rejects(call(async()=>{throw new DOMException('timeout','AbortError');}),/ai_timeout/);
+});
 
 class MemoryKV {
   constructor() { this.values = new Map(); }
@@ -26,13 +70,39 @@ function fromB64json(value) {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
+test('AI routes reuse auth, reject blank answers, enforce limits and preserve separate confirmed backups',async t=>{
+  const original=globalThis.fetch;let providerCalls=0;
+  globalThis.fetch=async(input,init={})=>{
+    const url=String(input);
+    if(url.endsWith('/user'))return Response.json({login:'Makise-Kurisu-D'});
+    if(url.includes('/contents/question-bank/bank.json'))return Response.json({encoding:'base64',content:b64json({subjects:{chem:{items:[aiItem,{...aiItem,id:'no-basis',checks:[]}]}}})});
+    if(url==='https://ai.example/v1/chat/completions'){providerCalls++;const payload=JSON.parse(init.body),answer=JSON.parse(payload.messages.at(-1).content).studentAnswer;return Response.json({choices:[{message:{content:JSON.stringify(aiFixture(answer))}}]});}
+    throw new Error('Unexpected synthetic network request');
+  };t.after(()=>{globalThis.fetch=original;});
+  const env={...aiEnv,SESSIONS:new MemoryKV(),SESSION_SECRET:SECRET,SITE_PASSWORD:'test-password',GITHUB_TOKEN:'synthetic-ai-token'};
+  const login=await worker.fetch(new Request(BASE+'/auth/password',{method:'POST',headers:{Origin:ORIGIN},body:JSON.stringify({password:'test-password'})}),env);
+  const auth=(await login.json()).sessionId,headers={Origin:ORIGIN,Authorization:'Bearer '+auth};
+  const post=body=>new Request(BASE+'/ai/review',{method:'POST',headers,body:JSON.stringify(body)});
+  assert.equal((await worker.fetch(new Request(BASE+'/ai/status',{headers:{Origin:ORIGIN}}),env)).status,401);
+  assert.equal((await worker.fetch(new Request(BASE+'/ai/status',{headers:{...headers,Origin:'https://other.example'}}),env)).status,403);
+  assert.equal((await (await worker.fetch(new Request(BASE+'/ai/status',{headers}),env)).json()).configured,true);
+  assert.equal((await worker.fetch(post({questionId:aiItem.id,answer:'',mode:'review'}),env)).status,400);assert.equal(providerCalls,0);
+  assert.equal((await worker.fetch(post({questionId:'no-basis',answer:'答案'}),env)).status,422);
+  const noAI={...env,AI_API_KEY:''};assert.equal((await worker.fetch(post({questionId:aiItem.id,answer:'答案'}),noAI)).status,503);
+  assert.equal((await worker.fetch(post({questionId:aiItem.id,answer:'合成同義答案'}),env)).status,200);
+  assert.equal((await worker.fetch(post({questionId:aiItem.id,answer:'合成同義答案'}),env)).status,429);assert.equal(providerCalls,1);
+  assert.equal([...env.SESSIONS.values.keys()].some(k=>k.includes('records')),false);
+  const base={app:'kyle-dse-quiz',sessions:[{t:1,subj:'chem',topic:'T1',results:{}}],drafts:{},reviewPlan:{},aiReviews:{one:{questionId:'synthetic-ai',tags:['概念混淆']}}};
+  const merged=mergeBackup(base,{...base,aiReviews:{two:{questionId:'synthetic-ai',tags:[]}}});assert.equal(merged.sessions.length,1);assert.equal(Object.keys(merged.aiReviews).length,2);
+});
+
 test('health and CORS preflight are available locally', async () => {
   const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, GITHUB_CLIENT_ID: 'test-client' };
   const health = await worker.fetch(new Request(`${BASE}/health`), env);
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'math-support-20261019');
+  assert.equal(status.version, 'review-ai-search-20261019');
   assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
@@ -60,7 +130,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'math-support-20261019', passwordConfigured: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'review-ai-search-20261019', passwordConfigured: false, aiConfigured: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {

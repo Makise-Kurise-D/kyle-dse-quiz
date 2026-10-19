@@ -48,6 +48,17 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+test('replayed submissions seed one spaced-review attempt and confirmed AI records sync separately',async()=>{
+  const past=Date.now()-20*864e5, exercise={t:past,subj:'chem',topic:'T3',results:{'example-mc':{ok:true,marks:1,tot:1}}};
+  const app=boot('',async()=>({ok:true,json:async()=>({data:{app:'kyle-dse-quiz',sessions:[],archive:[exercise],drafts:{},reviewPlan:{},aiReviews:{remote:{questionId:'example-mc',confirmedAt:past,tags:['概念混淆']}}}})}),
+    {dse_quiz_archive_v1:JSON.stringify([exercise,exercise]),dse_quiz_ai_reviews_v1:JSON.stringify({local:{questionId:'example-mc',confirmedAt:past+1,tags:['表達不完整']}}),dse_quiz_sync_session_v1:'s'.repeat(43)});
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_review_v1') || '{}')['example-mc']?.streak,undefined,'seeding does not itself write a new exercise');
+  app.location.hash='#/records';app.events.hashchange();app.node('#syncNowBtn').listeners.click();await settle();await settle();
+  const reviews=JSON.parse(app.saved.get('dse_quiz_ai_reviews_v1'));
+  assert.equal(Object.keys(reviews).length,2);assert.equal(JSON.parse(app.saved.get('dse_quiz_review_v1'))['example-mc'].streak,1);
+  assert.equal(app.node('#app').innerHTML.includes('未分類'),false);
+});
+
 test('navigation resets the content pane and returning to the library restores its reading position', () => {
   const app = boot();
   const pane = app.node('#contentScroll');
