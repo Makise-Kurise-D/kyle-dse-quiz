@@ -1210,3 +1210,62 @@ test('private images are fetched with authorization and displayed using revocabl
   assert.deepEqual(revoked, ['blob:private-test-image']);
 });
 
+
+
+function mathFixture(app) {
+  app.context.QUIZ_DATA.subjects.math = { name: '數學', topics: [{ code: 'U8', name: '示例數學課題' }], items: [
+    { id: 'math-example-a', kind: 'sub', topic: 'U8', year: '2022', paper: '卷一', qref: '示例甲', stem: '簡題', stemFull: '完整數學示例題\n第二行條件', marks: 1, lost: 1, checks: ['完整給分點'] },
+    { id: 'math-example-b', kind: 'sub', topic: 'U8', year: '2022', paper: '卷一', qref: '示例乙', stem: '另一示例題', marks: 2, lost: 1, checks: ['給分點一', '給分點二'] }
+  ] };
+}
+
+test('mathematics is selectable in the library, practice and random picker without duplicating its card', () => {
+  const app = boot(); mathFixture(app);
+  app.location.hash = '#/library/books'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /href="#\/library\/books\/math"/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /尚未收錄|準備中/);
+  app.location.hash = '#/library/books/math'; app.events.hashchange();
+  assert.match(app.node('#mlYearSummary').innerHTML, /2 分原卷失分/);
+  assert.match(app.node('#app').innerHTML, /上一個學科：化學/);
+  assert.match(app.node('#app').innerHTML, /下一個學科：生物/);
+  app.location.hash = '#/practice/math/2022'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /2022 年 · 數學 · 2 道錯題/);
+  assert.match(app.node('#app').innerHTML, /href="#\/practice\/bio"[^>]*上一個學科/);
+  assert.match(app.node('#app').innerHTML, /href="#\/practice\/chem\/2022"[^>]*下一個學科/);
+  app.location.hash = '#/random'; app.events.hashchange();
+  assert.equal((app.node('#app').innerHTML.match(/href="#\/session\/math\/__random__"/g) || []).length, 1);
+  assert.match(app.node('#app').innerHTML, /2 題錯題中隨機抽 2 題/);
+  app.location.hash = '#/session/math/__random__'; app.events.hashchange();
+  assert.equal(app.node('#totalCount').textContent, 2);
+  assert.match(app.node('#app').innerHTML, /完整數學示例題<br>第二行條件/);
+  assert.match(app.node('#app').innerHTML, /大題 1 分/);
+  assert.match(app.node('#app').innerHTML, /id="mcOnlyChk"[^>]*disabled/);
+});
+
+test('saving mathematics marks preserves existing chemistry sessions and other subject drafts', () => {
+  const cycle = boot().saved.get('dse_quiz_cycle_v1');
+  const prior = { t: Date.now() - 1000, subj: 'chem', topic: 'T3', results: { 'example-mc': { ok: true, marks: 1, tot: 1 } } };
+  const draft = { pick: {}, text: {}, paper: { 'math-example-a': true, 'math-example-b': true }, changedAt: {} };
+  const app = boot('', undefined, { dse_quiz_sessions_v2: JSON.stringify([prior]), dse_quiz_cycle_v1: cycle,
+    dse_quiz_draft_v2: JSON.stringify({ 'math:U8': draft, 'chem:T3': { pick: { 'example-mc': 'B' } } }) });
+  mathFixture(app);
+  app.node('#resultPanel').scrollIntoView = () => {};
+  app.location.hash = '#/session/math/U8/2022'; app.events.hashchange();
+  app.node('#submitBtn').listeners.click();
+  assert.match(app.node('#resultPanel').innerHTML, /0 \/ 3/);
+  const a = app.node('.chk-form[data-id="math-example-a"]');
+  const b = app.node('.chk-form[data-id="math-example-b"]');
+  a.dataset = { wtot: '1' }; b.dataset = { wtot: '2' };
+  a.querySelectorAll = () => [{ dataset: { w: '1' } }];
+  b.querySelectorAll = () => [{ dataset: { w: '1' } }];
+  app.node('#saveSessionBtn').listeners.click();
+  const saved = JSON.parse(app.saved.get('dse_quiz_sessions_v2'));
+  assert.deepEqual(saved[0], prior);
+  assert.equal(saved.at(-1).subj, 'math');
+  assert.deepEqual(saved.at(-1).results['math-example-a'], { kind: 'sub', marks: 1, tot: 1, ok: true, got: 1, checks: 1 });
+  assert.equal(saved.at(-1).results['math-example-b'].ok, false);
+  assert.equal(saved.at(-1).sub, '2/3');
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_draft_v2'))['chem:T3'].pick['example-mc'], 'B');
+  app.location.hash = '#/records'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /數學/);
+});

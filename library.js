@@ -69,8 +69,8 @@
       return '<span><i class="ml-dot ml-' + s.key + '"></i>' + s.label + ' <b>' + stats[s.key] + '</b></span>';
     }).join('') + '</div>';
   }
-  function subjectName(code) { return code === 'chem' ? '化學' : '生物'; }
-  function icon(code) { return code === 'chem' ? '<span class="persona-icon persona-icon-chem" aria-hidden="true"></span>' : '<span class="persona-icon persona-icon-bio" aria-hidden="true"></span>'; }
+  function subjectName(code) { return { chem: '化學', bio: '生物', math: '數學' }[code] || code; }
+  function icon(code) { return '<span class="persona-icon persona-icon-' + code + '" aria-hidden="true"></span>'; }
   function header(title, sub, back, label) {
     return '<header class="page-head"><div><h1 class="page-title">' + title + '</h1><p class="page-sub">' + sub +
       '</p></div><a class="btn btn-ghost" href="' + back + '">← ' + label + '</a></header>';
@@ -91,7 +91,7 @@
   function overview() {
     var subjects = context.data.subjects;
     frame('subjects', header('<span class="persona-icon persona-icon-library" aria-hidden="true"></span> 錯題庫', '從科目到課題，直接找到需要重溫的錯題。', '#/', '主頁') +
-      '<div class="ml-subjects">' + ['bio', 'chem'].map(function (code) {
+      '<div class="ml-subjects">' + ['bio', 'chem', 'math'].filter(function (code) { return subjects[code]; }).map(function (code) {
         var stats = summarize(subjects[code].items, context.index);
         var percent = stats.total ? Math.round(stats.mastered / stats.total * 100) : 0;
         return '<a class="ml-subject ml-subject-' + code + '" href="#/library/books/' + code + '">' +
@@ -100,8 +100,7 @@
           '<div class="ml-subject-metrics"><span><b>' + (stats.total - stats.mastered) + '</b>待複習／鞏固</span>' +
           '<span><b>' + percent + '%</b>已掌握</span></div>' + bar(stats) + legend(stats) +
           '<span class="ml-open">查看課題與錯因 <span aria-hidden="true">→</span></span></a>';
-      }).join('') + '<div class="ml-subject ml-subject-math" aria-disabled="true"><span class="ml-subject-icon"><span class="persona-icon persona-icon-math" aria-hidden="true"></span></span>' +
-        '<h2>數學</h2><p>尚未收錄 · 為之後的錯題預留位置</p><span class="ml-badge ml-unseen">準備中</span></div></div>' +
+      }).join('') + '</div>' +
       '<p class="library-note">已掌握＝兩次獨立練習連續全對；之後未全對會標為回退。掌握狀態跨雙周保留，閱讀解析不計作答。</p>');
   }
   function summary(code, items, title) {
@@ -125,17 +124,20 @@
     var years = Array.from(new Set(subject.items.map(function (item) { return String(item.year); }))).sort().reverse();
     var selected = selectedYears[code] || 'all', catalog = null;
     if (selected !== 'all' && years.indexOf(selected) < 0) selected = 'all';
-    var other = code === 'bio' ? 'chem' : 'bio';
+    var order = ['bio', 'chem', 'math'].filter(function (subject) { return api.data.subjects[subject]; });
+    var subjectIndex = order.indexOf(code);
+    var previous = order[(subjectIndex + order.length - 1) % order.length];
+    var next = order[(subjectIndex + 1) % order.length];
     frame(code, header('錯題庫與歸納', '選年份，再選課題。原答案、錯因與正解依次展開。', '#/library/books', '科目') +
-      '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="#/library/books/' + other + '" aria-label="上一個學科：' + subjectName(other) + '">‹ LB</a>' +
-      '<strong>' + subjectName(code) + '</strong><a class="shoulder-link" href="#/library/books/' + other + '" aria-label="下一個學科：' + subjectName(other) + '">RB ›</a></div>' +
+      '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="#/library/books/' + previous + '" aria-label="上一個學科：' + subjectName(previous) + '">‹ LB</a>' +
+      '<strong>' + subjectName(code) + '</strong><a class="shoulder-link" href="#/library/books/' + next + '" aria-label="下一個學科：' + subjectName(next) + '">RB ›</a></div>' +
       '<div class="inventory-layout"><section class="inventory-years" aria-label="年份與原卷成績"><h2>YEAR SELECT / 年份與狀態</h2>' +
       '<div class="year-list" id="mlYears"></div><p class="year-grade-note">LV＝原卷已記錄等級；HP＝原卷分數；SP＝收錄錯題數。沒有已記錄等級時顯示「—」，不按分數推算。</p>' +
       '<p class="year-grade-note" id="mlGradeStatus" role="status">正在核對原卷成績…</p><div id="mlYearSummary"></div></section>' +
       '<section class="inventory-topics" aria-label="課題目錄"><div class="ml-section-head"><h2>TOPIC LIST / 課題</h2><label>排序 <select id="mlTopicSort"><option value="syllabus">考綱順序</option>' +
       '<option value="pending">待複習最多</option></select></label></div><div class="ml-topics" id="mlTopics"></div>' +
       '<section class="topic-info" aria-label="課題資訊"><span aria-hidden="true">INFO</span><div id="mlTopicInfo" aria-live="polite"></div></section></section></div>' +
-      '<p class="library-note">長期已掌握＝兩次獨立練習連續全對；閱讀不計作答。數學尚未收錄。</p>');
+      '<p class="library-note">長期已掌握＝兩次獨立練習連續全對；閱讀不計作答。</p>');
     var root = api.root, sort = root.querySelector('#mlTopicSort');
     sort.value = (filters[code] || {}).sort || 'syllabus';
     function currentItems() { return subject.items.filter(function (item) { return selected === 'all' || String(item.year) === selected; }); }
@@ -224,7 +226,7 @@
           '</tr></thead><tbody>' + table.rows.map(function (row) { return '<tr>' + row.map(function (cell) { return '<td>' + text(cell) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
       }).join('') : '') +
       figures.map(function (f) {
-        return /^images\/(chem|bio)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path) ? '<figure><img data-library-image="' + esc(f.path) +
+        return /^images\/(chem|bio|math)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path) ? '<figure><img data-library-image="' + esc(f.path) +
           '" loading="lazy" decoding="async" alt="' + esc(f.alt || '原題圖表') + '"' +
           (f.width > 0 && f.height > 0 ? ' width="' + Number(f.width) + '" height="' + Number(f.height) + '"' : '') + '><figcaption>' + esc(f.alt) + '</figcaption></figure>' : '';
       }).join('') + '</div><div class="ml-answer ml-answer-own"><h3>我的原答案</h3><p>' + own + '</p></div>' +
