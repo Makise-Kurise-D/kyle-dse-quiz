@@ -758,10 +758,12 @@
         '<div class="hero">' +
           '<div class="hero-kicker">Kyle 嘅錯題本 / DSE</div>' +
           '<h1 class="hero-title">從上次的<br>錯題繼續。</h1>' +
+          '<div class="home-info" role="group" aria-label="學習與同步資訊">' +
           '<p class="hero-sub hero-bubble bubble-intro">錯過嘅唔可以再錯 —— 逐課題清，每個踩分點都執返。</p>' +
           '<p class="review-note hero-bubble bubble-sync" id="syncStatus" role="status" aria-live="polite"' + (syncMessage ? '' : ' hidden') + '>' + esc(syncMessage) + '</p>' +
           bankStatusHtml() +
           '<p class="home-bank-total hero-bubble bubble-bank"><b>' + (bankLoaded ? totalItems : '—') + '</b> 題在庫<span class="bank-privacy">題庫及原卷僅供登入後讀取</span></p>' +
+          '</div>' +
           '<a class="continue-command" href="' + esc(resumeHref) + '"><b aria-hidden="true">CONTINUE</b><span>繼續練習 ↗</span></a>' +
         '</div>' +
         '<div class="tile-grid">' +

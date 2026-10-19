@@ -405,3 +405,230 @@ html[data-appearance=full][data-theme] .home-stage .hero-kicker{
 @media(prefers-reduced-transparency:reduce){
  .archive-home-content{opacity:.25;filter:none}
 }
+
+/* A compact fixed header shares its exact lower edge with the artwork and
+   content scroller. Controls keep their touch targets without a second row. */
+.appearance-label-short{display:none}
+@media screen{
+ :root{--shell-height:88px}
+ .shell-header{
+  height:var(--header-offset);min-height:var(--header-offset);padding:10px clamp(18px,2.4vw,34px);
+  padding-top:calc(10px + env(safe-area-inset-top,0px));gap:20px;align-items:center;
+  border-top-width:3px;border-bottom-width:2px;
+ }
+ html[data-appearance=full] .shell-header{border-bottom-width:2px}
+ .shell-heading{position:static;display:flex;flex:1;flex-direction:column;align-items:flex-start;gap:5px;min-width:0;max-width:none}
+ .shell-title{display:flex;align-items:baseline;gap:12px;min-width:0;max-width:100%}
+ .shell-heading b{font-size:clamp(28px,2.6vw,42px);letter-spacing:-1px}
+ .shell-heading .shell-title>span{display:block;margin:0;font-size:11px;line-height:1.4;letter-spacing:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ html[data-appearance] .shell-heading .appearance-clock{position:static;display:block;width:auto;max-width:none;margin:0;text-align:left;font-size:10px;line-height:1.3;font-weight:400;letter-spacing:.3px;white-space:nowrap}
+ .appearance-tools{align-self:center;flex:none;flex-wrap:nowrap;gap:8px;max-width:none;margin-left:auto}
+ .version-switch{padding:2px;gap:2px}
+ .version-switch button{min-height:44px;padding:6px 10px;font-size:12px}
+ .day-night-toggle{width:44px;height:44px;min-height:44px}
+ html[data-appearance=simple] .shell-heading .shell-title>span{font-size:20px;letter-spacing:0}
+ .app{--app-pad-top:clamp(24px,2.4vw,36px);--app-pad-bottom:56px;padding:var(--app-pad-top) clamp(22px,2.5vw,38px) var(--app-pad-bottom)}
+ .home-stage{column-gap:clamp(28px,3.2vw,52px)}
+ .ml-subjects{gap:clamp(16px,1.8vw,24px)}
+ .inventory-layout{column-gap:clamp(24px,3vw,40px)}
+ .app:focus,.content-scroll:focus{outline:none}
+}
+
+@media screen and (max-width:860px), screen and (pointer:coarse) and (max-width:1366px){
+ :root{--shell-height:76px}
+ .shell-header{padding-left:20px;padding-right:20px;gap:14px}
+ .shell-heading b{font-size:28px}
+ .shell-title{gap:10px}
+ .appearance-label-long{display:none}
+ .appearance-label-short{display:inline}
+ .version-switch button{min-width:50px;padding:6px 9px;font-size:12px}
+ .app{--app-pad-top:22px;--app-pad-bottom:40px;padding:var(--app-pad-top) 22px var(--app-pad-bottom)}
+ .page-head{gap:12px;margin-bottom:20px;align-items:center}
+ .page-title{font-size:23px}
+ .page-sub{font-size:12px;line-height:1.65}
+ .home-stage{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;min-height:0;align-items:start}
+ html[data-appearance=full] .home-stage .hero{min-height:0;padding:8px 4px 14px}
+ html[data-appearance=full] .home-stage .hero-kicker{font-size:12px;letter-spacing:.4px;margin-bottom:12px}
+ html[data-appearance=full] .home-stage .hero-title{font-size:32px;line-height:1.25;letter-spacing:1px;margin-bottom:12px}
+ html[data-appearance=full] .home-stage .hero .hero-bubble{
+  --bubble-step:0px;max-width:100%;padding:9px 12px;margin:9px 0;font-size:12px;line-height:1.65;
+ }
+ html[data-appearance=full] .home-stage .hero :is(.bubble-sync,.bubble-bank){font-size:11px;padding:8px 11px}
+ html[data-appearance=full] .home-stage .hero .hero-bubble:after{display:none}
+ html[data-appearance=full] .continue-command{width:fit-content;min-width:170px;margin:14px 0 0;padding:10px 16px;border-left-width:4px}
+ html[data-appearance=full] .continue-command b{font-size:26px}
+ html[data-appearance=full] .continue-command span{font-size:11px;margin-top:4px}
+ .home-stage .tile-grid{gap:11px}
+ html[data-appearance=full] .home-stage .tile{min-height:66px;padding:11px 18px;gap:12px;transform:none}
+ html[data-appearance=full] .home-stage .tile:hover{transform:translateY(-2px)}
+ .home-stage .tile-ico{width:36px;height:28px;font-size:22px}
+ html[data-appearance=full] .home-stage .tile-title{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin:0;font-size:24px;line-height:1.1;letter-spacing:-.5px}
+ html[data-appearance=full] .home-stage .tile-title .tile-cn{font-size:11px;line-height:1.4;letter-spacing:0;margin:0}
+ html[data-appearance=full] .home-stage .tile-desc{font-size:11px;line-height:1.5;margin-top:5px;max-width:100%}
+ .home-stage .tile-arrow{right:13px;top:14px;font-size:18px}
+ .home-stat-strip{padding:16px 0;margin:20px 0;row-gap:14px}
+ .home-stat-strip>div{padding:0 16px;font-size:11px}
+ .home-stat-strip strong{font-size:28px}
+ .hero-cycle{margin-bottom:24px;padding:12px 16px;font-size:12px}
+ .hero-cycle b{font-size:13px}
+ .rec-grid{gap:12px}
+ .rec-card{padding:18px}
+ .ml-subjects{grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:14px}
+ html[data-appearance=full] .ml-subject{
+  display:grid;grid-template-columns:34px minmax(0,1fr);column-gap:12px;row-gap:6px;
+  min-height:0;padding:16px 18px;align-content:start;
+ }
+ html[data-appearance=full] .ml-subject .ml-card-top{display:contents}
+ html[data-appearance=full] .ml-subject .ml-subject-icon{grid-column:1;grid-row:1/3;font-size:28px;align-self:start}
+ html[data-appearance=full] .ml-subject .ml-eyebrow{display:none}
+ html[data-appearance=full] .ml-subject h2{grid-column:2;grid-row:1;margin:0;padding-right:28px;font-size:23px;line-height:1.2}
+ html[data-appearance=full] .ml-subject>p{grid-column:2;grid-row:2;margin:0;font-size:12px;line-height:1.5}
+ html[data-appearance=full] .ml-subject-metrics{grid-column:1/-1;display:flex;gap:18px;margin:4px 0 0}
+ html[data-appearance=full] .ml-subject-metrics span{flex-direction:row;align-items:baseline;gap:6px;font-size:11px}
+ html[data-appearance=full] .ml-subject-metrics b{font-size:21px}
+ html[data-appearance=full] .ml-subject>.ml-progress{grid-column:1/-1;height:5px}
+ html[data-appearance=full] .ml-subject>.ml-legend{grid-column:1/-1;margin:0;gap:6px 12px;font-size:11px;line-height:1.5}
+ html[data-appearance=full] .ml-subject .ml-dot{width:7px;height:7px}
+ html[data-appearance=full] .ml-subject .ml-open{grid-column:2;grid-row:1;justify-self:end;align-self:center;margin:0;padding:0;font-size:0;line-height:1}
+ html[data-appearance=full] .ml-subject .ml-open>span{font-size:20px}
+ .ml-summary{padding:20px;margin-bottom:22px}
+ .ml-summary h2{font-size:20px}
+ .ml-summary-percent{font-size:30px}
+ .ml-summary-metrics{margin:14px 0 18px;gap:12px}
+ .ml-summary-metrics b{font-size:24px}
+ .inventory-layout{gap:22px}
+ .inventory-year{min-height:82px;padding:13px 16px;gap:12px}
+ .year-number{font-size:28px}
+ .year-name{font-size:15px}
+ .year-meters{font-size:11px;gap:6px 10px}
+ .year-meters b{font-size:17px}
+ .practice-topic{min-height:62px;padding:11px 15px;gap:10px}
+ .practice-topic .topic-name{font-size:15px}
+ .practice-topic-count{font-size:20px;min-width:52px}
+ .inventory-switch{gap:10px;margin-bottom:18px}
+ .inventory-switch strong{font-size:18px}
+ .shoulder-link{font-size:21px;min-width:48px;padding:7px 11px}
+ .topic-info{padding:18px;margin-top:20px}
+ .ml-question summary{padding:16px 18px;gap:8px 12px}
+ .ml-question-title{font-size:16px;line-height:1.65}
+ .ml-question-body{padding:0 18px 20px}
+ .ml-filters{padding:14px;gap:12px}
+ .paper-subject,.library-hub-card{min-height:0;padding:20px}
+ .paper-year{padding:18px}
+ .stat-card{padding:16px}
+}
+@media screen and (pointer:coarse) and (min-width:861px) and (max-width:1366px){
+ :root{--rail-width:176px}
+ .rail{padding-left:16px;padding-right:16px}
+ .rail-logo{margin-bottom:26px}
+ .rail-item:not(.rail-reset){min-height:52px;margin-bottom:16px;padding-top:6px;padding-bottom:6px}
+ .rail-word{font-size:27px}
+ .rail-caption{font-size:9px}
+}
+@media screen and (max-width:860px){
+ :root{--tabbar-offset:calc(64px + env(safe-area-inset-bottom,0px))}
+ .tabbar{height:var(--tabbar-offset);padding:6px 7px calc(6px + env(safe-area-inset-bottom,0px))}
+ .tab-item{min-height:44px;gap:2px}
+ .tab-ico{height:22px;font-size:20px}
+ .tab-ico .persona-icon{height:20px}
+ .tab-label{font-size:10px}
+}
+@media screen and (max-width:600px){
+ :root{--shell-height:68px}
+ .shell-header{gap:10px;padding:8px 12px;padding-top:calc(8px + env(safe-area-inset-top,0px))}
+ .shell-heading{gap:4px}
+ .shell-title{gap:0}
+ .shell-title b{display:none}
+ .shell-heading .shell-title>span{font-size:15px;letter-spacing:0;font-weight:750;line-height:1.3}
+ .shell-heading .appearance-clock{font-size:10px;letter-spacing:0}
+ .appearance-tools{gap:6px}
+ .version-switch button{min-width:46px;padding:6px 7px;font-size:11px}
+ html[data-appearance=simple] .shell-heading .shell-title>span{font-size:15px}
+ .app{--app-pad-top:18px;--app-pad-bottom:32px;padding:var(--app-pad-top) 16px var(--app-pad-bottom)}
+ .page-head{flex-direction:row;align-items:flex-start;justify-content:space-between;text-align:left;margin-bottom:18px;gap:12px}
+ .page-head>div{min-width:0;flex:1}
+ .page-head>.btn{flex:none;white-space:nowrap;padding:10px 12px}
+ .page-title{font-size:21px}
+ .home-stage{grid-template-columns:1fr;gap:20px}
+ html[data-appearance=full] .home-stage .hero{padding:4px 2px 0}
+ html[data-appearance=full] .home-stage .hero-title{font-size:30px}
+ html[data-appearance=full] .home-stage .hero .hero-bubble{max-width:340px;margin:8px 0}
+ .home-stage .tile-grid{gap:10px}
+ .home-stat-strip{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .ml-subjects{grid-template-columns:1fr;gap:12px}
+ .ml-subject-metrics{gap:22px}
+ .ml-subject>.ml-legend{gap:6px 10px}
+ .ml-summary-heading{gap:12px}
+ .ml-summary-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .inventory-year{flex-basis:226px}
+ .ml-question-title{font-size:15px}
+ .session-entry summary{padding:14px}
+}
+
+/* One quiet information surface keeps status updates and bank actions together. */
+.home-info{display:grid;gap:9px;margin:18px 0;max-width:420px;padding:14px 16px}
+html[data-appearance=full] .home-info{
+ background:var(--glass-sheen),var(--card);border:1px solid var(--line);border-radius:var(--radius);
+ clip-path:var(--panel-shape);box-shadow:var(--glass-shadow);
+ -webkit-backdrop-filter:var(--glass-filter);backdrop-filter:var(--glass-filter);
+}
+html[data-appearance=full] .home-stage .hero .home-info .hero-bubble{
+ --bubble-step:0px;width:auto;max-width:none;margin:0;padding:0;background:none;border:0;
+ border-radius:0;clip-path:none;box-shadow:none;filter:none;transform:none;
+ -webkit-backdrop-filter:none;backdrop-filter:none;font-size:12px;line-height:1.65;
+}
+html[data-appearance=full] .home-stage .hero .home-info .hero-bubble:after{display:none}
+html[data-appearance=full] .home-stage .hero .home-info :is(.bubble-sync,.bubble-bank){
+ padding-top:9px;border-top:1px solid var(--line);font-size:11px;color:var(--ink2);
+}
+.home-info .bank-status{margin:0}
+html[data-appearance=simple] .home-info{padding:0;margin:16px 0;max-width:none}
+html[data-appearance=simple] .home-info .hero-bubble{margin:0}
+
+/* The subject chooser lives at the lower edge of its own landing scene. */
+.ml-picker-count{display:none}
+@media screen{
+ .ml-subject-picker{
+  display:flex;flex-direction:column;
+  min-height:calc(100vh - var(--header-offset) - var(--tabbar-offset) - var(--app-pad-top) - var(--app-pad-bottom));
+  min-height:calc(100dvh - var(--header-offset) - var(--tabbar-offset) - var(--app-pad-top) - var(--app-pad-bottom));
+ }
+ .ml-subject-picker>.page-head{flex:none}
+ .ml-subject-dock{margin-top:auto;padding-top:clamp(40px,9vh,100px)}
+ .ml-subject-picker .ml-subjects{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+ html[data-appearance=full] .ml-subject-picker .ml-subject{
+  display:grid;grid-template-columns:34px minmax(0,1fr);column-gap:12px;row-gap:10px;
+  min-height:0;padding:20px 22px;align-content:start;
+ }
+ html[data-appearance=full] .ml-subject-picker .ml-card-top{display:contents}
+ html[data-appearance=full] .ml-subject-picker .ml-subject-icon{grid-column:1;grid-row:1/3;align-self:start;font-size:30px}
+ html[data-appearance=full] .ml-subject-picker :is(.ml-eyebrow,.ml-subject>p,.ml-legend){display:none}
+ html[data-appearance=full] .ml-subject-picker h2{grid-column:2;grid-row:1;padding-right:26px;margin:0;font-size:26px;line-height:1.2}
+ html[data-appearance=full] .ml-picker-count{display:block;grid-column:2;grid-row:2;color:var(--gray);font-size:12px}
+ html[data-appearance=full] .ml-subject-picker .ml-subject-metrics{grid-column:1/-1;display:flex;gap:22px;margin:6px 0 0}
+ html[data-appearance=full] .ml-subject-picker .ml-subject-metrics span{flex-direction:row;align-items:baseline;gap:6px;font-size:11px}
+ html[data-appearance=full] .ml-subject-picker .ml-subject-metrics b{font-size:23px}
+ html[data-appearance=full] .ml-subject-picker .ml-progress{grid-column:1/-1;height:5px}
+ html[data-appearance=full] .ml-subject-picker .ml-open{grid-column:2;grid-row:1;align-self:center;justify-self:end;margin:0;padding:0;font-size:0;line-height:1}
+ html[data-appearance=full] .ml-subject-picker .ml-open>span{font-size:21px}
+ .ml-subject-dock>.library-note{margin:12px 0 0;font-size:11px;line-height:1.6;color:var(--gray)}
+}
+@media screen and (max-width:860px), screen and (pointer:coarse) and (max-width:1366px){
+ .home-info{padding:12px 14px;gap:8px;margin:14px 0}
+ html[data-appearance=full] .ml-subject-picker .ml-subject{padding:18px;gap:8px 10px}
+ html[data-appearance=full] .ml-subject-picker h2{font-size:23px}
+ html[data-appearance=full] .ml-subject-picker .ml-subject-metrics{gap:16px}
+ html[data-appearance=full] .ml-subject-picker .ml-subject-metrics b{font-size:21px}
+}
+@media screen and (max-width:600px){
+ .home-info{margin:12px 0}
+ .ml-subject-picker .ml-subjects{gap:8px}
+ html[data-appearance=full] .ml-subject-picker .ml-subject{grid-template-columns:1fr;justify-items:center;gap:7px;min-height:112px;padding:14px 11px}
+ html[data-appearance=full] .ml-subject-picker .ml-subject-icon{grid-column:1;grid-row:1;font-size:24px}
+ html[data-appearance=full] .ml-subject-picker h2{grid-column:1;grid-row:2;margin:0;padding:0;font-size:19px}
+ html[data-appearance=full] .ml-subject-picker .ml-picker-count{grid-column:1;grid-row:3;font-size:10px;white-space:nowrap}
+ html[data-appearance=full] .ml-subject-picker :is(.ml-subject-metrics,.ml-open){display:none}
+ html[data-appearance=full] .ml-subject-picker .ml-progress{width:100%;margin-top:2px;height:4px}
+ .ml-subject-dock>.library-note{font-size:10px;line-height:1.6}
+ html[data-appearance=simple] .ml-subject-picker .ml-subjects{grid-template-columns:1fr}
+}
