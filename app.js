@@ -4,10 +4,11 @@
 (function () {
   'use strict';
   function emptyBank() {
-    return { subjects: { chem: { name: '化學', topics: [], items: [] }, bio: { name: '生物', topics: [], items: [] } } };
+    return { subjects: { chem: { name: '化學', topics: [], items: [] }, bio: { name: '生物', topics: [], items: [] }, math: { name: '數學', topics: [], items: [] } } };
   }
   var PRIVATE_BANK = window.QUIZ_PRIVATE_BANK === true;
   var DATA = PRIVATE_BANK ? emptyBank() : window.QUIZ_DATA;
+  if (DATA && DATA.subjects && !Object.prototype.hasOwnProperty.call(DATA.subjects, 'math')) DATA.subjects.math = emptyBank().subjects.math;
   var bankLoaded = !PRIVATE_BANK, bankPromise = null, bankMessage = '', bankFailed = false, bankRequest = 0, bankAutoRetry = false;
   var imageUrls = new Map(), imageReads = new Map(), imageObserver = null;
   var LS_SESS = 'dse_quiz_sessions_v2';
@@ -38,11 +39,11 @@
   var archive = load(LS_ARCHIVE, []);
   var drafts = load(LS_DRAFT, {});
   var reviewPlan = load(LS_REVIEW, {});
-  var SUBJECT_ORDER = ['chem', 'bio'];
+  var SUBJECT_ORDER = ['chem', 'bio', 'math'];
   var SUBJECT_META = {
     chem: { name: '化學', icon: '<span class="persona-icon persona-icon-chem" aria-hidden="true"></span>', soon: false },
     bio: { name: '生物', icon: '<span class="persona-icon persona-icon-bio" aria-hidden="true"></span>', soon: false },
-    math: { name: '數學', icon: '<span class="persona-icon persona-icon-math" aria-hidden="true"></span>', soon: true }
+    math: { name: '數學', icon: '<span class="persona-icon persona-icon-math" aria-hidden="true"></span>', soon: false }
   };
 
   function load(k, d) {
@@ -352,14 +353,15 @@
     }
     bankPromise = readBank(0).then(function (bank) {
       if (requestId !== bankRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
-      ['chem', 'bio'].forEach(function (code) {
+      if (bank && bank.subjects && !Object.prototype.hasOwnProperty.call(bank.subjects, 'math')) bank.subjects.math = emptyBank().subjects.math;
+      SUBJECT_ORDER.forEach(function (code) {
         if (!bank.subjects || !bank.subjects[code] || !Array.isArray(bank.subjects[code].items) || !Array.isArray(bank.subjects[code].topics)) {
           throw new Error('錯題庫格式有誤');
         }
         bank.subjects[code].items.forEach(function (it) {
-          if (it.img && !/^images\/(?:chem|bio)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg$/.test(it.img)) throw new Error('原題圖片路徑有誤');
+          if (it.img && !/^images\/(?:chem|bio|math)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg$/.test(it.img)) throw new Error('原題圖片路徑有誤');
         if (it.figures && (!Array.isArray(it.figures) || !it.figures.every(function (f) {
-          return f && /^images\/(?:chem|bio)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path);
+          return f && /^images\/(?:chem|bio|math)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path);
         }))) throw new Error('原題圖表路徑有誤');
         });
       });
@@ -537,6 +539,7 @@
   }
   function marksOf(it) {
     if (it.kind === 'mc') return 1;
+    if (Number.isFinite(it.marks) && it.marks > 0) return it.marks;
     var m = (it.qref || '').match(/（\s*([0-9]+(?:\.[0-9]+)?)\s*分/);
     return m ? parseFloat(m[1]) : (it.checks ? it.checks.length : 1);
   }
@@ -931,6 +934,7 @@
     return fetch(SYNC_API + '/papers/catalog', {
       method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store', signal: signal,
     }).then(readSyncResponse).then(function (catalog) {
+      if (catalog && catalog.subjects && !Object.prototype.hasOwnProperty.call(catalog.subjects, 'math')) catalog.subjects.math = [];
       if (!catalog || !catalog.subjects || !SUBJECT_ORDER.every(function (code) {
         return Array.isArray(catalog.subjects[code]) && catalog.subjects[code].every(function (year) { return /^20\d{2}$/.test(year); });
       })) throw new Error('批改卷年份清單無效');
@@ -1258,8 +1262,13 @@
     var years = Array.from(new Set(itemsOf(code).map(function (it) { return String(it.year); }))).sort().reverse();
     var selected = requestedYear || 'all';
     if (years.indexOf(selected) < 0) selected = 'all';
-    var other = code === 'bio' ? 'chem' : 'bio';
-    var otherYear = selected === 'all' || itemsOf(other).some(function (it) { return String(it.year) === selected; }) ? selected : 'all';
+    var subjectIndex = SUBJECT_ORDER.indexOf(code);
+    var previous = SUBJECT_ORDER[(subjectIndex + SUBJECT_ORDER.length - 1) % SUBJECT_ORDER.length];
+    var next = SUBJECT_ORDER[(subjectIndex + 1) % SUBJECT_ORDER.length];
+    function switchHref(subject) {
+      var year = selected === 'all' || itemsOf(subject).some(function (it) { return String(it.year) === selected; }) ? selected : 'all';
+      return practiceHref(subject, year);
+    }
     var filtered = itemsOf(code).filter(function (it) { return selected === 'all' || String(it.year) === selected; });
     var latest = latestMap(), st = {};
     filtered.forEach(function (it) {
@@ -1273,11 +1282,11 @@
       return b.marks - a.marks;
     });
     var yearLabel = selected === 'all' ? '全部年份' : selected + ' 年';
-    var otherHref = practiceHref(other, otherYear), catalog = null, requestId = paperRequest;
+    var catalog = null, requestId = paperRequest;
     $('#app').innerHTML = '<section class="page practice-inventory">' +
       '<header class="page-head"><div><h1 class="page-title">課題練習</h1><p class="page-sub">先選年份，再揀課題開始練習。</p></div>' +
-      '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="' + otherHref + '" aria-label="上一個學科：' + SUBJECT_META[other].name + '">‹ LB</a>' +
-      '<strong>' + SUBJECT_META[code].icon + ' ' + SUBJECT_META[code].name + '</strong><a class="shoulder-link" href="' + otherHref + '" aria-label="下一個學科：' + SUBJECT_META[other].name + '">RB ›</a></div>' +
+      '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="' + switchHref(previous) + '" aria-label="上一個學科：' + SUBJECT_META[previous].name + '">‹ LB</a>' +
+      '<strong>' + SUBJECT_META[code].icon + ' ' + SUBJECT_META[code].name + '</strong><a class="shoulder-link" href="' + switchHref(next) + '" aria-label="下一個學科：' + SUBJECT_META[next].name + '">RB ›</a></div>' +
       '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
       '<div class="inventory-layout"><section class="inventory-years" aria-label="選擇練習年份"><h2>YEAR SELECT <span>/ 選擇年份</span></h2>' +
       '<div class="year-list" id="practiceYears"></div><p class="year-grade-note">LV 原卷已記錄等級 · HP 原卷分數 · SP 收錄錯題數。未提供的成績顯示「—」。</p>' +
@@ -1350,10 +1359,10 @@
 
   /* ---------------- 隨機十題科目選擇 ---------------- */
   function renderRandomPicker() {
-    var cards = SUBJECT_ORDER.concat(['math']).map(function (code) {
+    var cards = SUBJECT_ORDER.map(function (code) {
       var m = SUBJECT_META[code];
       var n = subjOf(code) ? itemsOf(code).length : 0;
-      if (code === 'math' || !n) {
+      if (!n) {
         return '<div class="rand-card is-soon">' +
           '<div class="rand-ico">' + m.icon + '</div>' +
           '<div class="rand-name">' + esc(m.name) + '</div>' +
@@ -1362,7 +1371,7 @@
       return '<a class="rand-card" href="#/session/' + code + '/' + encodeURIComponent('__random__') + '">' +
         '<div class="rand-ico">' + m.icon + '</div>' +
         '<div class="rand-name">' + esc(m.name) + '</div>' +
-        '<div class="rand-note">' + n + ' 題錯題中隨機抽 10 題 →</div></a>';
+        '<div class="rand-note">' + n + ' 題錯題中隨機抽 ' + Math.min(10, n) + ' 題 →</div></a>';
     }).join('');
     $('#app').innerHTML =
       '<section class="page">' +
@@ -1393,7 +1402,7 @@
 
   function renderSession(code, topic, mcOnly, year) {
     if (!topic) { location.hash = '#/practice'; return; }
-    if (code === 'math' || !subjOf(code)) {
+    if (!subjOf(code)) {
       $('#app').innerHTML =
         '<section class="page"><div class="soon-banner"><span class="persona-icon persona-icon-math" aria-hidden="true"></span> ' + esc(SUBJECT_META[code] ? SUBJECT_META[code].name : code) +
         ' 嘅錯題庫暫時未有題，改完好試卷就會自動出現。</div>' +
@@ -1444,7 +1453,7 @@
         '</header>' +
         (topic === '__random__'
           ? '<div class="subj-tabs rand-tabs">' +
-              ['chem', 'bio', 'math'].map(function (c) {
+              SUBJECT_ORDER.map(function (c) {
                 var m = SUBJECT_META[c];
                 var n = subjOf(c) ? itemsOf(c).length : 0;
                 if (!n) return '<span class="subj-tab is-soon">' + m.icon + ' ' + m.name +
@@ -1484,7 +1493,7 @@
       var picked = draft.pick[it.id] || '';
       body =
         (it.img ? '<img class="q-img" ' + (PRIVATE_BANK ? 'data-bank-image="' + esc(it.img) + '"' : 'src="' + esc(it.img) + '"') + ' alt="原題裁圖">' :
-                  '<div class="q-stem">' + esc(it.stem) + '</div>') +
+                  '<div class="q-stem">' + esc(it.stemFull || it.stem).replace(/\n/g, '<br>') + '</div>') +
         '<div class="opts" role="group" aria-label="第 ' + (idx + 1) + ' 題，選擇答案" data-id="' + esc(it.id) + '">' +
           ['A', 'B', 'C', 'D'].map(function (l) {
             return '<button type="button" class="opt' + (picked === l ? ' picked' : '') +
@@ -1494,7 +1503,7 @@
     } else {
       var v = draft.text[it.id] || '';
       body =
-        '<div class="q-stem">' + esc(it.stem) + '</div>' +
+        '<div class="q-stem">' + esc(it.stemFull || it.stem).replace(/\n/g, '<br>') + '</div>' +
         '<textarea class="ans-box" aria-label="第 ' + (idx + 1) + ' 題默寫答案" data-id="' + esc(it.id) + '" rows="4" ' +
           'placeholder="默寫答案（可留白，改用紙寫就剔下面格仔）……">' + esc(v) + '</textarea>' +
         '<label class="paper-lbl"><input type="checkbox" class="paper-chk" data-id="' + esc(it.id) + '"' +

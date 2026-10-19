@@ -6,7 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'topic-library-20261015';
+const SERVICE_VERSION = 'math-support-20261019';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
@@ -255,18 +255,18 @@ function paperSummary(value) {
 
 async function githubPaperCatalog(token, fresh = false) {
   const catalog = await privateMetadata('papers/catalog.json', token, fresh);
-  const subjects = catalog?.subjects;
+  const subjects = catalog?.subjects ? { math: [], ...catalog.subjects } : null;
   if (!subjects || typeof subjects !== 'object' || Array.isArray(subjects) ||
-      Object.keys(subjects).some(subject => !['chem', 'bio'].includes(subject)) ||
-      !['chem', 'bio'].every(subject => Array.isArray(subjects[subject]) &&
+      Object.keys(subjects).some(subject => !['chem', 'bio', 'math'].includes(subject)) ||
+      !['chem', 'bio', 'math'].every(subject => Array.isArray(subjects[subject]) &&
         subjects[subject].every(year => typeof year === 'string' && /^20\d{2}$/.test(year)) &&
         new Set(subjects[subject]).size === subjects[subject].length)) {
     throw new Error('invalid_paper_catalog');
   }
-  const result = { subjects: { chem: subjects.chem, bio: subjects.bio } };
+  const result = { subjects: { chem: subjects.chem, bio: subjects.bio, math: subjects.math } };
   if (catalog.papers && typeof catalog.papers === 'object' && !Array.isArray(catalog.papers)) {
-    result.papers = { chem: {}, bio: {} };
-    for (const subject of ['chem', 'bio']) {
+    result.papers = { chem: {}, bio: {}, math: {} };
+    for (const subject of ['chem', 'bio', 'math']) {
       for (const year of subjects[subject]) {
         const summary = paperSummary(catalog.papers[subject]?.[year]);
         if (summary) result.papers[subject][year] = summary;
@@ -532,7 +532,7 @@ const worker = {
     }
     if (url.pathname === '/bank' || url.pathname.startsWith('/bank/')) {
       if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
-      const image = url.pathname.match(/^\/bank\/images\/((?:chem|bio)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg)$/);
+      const image = url.pathname.match(/^\/bank\/images\/((?:chem|bio|math)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg)$/);
       if (url.pathname !== '/bank' && !image) return json({ error: 'not_found' }, 404, cors(request));
       const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
       if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
@@ -560,8 +560,8 @@ const worker = {
     if (url.pathname === '/papers' || url.pathname.startsWith('/papers/')) {
       if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
       const catalog = url.pathname === '/papers/catalog';
-      const manifest = url.pathname.match(/^\/papers\/(chem|bio)\/(20\d{2})\/manifest$/);
-      const page = url.pathname.match(/^\/papers\/(chem|bio)\/(20\d{2})\/pages\/([0-9a-f]{16})\/([1-9]\d{0,3})$/);
+      const manifest = url.pathname.match(/^\/papers\/(chem|bio|math)\/(20\d{2})\/manifest$/);
+      const page = url.pathname.match(/^\/papers\/(chem|bio|math)\/(20\d{2})\/pages\/([0-9a-f]{16})\/([1-9]\d{0,3})$/);
       if (!catalog && !manifest && !page) return json({ error: 'not_found' }, 404, cors(request));
       const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
       if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));

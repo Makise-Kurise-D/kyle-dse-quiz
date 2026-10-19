@@ -1,7 +1,7 @@
 /* Topic-first library: text is readable before optional figures arrive. */
 [hidden] { display: none !important; }
 .ml-page { max-width: 1160px; }
-.ml-subjects { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.ml-subjects { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 24px; }
 .ml-subject { display: flex; flex-direction: column; min-width: 0; min-height: 370px; padding: 32px; border: 1px solid #c5ddd8; border-radius: 24px; background: linear-gradient(140deg,#edf9f5,#fff 90%); color: #183b35; text-decoration: none; transition: transform .15s, box-shadow .15s; }
 a.ml-subject:hover { transform: translateY(-3px); box-shadow: 0 14px 32px #183b3512; }
 .ml-subject-chem { color: #243e59; border-color: #c9dbea; background: linear-gradient(140deg,#edf4fc,#fff 90%); }
@@ -14,9 +14,7 @@ a.ml-subject:hover { transform: translateY(-3px); box-shadow: 0 14px 32px #183b3
 .ml-subject-metrics span, .ml-summary-metrics span { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
 .ml-subject-metrics b { font-size: 28px; }
 .ml-open { display: flex; justify-content: space-between; margin-top: auto; padding-top: 28px; font-weight: 700; }
-.ml-subject-math { grid-column: 1/-1; flex-direction: row; align-items: center; gap: 24px; min-height: 100px; padding: 22px 30px; background: #f4f5f6; border-color: #e1e3e6; color: #66707e; }
-.ml-subject-math h2 { margin: 0; font-size: 24px; }
-.ml-subject-math p { margin: 0; flex: 1; }
+.ml-subject-math { color: #49375f; border-color: #dacee9; background: linear-gradient(140deg,#f5effc,#fff 90%); }
 .ml-progress { display: flex; height: 10px; border-radius: 8px; overflow: hidden; background: #e5e7eb; }
 .ml-progress span { min-width: 2px; }
 .ml-unseen { background: #e2e5eb; color: #485569; }
@@ -88,8 +86,6 @@ a.ml-subject:hover { transform: translateY(-3px); box-shadow: 0 14px 32px #183b3
 @media (max-width: 700px) {
   .ml-subjects { grid-template-columns: 1fr; gap: 16px; }
   .ml-subject { padding: 24px; min-height: 330px; }
-  .ml-subject-math { min-height: 100px; flex-wrap: wrap; gap: 12px; padding: 20px; }
-  .ml-subject-math p { flex-basis: 70%; }
   .ml-summary { padding: 23px 20px; }
   .ml-summary-heading { align-items: flex-start; gap: 12px; }
   .ml-summary h2 { font-size: 20px; }

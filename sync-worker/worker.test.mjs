@@ -32,7 +32,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'topic-library-20261015');
+  assert.equal(status.version, 'math-support-20261019');
   assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
@@ -60,7 +60,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'topic-library-20261015', passwordConfigured: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'math-support-20261019', passwordConfigured: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -268,7 +268,7 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   const paperCatalog = await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: privateHeaders }), env);
   assert.equal(paperCatalog.status, 200);
   assert.equal(paperCatalog.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await paperCatalog.json(), { subjects: { chem: ['2022'], bio: [] } });
+  assert.deepEqual(await paperCatalog.json(), { subjects: { chem: ['2022'], bio: [], math: [] } });
   catalogFile.papers = { chem: { '2022': { pages: 2, source_sha256: paperSha, ignored: 'private extra',
     assessment: { source_sha256: paperSha, earned: 70, total: 100, scope: '兩卷練習', basis: '非官方練習參考',
       components: [{ label: '卷一', earned: 70, total: 100 }],
@@ -604,3 +604,39 @@ test('storage failures return a readable CORS error instead of an opaque browser
   assert.equal((await health.json()).passwordConfigured, true);
 });
 
+
+
+test('mathematics papers and figures keep the same authentication and path restrictions', async t => {
+  const originalFetch = globalThis.fetch;
+  const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'synthetic-math-password', GITHUB_TOKEN: 'synthetic-math-token' };
+  const sha = '9'.repeat(64), version = sha.slice(0, 16);
+  const assessment = { source_sha256: sha, earned: 7, total: 10, scope: '示例卷一', basis: '示例評分', components: [{ label: '卷一', earned: 7, total: 10 }], boundaries: [] };
+  const catalog = { subjects: { chem: [], bio: [], math: ['2022'] }, papers: { math: { '2022': { pages: 2, source_sha256: sha, assessment } } } };
+  const paths = [];
+  globalThis.fetch = async input => {
+    const url = String(input); paths.push(url);
+    if (url.endsWith('/user')) return Response.json({ login: 'Makise-Kurisu-D' });
+    const value = url.endsWith('/catalog.json') ? catalog : { version, source_sha256: sha, pages: 2, format: 'jpeg', dpi: 200, quality: 85, sections: [{ label: 'Summary', page: 1 }] };
+    if (url.endsWith('.jpg')) return Response.json({ encoding: 'base64', content: btoa(String.fromCharCode(255, 216, 255, 217)) });
+    return Response.json({ encoding: 'base64', content: b64json(value) });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const login = await worker.fetch(new Request(`${BASE}/auth/password`, { method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ password: env.SITE_PASSWORD }) }), env);
+  const headers = { Origin: ORIGIN, Authorization: 'Bearer ' + (await login.json()).sessionId };
+  const request = path => worker.fetch(new Request(BASE + path, { headers }), env);
+  const response = await request('/papers/catalog');
+  const published = await response.json();
+  assert.deepEqual(published.subjects.math, ['2022']);
+  assert.deepEqual(published.papers.math['2022'].assessment.boundaries, [], 'one paper does not invent a combined grade');
+  assert.equal((await request('/papers/math/2022/manifest')).status, 200);
+  assert.equal((await request(`/papers/math/2022/pages/${version}/2`)).status, 200);
+  assert.equal((await request('/bank/images/math-2022-fig-example.jpg')).status, 200);
+  assert.ok(paths.some(path => path.includes(`/papers/math/2022/${version}/page-0002.jpg`)));
+  const before = paths.filter(path => path.includes('/contents/')).length;
+  for (const path of ['/papers/math/2023/manifest', `/papers/math/2022/pages/${version}/3`, '/bank/images/math-2022-fig-example.jpg/extra', '/papers/math/2022/pages/not-a-hash/1']) {
+    assert.equal((await request(path)).status, 404, path);
+  }
+  assert.equal((await worker.fetch(new Request(`${BASE}/papers/math/2022/manifest`, { headers: { Origin: ORIGIN } }), env)).status, 401);
+  assert.equal((await worker.fetch(new Request(`${BASE}/papers/math/2022/manifest`, { headers: { ...headers, Origin: 'https://other.example' } }), env)).status, 403);
+  assert.equal(paths.filter(path => path.includes('/contents/')).length, before, 'denied mathematics reads never reach private files');
+});
