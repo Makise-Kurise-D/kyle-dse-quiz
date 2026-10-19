@@ -6,6 +6,7 @@
  --gold:#ffe296;--gold-line:#c9ae68;--gold-soft:#3b321e;--shadow:0 6px 24px #001b3733;--shadow-l:0 12px 35px #00132933;
  --rail-width:218px;--shell-height:136px;--radius:3px;--world-background:linear-gradient(160deg,#22bade 0%,#135ce4 36%,#05245e 100%);
  --character:url('visual/home-day.webp');--archive-art:url('visual/archive-day.webp');--art-opacity:.62;--read-background:#0b2358;
+ --wide-character:url('visual/home-day-wide.webp');--character-aspect:1672/941;
  --archive-wash:linear-gradient(180deg,rgba(0,207,247,.56),rgba(5,54,202,.68) 45%,rgba(7,10,175,.83));--home-shadow:#031541;
 }
 html[data-theme=night]{
@@ -13,6 +14,7 @@ html[data-theme=night]{
  --accent:#ffadd3;--accent-ink:#420e2a;--header:#ffcee2;--header-ink:#4a0c2a;--deep:#200d24;--radius:12px;
  --world-background:linear-gradient(155deg,#ba80ac,#792652 42%,#2b112d);--character:url('visual/home-night.webp');--archive-art:url('visual/archive-night.webp');
  --art-opacity:.5;--read-background:#2b1529;
+ --wide-character:url('visual/home-night-wide.webp');--character-aspect:1589/990;
  --archive-wash:linear-gradient(180deg,rgba(255,190,122,.51),rgba(239,47,116,.67) 40%,rgba(158,7,58,.81));--home-shadow:#55102e;
 }
 html[data-appearance=simple]{
@@ -353,20 +355,23 @@ html[data-appearance=simple] .home-stage .tile-ico{font-size:24px}
  .shell-header{padding-top:calc(16px + env(safe-area-inset-top,0px))}
 }
 
-/* Full wallpapers stay inside the unobscured viewport. The soft fill covers
-   letterboxing; the sharp layer contains the whole composition on desktops. */
+/* Generated right-hand extensions cover every viewport without letterboxing.
+   Keep the original left-hand artwork at its natural aspect ratio above them. */
 html[data-appearance=full] .visual-world{
  inset:var(--header-offset,var(--shell-height)) 0 0 var(--rail-width);
  background:#0719b7;
 }
 html[data-appearance=full][data-theme=night] .visual-world{background:#b7134d}
-html[data-appearance=full] .visual-world:before{
- content:'';position:absolute;inset:-30px;background:var(--character) left center/cover no-repeat;
- filter:blur(24px);opacity:.72;
-}
+html[data-appearance=full] .visual-world:before{display:none}
 html[data-appearance=full] .visual-world:after{display:none}
 html[data-appearance=full] body .visual-character{
- inset:0;opacity:1;filter:none;background:var(--character) left center/contain no-repeat;
+ inset:0;opacity:1;filter:none;background:var(--wide-character) left top/cover no-repeat;
+}
+html[data-appearance=full] .visual-character:after{
+ content:'';position:absolute;left:0;top:0;height:100%;width:auto;aspect-ratio:var(--character-aspect);
+ background:var(--character) left top/100% 100% no-repeat;
+ -webkit-mask-image:linear-gradient(90deg,#000 86%,transparent);
+ mask-image:linear-gradient(90deg,#000 86%,transparent);
 }
 .archive-backdrop,.archive-tint,.archive-art{display:none;position:absolute;inset:0;pointer-events:none}
 html[data-appearance=full] body[data-library=books] .archive-backdrop{display:block;overflow:hidden}
@@ -395,7 +400,6 @@ html[data-appearance=full][data-theme] .home-stage .hero-kicker{
  html[data-appearance=full] .visual-world{left:0;bottom:var(--tabbar-offset)}
 }
 @media screen and (max-aspect-ratio:4/5){
- html[data-appearance=full] body .visual-character{background-size:auto 100%;background-position:left center}
  html[data-appearance=full] body[data-library=books] .archive-art{background-size:auto 100%;background-position:82% top}
 }
 @media(prefers-reduced-transparency:reduce){
