@@ -75,12 +75,17 @@
     return '<header class="page-head"><div><h1 class="page-title">' + title + '</h1><p class="page-sub">' + sub +
       '</p></div><a class="btn btn-ghost" href="' + back + '">← ' + label + '</a></header>';
   }
-  function remember() { if (activeKey) positions[activeKey] = global.scrollY || 0; activeKey = ''; }
+  function remember() {
+    if (activeKey) positions[activeKey] = context.scrollRoot ? context.scrollRoot.scrollTop : global.scrollY || 0;
+    activeKey = '';
+  }
   function frame(key, html) {
     activeKey = key;
     context.root.innerHTML = '<section class="page ml-page">' + html + '</section>';
     if (positions[key]) (global.requestAnimationFrame || function (fn) { fn(); })(function () {
-      if (activeKey === key) global.scrollTo(0, positions[key]);
+      if (activeKey !== key) return;
+      if (context.scrollRoot) context.scrollRoot.scrollTop = positions[key];
+      else global.scrollTo(0, positions[key]);
     });
   }
   function overview() {

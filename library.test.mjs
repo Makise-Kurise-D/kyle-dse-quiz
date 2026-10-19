@@ -11,6 +11,30 @@ const right = { ok: true, marks: 3, tot: 3 };
 const wrong = { ok: false, marks: 2, tot: 3 };
 const exercise = (t, results) => ({ t, subj: 'chem', topic: 'T1', results });
 
+test('reading position belongs to the content pane, not the fixed document', () => {
+  library.reset();
+  const pane = { scrollTop: 0 }, root = { innerHTML: '' }, frames = [];
+  const api = { root, scrollRoot: pane, history: [], data: { subjects: {
+    bio: { items: [], topics: [] }, chem: { items: [], topics: [] }
+  } } };
+  context.window.scrollY = 999;
+  context.window.requestAnimationFrame = fn => frames.push(fn);
+  library.render([], api);
+  pane.scrollTop = 340;
+  library.remember();
+  pane.scrollTop = 0;
+  library.render([], api);
+  frames.shift()();
+  assert.equal(pane.scrollTop, 340);
+  assert.equal(context.window.scrollY, 999);
+  library.remember();
+  pane.scrollTop = 0;
+  library.render([], api);
+  library.reset();
+  frames.shift()();
+  assert.equal(pane.scrollTop, 0, 'a stale restoration cannot scroll a different route');
+});
+
 test('mastery requires two distinct submitted exercises, survives archives, and regresses after any non-full answer', () => {
   const first = exercise(1, { q: right });
   assert.equal(library.indexHistory([first]).q.state, 'learning');

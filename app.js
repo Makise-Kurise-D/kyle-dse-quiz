@@ -682,7 +682,11 @@
     $all('.rail-item,.tab-item').forEach(function (a) {
       a.classList.toggle('active', a.dataset.route === (view === 'library' && parts[1] === 'papers' ? 'papers' : view));
     });
-    if (preserveScroll !== true) window.scrollTo(0, 0);
+    if (preserveScroll !== true) {
+      var scrollRoot = $('#contentScroll');
+      if (scrollRoot) scrollRoot.scrollTop = 0;
+      else window.scrollTo(0, 0);
+    }
     if (PRIVATE_BANK && !bankLoaded && view !== 'records') {
       if (!localStorage.getItem(LS_SYNC_SESSION)) return renderBankGate();
       if (view !== 'home' && !(view === 'library' && parts[1] === 'papers')) return renderBankLoading();
@@ -862,7 +866,7 @@
     releasePaper();
     parts = parts || [];
     if (parts[0] === 'books') return window.DSELibrary.render(parts.slice(1), {
-      root: $('#app'), data: DATA, history: allSessions(), cycleStart: cycleStartOf(Date.now()),
+      root: $('#app'), scrollRoot: $('#contentScroll'), data: DATA, history: allSessions(), cycleStart: cycleStartOf(Date.now()),
       normalize: norm, formatDate: fmtDateTime, hydrate: hydratePrivateImages,
       catalog: function () {
         var session = localStorage.getItem(LS_SYNC_SESSION);
