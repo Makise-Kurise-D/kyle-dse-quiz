@@ -646,18 +646,21 @@ html[data-appearance=simple] .home-info .hero-bubble{margin:0}
 }
 html[data-appearance=full] .rail-portrait{background-image:url('images/sidebar-day.webp');transform:none}
 html[data-appearance=full][data-theme=night] .rail-portrait{background-image:url('images/sidebar-night.webp')}
-.rail-links{display:flex;flex-direction:column;justify-content:center;flex:1 0 auto;gap:18px;padding:16px 0}
+/* Center the menu in the upper 76.4%: its midpoint sits 38.2% down the gap.
+   The first row's content minimum keeps the image clear in short windows. */
+.rail-links{display:grid;grid-template-rows:minmax(min-content,76.4%) minmax(0,1fr);flex:1 0 auto;--rail-link-gap:18px;--rail-link-padding:16px}
+.rail-menu{display:flex;flex-direction:column;align-self:center;gap:var(--rail-link-gap);margin:var(--rail-link-padding) 0}
 .rail .rail-links .rail-item{margin:0}
 .rail .rail-caption{margin-top:0}
 @media screen and (min-width:861px) and (max-height:900px){
- .rail-links{gap:10px;padding-block:12px}
+ .rail-links{--rail-link-gap:10px;--rail-link-padding:12px}
 }
 @media screen and (min-width:861px) and (max-height:780px){
- .rail-links{gap:10px;padding-block:10px}
+ .rail-links{--rail-link-gap:10px;--rail-link-padding:10px}
  .rail .rail-links .rail-item{min-height:52px;padding-top:4px;padding-bottom:4px}
  .rail .rail-caption{font-size:9px;margin:0 0 8px}
 }
 @media screen and (min-width:861px) and (max-height:650px){
- .rail-links{gap:6px;padding-block:8px}
+ .rail-links{--rail-link-gap:6px;--rail-link-padding:8px}
  .rail .rail-links .rail-item{min-height:48px}
 }
