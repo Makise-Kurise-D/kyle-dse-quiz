@@ -94,3 +94,40 @@ test('another tab updates both preferences, including removal and clear events',
   app.saved.clear(); app.events.storage({ key: null });
   assert.equal(app.root.dataset.theme, 'day'); assert.equal(app.root.dataset.appearance, 'full');
 });
+
+test('sidebar collapse persists across reload and does not change appearance or exercise records', () => {
+  const original = { dse_quiz_draft_v2: '{"pick":"B"}', dse_quiz_sessions_v2: '[{"id":"stable"}]' };
+  const app = boot('2026-10-18T01:00:00Z', original);
+  assert.equal(app.root.dataset.rail, 'expanded');
+  app.api.toggleRail();
+  assert.equal(app.root.dataset.rail, 'collapsed');
+  assert.equal(app.saved.get('dse_visual_rail_v1'), 'collapsed');
+  app.api.setView('simple'); app.api.toggle();
+  assert.equal(app.root.dataset.rail, 'collapsed');
+  const reload = boot('2026-10-18T02:00:00Z', Object.fromEntries(app.saved));
+  assert.equal(reload.root.dataset.rail, 'collapsed');
+  reload.api.toggleRail();
+  assert.equal(reload.root.dataset.rail, 'expanded');
+  assert.equal(reload.root.dataset.theme, 'night');
+  assert.equal(reload.root.dataset.appearance, 'simple');
+  for (const [key, value] of Object.entries(original)) assert.equal(reload.saved.get(key), value);
+});
+
+test('sidebar preference follows another tab and restores expanded navigation on removal', () => {
+  const app = boot('2026-10-18T01:00:00Z');
+  app.saved.set('dse_visual_rail_v1', 'collapsed');
+  app.events.storage({ key: 'dse_visual_rail_v1' });
+  assert.equal(app.root.dataset.rail, 'collapsed');
+  app.saved.delete('dse_visual_rail_v1');
+  app.events.storage({ key: 'dse_visual_rail_v1' });
+  assert.equal(app.root.dataset.rail, 'expanded');
+});
+
+test('sidebar remains operable when preference storage is unavailable', () => {
+  const app = boot('2026-10-18T01:00:00Z', {}, true);
+  app.api.toggleRail();
+  assert.equal(app.root.dataset.rail, 'collapsed');
+  app.api.toggleRail();
+  assert.equal(app.root.dataset.rail, 'expanded');
+  assert.equal(boot('2026-10-18T01:00:00Z', { dse_visual_rail_v1: 'invalid' }).root.dataset.rail, 'expanded');
+});

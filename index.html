@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<script src="appearance.js?v=night-rounded-20261019"></script>
+<script src="appearance.js?v=collapsible-rail-20261019"></script>
 <title>Kyle 錯題本 · DSE 複習</title>
 <meta name="description" content="Kyle 的 DSE 化學／生物／數學錯題本：按課題練習、自動批改、踩分點自檢、刷題記錄">
-<link rel="icon" type="image/jpeg" href="images/avatar.jpg?v=night-rounded-20261019">
+<link rel="icon" type="image/jpeg" href="images/avatar.jpg?v=collapsible-rail-20261019">
 <link rel="preconnect" href="https://snowy-cake-a0a7.3355718646.workers.dev" crossorigin>
-<link rel="stylesheet" href="style.css?v=night-rounded-20261019">
-<link rel="stylesheet" href="library.css?v=night-rounded-20261019">
-<link rel="stylesheet" href="appearance.css?v=night-rounded-20261019">
+<link rel="stylesheet" href="style.css?v=collapsible-rail-20261019">
+<link rel="stylesheet" href="library.css?v=collapsible-rail-20261019">
+<link rel="stylesheet" href="appearance.css?v=collapsible-rail-20261019">
 </head>
 <body>
 <a class="skip-link" id="skipLink" href="#app">跳至主要內容</a>
@@ -21,6 +21,9 @@
   <div class="archive-art"></div>
 </div>
 <header class="shell-header">
+  <button id="railToggle" class="rail-toggle" type="button" aria-label="收起側欄" title="收起側欄" aria-expanded="true" aria-controls="rail">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/><path class="rail-toggle-arrow" d="m16 9-3 3 3 3"/></svg>
+  </button>
   <div class="shell-heading" id="shellHeading">
     <div class="shell-title"><b>HOME</b><span>學習主頁</span></div>
     <span id="appearanceClock" class="appearance-clock"></span>
@@ -98,7 +101,7 @@ window.addEventListener('error', function () {
 </script>
 <script>window.QUIZ_PRIVATE_BANK=true;</script>
 <script>window.QUIZ_PASSWORD_AUTH=true;</script>
-<script defer src="library.js?v=night-rounded-20261019"></script>
-<script defer src="app.js?v=night-rounded-20261019"></script>
+<script defer src="library.js?v=collapsible-rail-20261019"></script>
+<script defer src="app.js?v=collapsible-rail-20261019"></script>
 </body>
 </html>

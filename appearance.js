@@ -4,6 +4,7 @@
   var root = document.documentElement;
   var viewKey = 'dse_visual_view_v1', themeKey = 'dse_visual_theme_v1';
   var view = 'full', override = null, timer;
+  var railKey = 'dse_visual_rail_v1', railCollapsed = false;
   var offset = 8 * 3600000, day = 86400000;
   function read(key) { try { return localStorage.getItem(key); } catch (_) { return null; } }
   function write(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
@@ -18,7 +19,27 @@
   }
   function load() {
     view = read(viewKey) === 'simple' ? 'simple' : 'full';
+    railCollapsed = read(railKey) === 'collapsed';
     try { override = JSON.parse(read(themeKey)); } catch (_) { override = null; }
+  }
+  function applyRail() {
+    root.dataset.rail = railCollapsed ? 'collapsed' : 'expanded';
+    var button = document.getElementById('railToggle');
+    var rail = document.getElementById('rail');
+    if (button) {
+      var label = railCollapsed ? '展開側欄' : '收起側欄';
+      button.setAttribute('aria-expanded', String(!railCollapsed));
+      button.setAttribute('aria-label', label);
+      button.title = label;
+      if (railCollapsed && rail && rail.contains(document.activeElement)) button.focus({ preventScroll: true });
+    }
+    if (rail) rail.inert = railCollapsed;
+  }
+  function toggleRail() {
+    railCollapsed = !railCollapsed;
+    write(railKey, railCollapsed ? 'collapsed' : 'expanded');
+    applyRail();
+    announce(railCollapsed ? '已收起側欄' : '已展開側欄');
   }
   function apply() {
     var now = Date.now();
@@ -27,6 +48,7 @@
     var theme = override ? override.theme : scheduled(now);
     root.dataset.theme = theme;
     root.dataset.appearance = view;
+    applyRail();
     var world = document.getElementById('visualWorld');
     if (world) world.dataset.theme = theme;
     root.style.colorScheme = theme === 'night' ? 'dark' : 'light';
@@ -81,10 +103,11 @@
       button.addEventListener('click', function () { setView(button.dataset.appearanceChoice); });
     });
     document.getElementById('dayNightToggle').addEventListener('click', toggle);
+    document.getElementById('railToggle').addEventListener('click', toggleRail);
     document.getElementById('skipLink').addEventListener('click', function (event) { event.preventDefault(); document.getElementById('app').focus(); });
     apply(); routeLabel();
   }
-  window.DSEAppearance = { scheduled: scheduled, boundary: boundary, apply: apply, setView: setView, toggle: toggle };
+  window.DSEAppearance = { scheduled: scheduled, boundary: boundary, apply: apply, setView: setView, toggle: toggle, toggleRail: toggleRail };
   load(); apply();
   document.addEventListener('DOMContentLoaded', ready);
   addEventListener('hashchange', function () {
@@ -98,6 +121,6 @@
   addEventListener('focus', apply);
   document.addEventListener('visibilitychange', function () { if (!document.hidden) apply(); });
   addEventListener('storage', function (event) {
-    if (event.key === null || event.key === viewKey || event.key === themeKey) { load(); apply(); }
+    if (event.key === null || event.key === viewKey || event.key === themeKey || event.key === railKey) { load(); apply(); }
   });
 }());
