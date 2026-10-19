@@ -872,7 +872,7 @@
     parts = parts || [];
     if (parts[0] === 'books') return window.DSELibrary.render(parts.slice(1), {
       root: $('#app'), scrollRoot: $('#contentScroll'), data: DATA, history: allSessions(), cycleStart: cycleStartOf(Date.now()),
-      normalize: norm, formatDate: fmtDateTime, hydrate: hydratePrivateImages,
+      normalize: norm, formatDate: fmtDateTime, hydrate: hydratePrivateImages, gradeMetrics: paperGradeMetrics,
       catalog: function () {
         var session = localStorage.getItem(LS_SYNC_SESSION);
         if (!session || !SYNC_API) return Promise.resolve(null);
@@ -1291,7 +1291,7 @@
       '<strong>' + SUBJECT_META[code].icon + ' ' + SUBJECT_META[code].name + '</strong><a class="shoulder-link" href="' + switchHref(next) + '" aria-label="下一個學科：' + SUBJECT_META[next].name + '">RB ›</a></div>' +
       '<a class="btn btn-ghost" href="#/">← 主頁</a></header>' +
       '<div class="inventory-layout"><section class="inventory-years" aria-label="選擇練習年份"><h2>YEAR SELECT <span>/ 選擇年份</span></h2>' +
-      '<div class="year-list" id="practiceYears"></div><p class="year-grade-note">LV 原卷已記錄等級 · HP 原卷分數 · SP 收錄錯題數。未提供的成績顯示「—」。</p>' +
+      '<div class="year-list" id="practiceYears"></div><p class="year-grade-note">LV＝DSE 試卷參考等級（非官方估算）；HP＝原卷分數；SP＝錯題數。缺少適用分界時顯示「—」；單卷不評全科等級。</p>' +
       '<p class="year-grade-note" id="practiceGradeStatus" role="status">正在核對原卷成績…</p></section>' +
       '<section class="inventory-topics" aria-label="所選年份的課題"><div class="practice-topic-heading"><h2>TOPIC LIST <span>/ 選擇課題</span></h2>' +
       '<span>' + String(rows.length).padStart(2, '0') + ' TOPICS</span></div><p class="practice-selection" role="status">' + yearLabel + ' · ' + SUBJECT_META[code].name + ' · ' + filtered.length + ' 道錯題</p>' +
@@ -1308,14 +1308,15 @@
       $('#practiceYears').innerHTML = ['all'].concat(years).map(function (year) {
         var assessment = catalog && catalog.papers && catalog.papers[code] && catalog.papers[code][year] && catalog.papers[code][year].assessment;
         var metrics = paperGradeMetrics(assessment);
-        var level = assessment && ['U','1','2','3','4','5','5*','5**'].indexOf(String(assessment.level)) >= 0 ? String(assessment.level) : '—';
+        var level = metrics && metrics.current ? metrics.current.level : '—';
         var count = itemsOf(code).filter(function (it) { return year === 'all' || String(it.year) === year; }).length;
         return '<button class="inventory-year" type="button" data-practice-year="' + esc(year) + '" aria-pressed="' + (year === selected) + '">' +
           '<span class="year-number" aria-hidden="true">' + (year === 'all' ? 'ALL' : esc(year.slice(-2))) + '</span><span class="year-body"><span class="year-name">' +
           (year === 'all' ? '全部年份' : esc(year + ' ' + SUBJECT_META[code].name)) + '</span><span class="year-meters">' +
-          (year === 'all' ? '' : '<span><abbr title="原卷已記錄等級">LV</abbr> <b>' + esc(level) + '</b></span><span><abbr title="原卷分數">HP</abbr> <b>' +
+          (year === 'all' ? '' : '<span><abbr title="DSE 試卷等級">LV</abbr> <b>' + esc(level) + '</b></span><span><abbr title="原卷分數">HP</abbr> <b>' +
             (metrics ? assessment.earned + '<small>/' + assessment.total + '</small>' : '—') + '</b></span>') +
-          '<span><abbr title="錯題數">SP</abbr> <b>' + count + '</b></span></span></span></button>';
+          '<span><abbr title="錯題數">SP</abbr> <b>' + count + '</b></span></span>' +
+          (year !== 'all' && metrics ? '<span class="year-grade-note">' + esc(assessment.scope) + (metrics.current ? ' · 等級估算' : ' · 等級未評') + '</span>' : '') + '</span></button>';
       }).join('');
       var list = $('#practiceYears'), active = $('#practiceYears [aria-pressed="true"]');
       if (active && list.scrollWidth > list.clientWidth) list.scrollLeft = active.offsetLeft - (list.clientWidth - active.offsetWidth) / 2;
@@ -1347,7 +1348,7 @@
       var focused = document.activeElement, year = focused && focused.dataset && focused.dataset.practiceYear;
       drawYears();
       if (year) { var replacement = $('#practiceYears [data-practice-year="' + year + '"]'); if (replacement) replacement.focus(); }
-      $('#practiceGradeStatus').textContent = '已核對原卷成績；只列出已收錄錯題的年份。';
+      $('#practiceGradeStatus').textContent = '已核對私人批改卷的成績與 DSE 參考分界；只列出已收錄錯題的年份。';
     }).catch(function (err) {
       if (requestId !== paperRequest) return;
       expireConnection(err, session);

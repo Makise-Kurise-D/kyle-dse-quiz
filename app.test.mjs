@@ -204,6 +204,47 @@ test('late grade requests cannot overwrite a different subject and missing grade
   assert.match(app.node('#practiceYears').innerHTML, /LV<\/abbr> <b>—/);
 });
 
+test('practice and mistake-library LV share paper DSE boundaries, not review progress or a raw level field', async () => {
+  const catalog = { subjects: { chem: ['2023', '2022'], bio: ['2023'], math: ['2023'] }, papers: {
+    chem: {
+      '2023': { assessment: { earned: 65, total: 100, scope: '兩卷示例', boundaries: [
+        { level: '3', minimumPercent: 50 }, { level: '4', minimumPercent: 65 }, { level: '5', minimumPercent: 80 }
+      ] } },
+      '2022': { assessment: { earned: 49, total: 100, scope: '缺少較低分界', boundaries: [
+        { level: '3', minimumPercent: 50 }
+      ] } }
+    },
+    bio: { '2023': { assessment: { earned: 31, total: 40, scope: '兩卷示例', boundaries: [
+      { level: '5', minimumPercent: 67 }, { level: '5*', minimumPercent: 77 }, { level: '5**', minimumPercent: 83 }
+    ] } } },
+    math: { '2023': { assessment: { earned: 90, total: 100, scope: '僅卷一，未評全科', level: '5**', boundaries: [] } } }
+  } };
+  const app = boot('', async () => ({ ok: true, json: async () => catalog }),
+    { dse_quiz_sync_session_v1: 'test-session' });
+  practiceFixture(app);
+  app.context.QUIZ_DATA.subjects.math = { name: '數學', topics: [{ code: 'M1', name: '示例單元' }], items: [
+    { id: 'math-example', kind: 'sub', topic: 'M1', year: '2023', qref: '示例 6', stem: '數學示例', checks: ['示例給分點'] }
+  ] };
+  for (const [subject, level, scope] of [['chem', '4', '兩卷示例'], ['bio', '5*', '兩卷示例'], ['math', '—', '僅卷一，未評全科']]) {
+    for (const [route, selector, status] of [
+      ['#/practice/', '#practiceYears', '#practiceGradeStatus'], ['#/library/books/', '#mlYears', '#mlGradeStatus']
+    ]) {
+      app.location.hash = route + subject; app.events.hashchange(); await settle();
+      const html = app.node(selector).innerHTML;
+      assert.ok(html.includes('title="DSE 試卷等級">LV</abbr> <b>' + level + '</b>'), route + subject);
+      assert.ok(html.includes(scope));
+      assert.ok(html.includes(subject === 'math' ? '等級未評' : '等級估算'));
+      assert.match(app.node(status).textContent, /DSE 參考分界/);
+      assert.match(app.node('#app').innerHTML, /非官方估算/);
+      if (subject === 'chem') assert.match(html, /LV<\/abbr> <b>—/, 'an incomplete boundary table never invents a lower grade');
+      if (subject === 'math') {
+        assert.doesNotMatch(html, /<b>5\*\*/);
+        assert.match(html, /HP<\/abbr> <b>90/);
+      }
+    }
+  }
+});
+
 test('structured library uses the loaded private bank without book requests and preserves history across cycle rollover', async () => {
   const calls = [], now = Date.UTC(2026, 9, 15);
   const archive = [{ t: now - 30 * 864e5, subj: 'chem', topic: 'T3', results: { 'example-mc': { ok: true, marks: 1, tot: 1 } } },

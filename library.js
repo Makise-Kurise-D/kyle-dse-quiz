@@ -133,7 +133,7 @@
       '<div class="inventory-switch" aria-label="學科切換"><a class="shoulder-link" href="#/library/books/' + previous + '" aria-label="上一個學科：' + subjectName(previous) + '">‹ LB</a>' +
       '<strong>' + subjectName(code) + '</strong><a class="shoulder-link" href="#/library/books/' + next + '" aria-label="下一個學科：' + subjectName(next) + '">RB ›</a></div>' +
       '<div class="inventory-layout"><section class="inventory-years" aria-label="年份與原卷成績"><h2>YEAR SELECT / 年份與狀態</h2>' +
-      '<div class="year-list" id="mlYears"></div><p class="year-grade-note">LV＝原卷已記錄等級；HP＝原卷分數；SP＝收錄錯題數。沒有已記錄等級時顯示「—」，不按分數推算。</p>' +
+      '<div class="year-list" id="mlYears"></div><p class="year-grade-note">LV＝DSE 試卷參考等級（非官方估算）；HP＝原卷分數；SP＝錯題數。缺少適用分界時顯示「—」；單卷不評全科等級。</p>' +
       '<p class="year-grade-note" id="mlGradeStatus" role="status">正在核對原卷成績…</p><div id="mlYearSummary"></div></section>' +
       '<section class="inventory-topics" aria-label="課題目錄"><div class="ml-section-head"><h2>TOPIC LIST / 課題</h2><label>排序 <select id="mlTopicSort"><option value="syllabus">考綱順序</option>' +
       '<option value="pending">待複習最多</option></select></label></div><div class="ml-topics" id="mlTopics"></div>' +
@@ -147,14 +147,15 @@
         var items = subject.items.filter(function (item) { return year === 'all' || String(item.year) === year; });
         var detail = catalog && catalog.papers && catalog.papers[code] && catalog.papers[code][year];
         var assessment = detail && detail.assessment;
-        var level = assessment && ['U','1','2','3','4','5','5*','5**'].indexOf(String(assessment.level)) >= 0 ? String(assessment.level) : '—';
-        var score = assessment && Number.isInteger(assessment.earned) && Number.isInteger(assessment.total) &&
-          assessment.total > 0 && assessment.earned >= 0 && assessment.earned <= assessment.total ? assessment.earned + '/' + assessment.total : '—';
+        var metrics = api.gradeMetrics && api.gradeMetrics(assessment);
+        var level = metrics && metrics.current ? metrics.current.level : '—';
+        var score = metrics ? assessment.earned + '/' + assessment.total : '—';
         return '<button class="inventory-year" type="button" data-year="' + esc(year) + '" aria-pressed="' + (selected === year) + '">' +
           '<span class="year-number" aria-hidden="true">' + (year === 'all' ? 'ALL' : esc(year.slice(-2))) + '</span><span class="year-body"><span class="year-name">' +
           (year === 'all' ? '全部年份' : esc(year + ' ' + subjectName(code))) + '</span><span class="year-meters">' +
-          (year === 'all' ? '' : '<span><abbr title="試卷等級">LV</abbr> <b>' + esc(level) + '</b></span><span><abbr title="原卷分數">HP</abbr> <b>' + score + '</b></span>') +
-          '<span><abbr title="錯題數">SP</abbr> <b>' + items.length + '</b></span></span></span></button>';
+          (year === 'all' ? '' : '<span><abbr title="DSE 試卷等級">LV</abbr> <b>' + esc(level) + '</b></span><span><abbr title="原卷分數">HP</abbr> <b>' + score + '</b></span>') +
+          '<span><abbr title="錯題數">SP</abbr> <b>' + items.length + '</b></span></span>' +
+          (year !== 'all' && metrics ? '<span class="year-grade-note">' + esc(assessment.scope) + (metrics.current ? ' · 等級估算' : ' · 等級未評') + '</span>' : '') + '</span></button>';
       }).join('');
     }
     function inspect(row) {
@@ -205,7 +206,7 @@
       var focused = document.activeElement, year = focused && focused.getAttribute && focused.getAttribute('data-year');
       drawYears();
       if (year) { var replacement = root.querySelector('[data-year="' + year + '"]'); if (replacement && replacement.focus) replacement.focus(); }
-      root.querySelector('#mlGradeStatus').textContent = result ? '已核對私人批改卷目錄。未提供等級的原卷顯示「—」。' : '登入後可核對原卷分數；題目數與學習狀態仍可查看。';
+      root.querySelector('#mlGradeStatus').textContent = result ? '已核對私人批改卷的成績與 DSE 參考分界。未有適用分界的原卷顯示「—」。' : '登入後可核對原卷分數；題目數與學習狀態仍可查看。';
     }).catch(function () {
       if (activeKey === code && context === api && generation === topicGeneration) root.querySelector('#mlGradeStatus').textContent = '原卷成績暫未能讀取。可先查看錯題；重新進入此頁可重試。';
     });
