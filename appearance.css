@@ -674,7 +674,6 @@ html[data-appearance=simple] .rail-links{--rail-image-inset:0px}
 .inventory-year .year-grade-note{color:inherit}
 
 /* Stable reading surfaces inside the existing glass silhouettes. */
-html[data-appearance=full][data-theme=night]{--panel-shape:polygon(var(--panel-cut) 0,100% 0,calc(100% - var(--panel-cut)) 100%,0 100%);--radius:0px}
 :root{--reading-surface:#0b2358;--choice-surface:#102d61}
 html[data-theme=night]{--reading-surface:#2b1529;--choice-surface:#38192e}
 html[data-appearance=simple]{--reading-surface:#fff;--choice-surface:#f3f6fa}
