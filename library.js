@@ -81,7 +81,7 @@
   }
   function frame(key, html) {
     activeKey = key;
-    context.root.innerHTML = '<section class="page ml-page">' + html + '</section>';
+    context.root.innerHTML = '<section class="page ml-page' + (key === 'subjects' ? ' ml-subject-picker' : '') + '">' + html + '</section>';
     if (positions[key]) (global.requestAnimationFrame || function (fn) { fn(); })(function () {
       if (activeKey !== key) return;
       if (context.scrollRoot) context.scrollRoot.scrollTop = positions[key];
@@ -91,17 +91,18 @@
   function overview() {
     var subjects = context.data.subjects;
     frame('subjects', header('<span class="persona-icon persona-icon-library" aria-hidden="true"></span> 錯題庫', '從科目到課題，直接找到需要重溫的錯題。', '#/', '主頁') +
-      '<div class="ml-subjects">' + ['bio', 'chem', 'math'].filter(function (code) { return subjects[code]; }).map(function (code) {
+      '<div class="ml-subject-dock"><div class="ml-subjects">' + ['bio', 'chem', 'math'].filter(function (code) { return subjects[code]; }).map(function (code) {
         var stats = summarize(subjects[code].items, context.index);
         var percent = stats.total ? Math.round(stats.mastered / stats.total * 100) : 0;
         return '<a class="ml-subject ml-subject-' + code + '" href="#/library/books/' + code + '">' +
           '<div class="ml-card-top"><span class="ml-subject-icon">' + icon(code) + '</span><span class="ml-eyebrow">DSE · 按課題複習</span></div>' +
           '<h2>' + subjectName(code) + '</h2><p>' + subjects[code].topics.length + ' 個收錄課題 · ' + stats.total + ' 張錯題卡</p>' +
+          '<span class="ml-picker-count">' + stats.total + ' 張錯題卡</span>' +
           '<div class="ml-subject-metrics"><span><b>' + (stats.total - stats.mastered) + '</b>待複習／鞏固</span>' +
           '<span><b>' + percent + '%</b>已掌握</span></div>' + bar(stats) + legend(stats) +
           '<span class="ml-open">查看課題與錯因 <span aria-hidden="true">→</span></span></a>';
       }).join('') + '</div>' +
-      '<p class="library-note">已掌握＝兩次獨立練習連續全對；之後未全對會標為回退。掌握狀態跨雙周保留，閱讀解析不計作答。</p>');
+      '<p class="library-note">已掌握＝兩次獨立練習連續全對；之後未全對會標為回退。掌握狀態跨雙周保留，閱讀解析不計作答。</p></div>');
   }
   function summary(code, items, title) {
     var stats = summarize(items, context.index), fresh = 0, regressions = 0;

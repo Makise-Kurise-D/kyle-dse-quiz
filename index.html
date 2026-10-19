@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<script src="appearance.js?v=wide-wallpaper-20261019"></script>
+<script src="appearance.js?v=compact-layout-20261019"></script>
 <title>Kyle 錯題本 · DSE 複習</title>
 <meta name="description" content="Kyle 的 DSE 化學／生物／數學錯題本：按課題練習、自動批改、踩分點自檢、刷題記錄">
-<link rel="icon" type="image/jpeg" href="images/avatar.jpg?v=wide-wallpaper-20261019">
+<link rel="icon" type="image/jpeg" href="images/avatar.jpg?v=compact-layout-20261019">
 <link rel="preconnect" href="https://snowy-cake-a0a7.3355718646.workers.dev" crossorigin>
-<link rel="stylesheet" href="style.css?v=wide-wallpaper-20261019">
-<link rel="stylesheet" href="library.css?v=wide-wallpaper-20261019">
-<link rel="stylesheet" href="appearance.css?v=wide-wallpaper-20261019">
+<link rel="stylesheet" href="style.css?v=compact-layout-20261019">
+<link rel="stylesheet" href="library.css?v=compact-layout-20261019">
+<link rel="stylesheet" href="appearance.css?v=compact-layout-20261019">
 </head>
 <body>
 <a class="skip-link" id="skipLink" href="#app">跳至主要內容</a>
@@ -21,17 +21,19 @@
   <div class="archive-art"></div>
 </div>
 <header class="shell-header">
-  <div class="shell-heading" id="shellHeading"><b>HOME</b><span>學習主頁</span></div>
+  <div class="shell-heading" id="shellHeading">
+    <div class="shell-title"><b>HOME</b><span>學習主頁</span></div>
+    <span id="appearanceClock" class="appearance-clock"></span>
+  </div>
   <div class="appearance-tools">
     <div class="version-switch" role="group" aria-label="介面版本">
-      <button type="button" data-appearance-choice="full" aria-pressed="true">完整版</button>
-      <button type="button" data-appearance-choice="simple" aria-pressed="false">精簡無障礙版</button>
+      <button type="button" data-appearance-choice="full" aria-pressed="true" aria-label="完整版" title="完整版"><span class="appearance-label-long">完整版</span><span class="appearance-label-short" aria-hidden="true">完整</span></button>
+      <button type="button" data-appearance-choice="simple" aria-pressed="false" aria-label="精簡無障礙版" title="精簡無障礙版"><span class="appearance-label-long">精簡無障礙版</span><span class="appearance-label-short" aria-hidden="true">精簡</span></button>
     </div>
     <button id="dayNightToggle" class="day-night-toggle" type="button" aria-label="切換日夜模式" aria-describedby="themeSchedule">
       <svg class="moon-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20.8 13.2A9 9 0 0 1 10.8 3a9 9 0 1 0 10 10.2Z"/></svg>
       <svg class="sun-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
     </button>
-    <span id="appearanceClock" class="appearance-clock"></span>
     <span id="themeSchedule" class="sr-only">日間為北京時間 07:00 至 19:00。手動切換持續至下一次日夜分界。</span>
   </div>
 </header>
@@ -93,8 +95,8 @@ window.addEventListener('error', function () {
 </script>
 <script>window.QUIZ_PRIVATE_BANK=true;</script>
 <script>window.QUIZ_PASSWORD_AUTH=true;</script>
-<script defer src="library.js?v=wide-wallpaper-20261019"></script>
-<script defer src="app.js?v=wide-wallpaper-20261019"></script>
+<script defer src="library.js?v=compact-layout-20261019"></script>
+<script defer src="app.js?v=compact-layout-20261019"></script>
 </body>
 </html>
 
