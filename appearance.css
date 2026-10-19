@@ -311,18 +311,27 @@ html[data-appearance=simple] .home-stage .tile-ico{font-size:24px}
 @media(forced-colors:active){.persona-icon{display:none}.tab-ico{display:none}}
 @media print{.persona-icon{display:none}}
 
-/* Keep status and appearance controls available on every screen size. */
+/* Only content below the header scrolls; the viewport never overscrolls. */
 @media screen{
- :root{--header-offset:calc(var(--shell-height) + env(safe-area-inset-top,0px));--paper-sections-height:68px}
- html{scroll-padding-top:calc(var(--header-offset) + 12px)}
- body{padding-top:var(--header-offset)}
+ :root{--header-offset:calc(var(--shell-height) + env(safe-area-inset-top,0px));--paper-sections-height:68px;--tabbar-offset:0px}
+ html,body{overflow:hidden;overscroll-behavior:none}
+ body{position:fixed;inset:0;min-height:0;padding:0}
+ .content-scroll{
+  position:fixed;top:var(--header-offset);right:0;bottom:var(--tabbar-offset);left:var(--rail-width);
+  overflow:auto;overscroll-behavior:none;scrollbar-gutter:stable;scroll-padding-top:12px;
+  -webkit-overflow-scrolling:touch;
+ }
+ .rail{overflow-y:auto;overscroll-behavior:none}
+ .rail-logo,.rail-item,.rail-caption{flex-shrink:0}
  .shell-header{position:fixed;top:0;z-index:80;min-height:var(--header-offset)}
- .rp-head{top:calc(var(--header-offset) + 12px)}
- .paper-sections{top:var(--header-offset);height:var(--paper-sections-height);align-items:center}
- .book-page-controls{top:calc(var(--header-offset) + 8px)}
- .paper-sections:not([hidden]) + .book-reader .book-page-controls{top:calc(var(--header-offset) + var(--paper-sections-height) + 8px)}
+ .rp-head{top:12px}
+ .paper-sections{top:0;height:var(--paper-sections-height);align-items:center}
+ .book-page-controls{top:8px}
+ .paper-sections:not([hidden]) + .book-reader .book-page-controls{top:calc(var(--paper-sections-height) + 8px)}
+ .submit-bar{bottom:14px}
 }
 @media screen and (max-width:860px){
+ :root{--tabbar-offset:calc(76px + env(safe-area-inset-bottom,0px))}
  .shell-header{padding-top:calc(16px + env(safe-area-inset-top,0px))}
 }
 
@@ -365,7 +374,7 @@ html[data-appearance=full][data-theme] .home-stage .hero-kicker{
  color:#fff;text-shadow:0 1px 4px var(--home-shadow),0 0 12px var(--home-shadow);
 }
 @media screen and (max-width:860px){
- html[data-appearance=full] .visual-world{left:0;bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+ html[data-appearance=full] .visual-world{left:0;bottom:var(--tabbar-offset)}
 }
 @media screen and (max-aspect-ratio:4/5){
  html[data-appearance=full] body .visual-character{background-size:auto 100%;background-position:left center}

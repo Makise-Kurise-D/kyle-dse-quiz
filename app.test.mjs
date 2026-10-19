@@ -48,6 +48,21 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+test('navigation resets the content pane and returning to the library restores its reading position', () => {
+  const app = boot();
+  const pane = app.node('#contentScroll');
+  pane.scrollTop = 620;
+  app.location.hash = '#/records'; app.events.hashchange();
+  assert.equal(pane.scrollTop, 0);
+  pane.scrollTop = 410;
+  app.location.hash = '#/library/books'; app.events.hashchange();
+  pane.scrollTop = 230;
+  app.location.hash = '#/'; app.events.hashchange();
+  assert.equal(pane.scrollTop, 0);
+  app.location.hash = '#/library/books'; app.events.hashchange();
+  assert.equal(pane.scrollTop, 230, 'returning to the library restores the inner pane position');
+});
+
 test('archive backdrop reuses current home, has no duplicate IDs, and clears when leaving books', () => {
   const app = boot();
   app.location.hash = '#/library/books'; app.events.hashchange();
