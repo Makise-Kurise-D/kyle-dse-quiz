@@ -646,21 +646,26 @@ html[data-appearance=simple] .home-info .hero-bubble{margin:0}
 }
 html[data-appearance=full] .rail-portrait{background-image:url('images/sidebar-day.webp');transform:none}
 html[data-appearance=full][data-theme=night] .rail-portrait{background-image:url('images/sidebar-night.webp')}
-/* Center the menu in the upper 76.4%: its midpoint sits 38.2% down the gap.
-   The first row's content minimum keeps the image clear in short windows. */
-.rail-links{display:grid;grid-template-rows:minmax(min-content,76.4%) minmax(0,1fr);flex:1 0 auto;--rail-link-gap:18px;--rail-link-padding:16px}
-.rail-menu{display:flex;flex-direction:column;align-self:center;gap:var(--rail-link-gap);margin:var(--rail-link-padding) 0}
+/* Double the image-to-HOME gap relative to the menu's spacing.
+   Account for their inset, tilted artwork; the simple view needs no offset. */
+.rail-links{display:flex;flex-direction:column;flex:1 0 auto;--rail-link-gap:18px;--rail-image-inset:12px}
+.rail-menu{display:flex;flex:none;flex-direction:column;gap:var(--rail-link-gap);margin:calc(2 * (var(--rail-link-gap) + var(--rail-image-inset))) 0 var(--rail-link-gap)}
+html[data-theme=night] .rail-links{--rail-image-inset:17px}
+html[data-appearance=simple] .rail-links{--rail-image-inset:0px}
 .rail .rail-links .rail-item{margin:0}
 .rail .rail-caption{margin-top:0}
 @media screen and (min-width:861px) and (max-height:900px){
- .rail-links{--rail-link-gap:10px;--rail-link-padding:12px}
+ .rail-links{--rail-link-gap:10px}
 }
 @media screen and (min-width:861px) and (max-height:780px){
- .rail-links{--rail-link-gap:10px;--rail-link-padding:10px}
+ .rail-links{--rail-link-gap:10px}
  .rail .rail-links .rail-item{min-height:52px;padding-top:4px;padding-bottom:4px}
  .rail .rail-caption{font-size:9px;margin:0 0 8px}
 }
 @media screen and (min-width:861px) and (max-height:650px){
- .rail-links{--rail-link-gap:6px;--rail-link-padding:8px}
+ .rail-links{--rail-link-gap:6px}
  .rail .rail-links .rail-item{min-height:48px}
+}
+@media screen and (min-width:861px) and (max-height:550px){
+ .rail{padding-top:max(5px,env(safe-area-inset-top,0px));padding-bottom:max(5px,env(safe-area-inset-bottom,0px))}
 }
