@@ -48,6 +48,82 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+function structuredQuestion(app) {
+  const item = app.context.QUIZ_DATA.subjects.chem.items[0];
+  delete item.img;
+  Object.assign(item, { year: '2021', stemFull: '完整示例題幹\n第二行',
+    options: ['第一項 <script>bad()</script>', '第二項', '第三項\n補充', '第四項'],
+    figures: [{ path: 'images/chem-2021-fig-example.jpg', alt: '示例電路圖', width: 800, height: 400 }],
+    tables: [{ caption: '示例數據', headers: ['時間', '讀數'], rows: [['0', '1 < 2']] }],
+    correct: 'PRIVATE_CORRECT', deduct: 'PRIVATE_DEDUCTION', option: 'D' });
+  return item;
+}
+
+test('structured MC content includes options, figures and tables in topic and random practice without revealing answers', () => {
+  const app = boot(); structuredQuestion(app);
+  for (const topic of ['T3', '__random__']) {
+    app.location.hash = '#/session/chem/' + topic + '/2021'; app.events.hashchange();
+    const html = app.node('#app').innerHTML;
+    assert.match(html, /完整示例題幹<br>第二行/);
+    assert.match(html, /<ol class="q-options" type="A"/);
+    for (const text of ['第一項 &lt;script&gt;bad()&lt;\/script&gt;', '第二項', '第三項<br>補充', '第四項']) assert.ok(html.includes(text));
+    assert.match(html, /src="images\/chem-2021-fig-example.jpg"/);
+    assert.match(html, /alt="示例電路圖" width="800" height="400"/);
+    assert.match(html, /<caption>示例數據<\/caption>/);
+    assert.match(html, /<th scope="col">讀數<\/th>/);
+    assert.match(html, /<td>1 &lt; 2<\/td>/);
+    assert.equal((html.match(/class="opt(?: picked)?"/g) || []).length, 4);
+    assert.doesNotMatch(html, /<script>|PRIVATE_CORRECT|PRIVATE_DEDUCTION/);
+  }
+});
+
+test('subjective practice includes its supporting figures and tables before the answer box', () => {
+  const app = boot(), item = structuredQuestion(app);
+  item.kind = 'sub'; item.checks = ['示例給分點'];
+  app.location.hash = '#/session/chem/T3/2021'; app.events.hashchange();
+  const html = app.node('#app').innerHTML;
+  assert.match(html, /src="images\/chem-2021-fig-example.jpg"/);
+  assert.match(html, /<caption>示例數據<\/caption>/);
+  assert.ok(html.indexOf('</figure>') < html.indexOf('<textarea'));
+  assert.doesNotMatch(html, /class="q-options"/);
+});
+
+test('legacy MC keeps its complete original image and does not duplicate structured choices', () => {
+  const app = boot(), item = structuredQuestion(app);
+  item.img = 'images/chem-2021-mc-01.jpg';
+  app.location.hash = '#/session/chem/T3/2021'; app.events.hashchange();
+  const html = app.node('#app').innerHTML;
+  assert.match(html, /src="images\/chem-2021-mc-01.jpg"/);
+  assert.doesNotMatch(html, /class="q-options"|chem-2021-fig-example/);
+});
+
+test('structured private figures use the authenticated image loader and are released at logout', async () => {
+  const calls = [], revoked = [];
+  let finishBank;
+  const app = boot('#/session/chem/T3/2021', async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/bank')) return new Promise(resolve => { finishBank = resolve; });
+    if (url.endsWith('/sync')) return { ok: true, json: async () => ({ data: null }) };
+    return { ok: true, blob: async () => new Blob(['synthetic-figure']) };
+  }, { dse_quiz_sync_session_v1: 'test-session' }, true);
+  structuredQuestion(app);
+  app.context.URL = { createObjectURL: () => 'blob:structured-figure', revokeObjectURL: url => revoked.push(url) };
+  const img = { getAttribute: () => 'images/chem-2021-fig-example.jpg', src: '' };
+  app.context.document.querySelectorAll = selector => selector === 'img[data-bank-image]' ? [img] : [];
+  finishBank({ ok: true, json: async () => app.context.QUIZ_DATA });
+  await settle(); await settle();
+  app.location.hash = '#/session/chem/T3/2021'; app.events.hashchange();
+  await settle();
+  assert.match(app.node('#app').innerHTML, /data-bank-image="images\/chem-2021-fig-example.jpg"/);
+  assert.doesNotMatch(app.node('#app').innerHTML, /src="images\/chem-2021-fig-example.jpg"/);
+  const request = calls.find(call => call.url.endsWith('/bank/images/chem-2021-fig-example.jpg'));
+  assert.equal(request.options.headers.Authorization, 'Bearer test-session');
+  assert.equal(img.src, 'blob:structured-figure');
+  app.saved.delete('dse_quiz_sync_session_v1');
+  app.events.storage({ key: 'dse_quiz_sync_session_v1', newValue: null });
+  assert.deepEqual(revoked, ['blob:structured-figure']);
+});
+
 test('replayed submissions seed one spaced-review attempt and confirmed AI records sync separately',async()=>{
   const past=Date.now()-20*864e5, exercise={t:past,subj:'chem',topic:'T3',results:{'example-mc':{ok:true,marks:1,tot:1}}};
   const app=boot('',async()=>({ok:true,json:async()=>({data:{app:'kyle-dse-quiz',sessions:[],archive:[exercise],drafts:{},reviewPlan:{},aiReviews:{remote:{questionId:'example-mc',confirmedAt:past,tags:['概念混淆']}}}})}),
