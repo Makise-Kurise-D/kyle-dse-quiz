@@ -194,13 +194,13 @@
     var controller = new AbortController();
     // 同步可能先續期授權，再因多裝置衝突重讀及寫入；每次上游請求最多 8 秒。
     // 期限同時涵蓋回應正文，避免只收到 headers 就取消計時後一直卡住。
-    var timer = setTimeout(function () { controller.abort(); }, path === '/sync' ? 60000 : path === '/bank' ? 30000 : path.indexOf('/ai/') === 0 ? 40000 : 15000);
+    var timer = setTimeout(function () { controller.abort(); }, path === '/sync' ? 60000 : path === '/bank' ? 30000 : path === '/ai/review' ? 120000 : 15000);
     return fetch(SYNC_API + path, Object.assign({}, options, { signal: controller.signal }))
       .then(function (response) { return readResponse ? readResponse(response) : response; })
       .catch(function (err) {
         if (controller.signal.aborted || err.name === 'AbortError') throw Object.assign(new Error(path === '/auth/password'
           ? '登入服務連線逾時，請重試；若持續發生，請檢查目前網絡能否連上同步服務'
-          : path === '/bank' ? '錯題庫連線逾時，請稍後重試' : '同步連線逾時，請稍後重試'), { code: 'connection_timeout', path: path });
+          : path === '/bank' ? '錯題庫連線逾時，請稍後重試' : path === '/ai/review' ? 'AI 回應逾時，請重試' : '同步連線逾時，請稍後重試'), { code: path === '/ai/review' ? 'ai_timeout' : 'connection_timeout', path: path });
         throw err;
       }).finally(function () { clearTimeout(timer); });
   }
@@ -1904,7 +1904,7 @@
         aiStatusSnapshot={auth:auth,until:Date.now()+30000,promise:check};
         check.then(function (config) {
           if(!current())return;
-          ready=config.configured===true;status.textContent=ready?'AI 服務已配置 · 每日最多 20 次，請求間隔至少 10 秒。':'AI 尚未配置：需先設定服務、模型及服務端密鑰。自評與練習仍可正常使用。';
+          ready=config.configured===true;status.textContent=ready?(config.provider==='DeepSeek'?'DeepSeek 已配置':'AI 服務已配置')+' · 每日最多 20 次，請求間隔至少 10 秒。':'AI 尚未配置：需先設定服務端密鑰。自評與練習仍可正常使用。';
           $('.ai-figure-choice',widget).hidden=!(config.figuresEnabled && (item.figures || []).length);enable();
         }).catch(function (err) { if(current()){status.textContent=aiError(err.code);enable();} });
       }
