@@ -205,6 +205,12 @@ b{font-weight:700}
 .q-img{display:block;width:100%;border:1px solid var(--line);border-radius:10px;
   background:#fff;padding:10px 12px;margin-bottom:14px}
 .opts{display:flex;gap:12px;flex-wrap:wrap}
+.q-content p{margin:0}
+.q-content figure{margin:16px 0}
+.q-content .q-img{height:auto;margin-bottom:6px}
+.q-content figcaption{font-size:14px;text-align:center;color:var(--gray)}
+.q-options{margin:16px 0 0;padding-left:2em;overflow-wrap:anywhere}
+.q-options li{padding:4px 0 4px 7px}
 .opt{width:62px;height:50px;border-radius:12px;border:2px solid var(--line);
   background:#fafaf7;font-size:18px;font-weight:800;cursor:pointer;color:var(--ink);
   font-family:inherit;transition:all .12s}
