@@ -742,6 +742,7 @@ html .opt.wrong{background:var(--red-bg);color:var(--red)}
 .paper-controls select{min-height:44px;font:inherit;padding:8px;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:6px}
 .paper-controls #paperToolsToggle{font-size:24px;line-height:1}
 .paper-controls .paper-next-mistake{font-size:12px;white-space:nowrap;border:1px solid var(--line)}
+.paper-mistake-short{display:none}
 .paper-mistake-marker{position:absolute;right:1%;height:28px;border-top:3px solid #d54b43;border-left:3px solid #d54b43;border-radius:3px 0 0 0;pointer-events:none;box-shadow:0 -2px 0 #fff9}
 .paper-tools{position:absolute;top:calc(100% + 8px);right:0;width:400px;max-width:100%;max-height:calc(100dvh - var(--header-offset) - var(--tabbar-offset,0px) - var(--paper-toolbar-height) - 28px);overflow:auto;overscroll-behavior:contain;padding:16px;background:var(--reading-surface);color:var(--ink);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 10px 32px #0005}
 .paper-tools[hidden]{display:none!important}
@@ -796,5 +797,5 @@ html[data-appearance=full][data-theme=day] .paper-thumbnails{padding:18px}
  html .app:has(.paper-reading-page){padding-top:0}
  .content-scroll:has(.paper-reading-page){overflow-anchor:none;scroll-padding-top:0}
 }
-@media(max-width:380px){.paper-controls{gap:3px}.paper-controls .paper-page-label{margin-left:0}.paper-page-label>span{display:none}.paper-controls select{width:48px;padding:4px}.paper-controls .paper-next-mistake{padding-inline:5px}}
+@media(max-width:380px){.paper-controls{gap:3px;padding-inline:6px}.paper-controls .paper-page-label{margin-left:0}.paper-page-label>span{display:none}.paper-controls select{width:44px;padding:4px}.paper-controls .paper-next-mistake{padding-inline:5px}.paper-mistake-long{display:none}.paper-mistake-short{display:inline}html[data-appearance=full][data-theme=day] .paper-controls{padding-inline:8px}}
 @media print{.paper-toolbar,.paper-thumbnails,.paper-mistake-marker{display:none!important}.paper-workspace{display:block}.paper-sheet{break-inside:avoid;box-shadow:none}}
