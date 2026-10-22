@@ -186,7 +186,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'flash41-vision-20261023');
+  assert.equal(status.version, 'user-isolation-20261023');
   assert.equal(status.passwordConfigured, false);
   assert.equal(status.aiFiguresEnabled, false);
   const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
@@ -220,7 +220,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'flash41-vision-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'user-isolation-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -815,4 +815,57 @@ test('mathematics papers and figures keep the same authentication and path restr
   assert.equal((await worker.fetch(new Request(`${BASE}/papers/math/2022/manifest`, { headers: { Origin: ORIGIN } }), env)).status, 401);
   assert.equal((await worker.fetch(new Request(`${BASE}/papers/math/2022/manifest`, { headers: { ...headers, Origin: 'https://other.example' } }), env)).status, 403);
   assert.equal(paths.filter(path => path.includes('/contents/')).length, before, 'denied mathematics reads never reach private files');
+});
+
+test('Yeelam identity isolates every private route and cannot upgrade or select another user', async t => {
+  const password = 'synthetic-yeelam-password';
+  const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password)))].map(b => b.toString(16).padStart(2,'0')).join('');
+  const env = { ...aiEnv, SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'synthetic-owner-password', YEELAM_PASSWORD_SHA256: hash, GITHUB_TOKEN: 'synthetic-isolation-token' };
+  const seen = [], files = new Map();
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const path = new URL(url).pathname;
+    if (path === '/user') return Response.json({ login: 'Makise-Kurisu-D' });
+    seen.push({ path, method: init.method || 'GET' });
+    assert.match(path, /\/contents\/users\/yeelam\//, 'no guest request may reach owner data');
+    if (init.method === 'PUT') {
+      files.set(path, JSON.parse(init.body).content);
+      return Response.json({ content: { sha: 'a'.repeat(40) } });
+    }
+    if (init.method === 'DELETE') { files.delete(path); return Response.json({}); }
+    if (files.has(path)) return Response.json({ encoding: 'base64', content: files.get(path), sha: 'a'.repeat(40) });
+    return Response.json({ message: 'not found' }, { status: 404 });
+  };
+  t.after(() => { globalThis.fetch = original; });
+  const login = async (username, pass = password, options = {}) => worker.fetch(new Request(`${BASE}/auth/password`, {
+    method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password: pass })
+  }), { ...env, ...options });
+  assert.equal((await login('Kyle')).status, 401);
+  assert.equal((await login('../kyle')).status, 401);
+  assert.equal((await login('Yeelam', password, { YEELAM_PASSWORD_SHA256: undefined })).status, 401);
+  const response = await login(' Yeelam ');
+  assert.equal(response.status, 200);
+  const session = await response.json();
+  assert.equal(session.userId, 'yeelam');
+  assert.doesNotMatch(JSON.stringify(session), /synthetic-/);
+  const call = (path, method = 'GET', body) => worker.fetch(new Request(`${BASE}${path}`, {
+    method, headers: { Origin: ORIGIN, Authorization: `Bearer ${session.sessionId}`, 'Content-Type': 'application/json' },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  }), env);
+  assert.deepEqual((await (await call('/bank')).json()).subjects.chem.items, []);
+  assert.deepEqual((await (await call('/papers/catalog')).json()).subjects, { chem: [], bio: [], math: [] });
+  assert.equal((await call('/bank/images/chem-2022-mc-01.jpg')).status, 404);
+  assert.equal((await call('/papers/chem/2022/manifest')).status, 404);
+  assert.equal((await call('/auth/upgrade', 'POST')).status, 403);
+  assert.equal((await call('/ai/review', 'POST', { questionId: 'owner-question', answer: 'answer' })).status, 404);
+  const data = { app: 'kyle-dse-quiz', sessions: [{ t: 1, subj: 'chem', results: {} }], drafts: {}, archive: [] };
+  assert.equal((await call('/sync?userId=kyle', 'PUT', { data, userId: 'kyle' })).status, 200);
+  assert.deepEqual((await (await call('/sync')).json()).data.sessions, data.sessions);
+  assert.ok(seen.some(v => v.path.endsWith('/users/yeelam/records.json') && v.method === 'PUT'));
+  assert.equal((await call('/sync', 'DELETE')).status, 200);
+  assert.equal((await (await call('/sync')).json()).data, null);
+  env.YEELAM_PASSWORD_SHA256 = '0'.repeat(64);
+  assert.equal((await call('/sync')).status, 401, 'changing only guest verifier revokes guest sessions');
+  const owner = await login('Kyle', env.SITE_PASSWORD);
+  assert.equal(owner.status, 200, 'guest verifier rotation does not invalidate owner login');
 });

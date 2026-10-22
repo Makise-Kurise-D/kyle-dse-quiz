@@ -16,7 +16,7 @@ keep_vars = true
 # Native vision is available; figures are sent only after the user opts in.
 # A custom provider instead requires all of AI_BASE_URL, AI_MODEL and AI_API_KEY.
 # AI_VISION="true" enables the optional figure checkbox for supported providers.
-# Limits: 20 calls/session/Beijing day, 80/service/day, 10 seconds between requests.
+# Limits: 20 calls/user/Beijing day, 80/service/day, 10 seconds between requests.
 # KV limits are best-effort across Cloudflare regions; each isolate also blocks overlap.
 
 [[kv_namespaces]]
@@ -27,3 +27,6 @@ id = "abf716fb1a6b49338835370ac0026569"
 GITHUB_CLIENT_ID = "Iv23liDCF1nzb5DgalhR"
 DEEPSEEK_MODEL = "deepseek-flash"
 AI_VISION = "true"
+
+# SHA-256 verifier of a generated 192-bit password; plaintext is never committed.
+YEELAM_PASSWORD_SHA256 = "fdab204386d4ab480bb83efa23276586668985015e9d3db2e680093bd4488e9e"
