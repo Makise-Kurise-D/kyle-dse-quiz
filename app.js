@@ -1246,7 +1246,7 @@
         '<div class="paper-controls"><a class="btn btn-ghost paper-back" href="#/library/papers/' + subject + '" aria-label="返回批改卷年份" title="返回年份">←</a>' +
         '<button class="btn btn-ghost" id="paperThumbToggle" type="button" aria-controls="paperThumbnails" aria-expanded="true" title="頁面預覽">預覽</button>' +
         '<h1 class="paper-reader-title" id="paperTitle">' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷</h1>' +
-        '<button class="btn btn-ghost paper-next-mistake" id="paperNextMistake" type="button" disabled title="正在載入錯題位置">下一錯題位置</button>' +
+        '<button class="btn btn-ghost paper-next-mistake" id="paperNextMistake" type="button" aria-label="下一錯題位置" disabled title="正在載入錯題位置"><span class="paper-mistake-long">下一錯題位置</span><span class="paper-mistake-short" aria-hidden="true">下一錯題</span></button>' +
         '<label class="paper-page-label"><select id="paperPageSelect" aria-label="選擇批改卷頁碼"></select><span> / <span id="paperPageCount">—</span></span></label>' +
         '<button class="btn btn-ghost" id="paperToolsToggle" type="button" aria-label="更多閱讀工具" title="更多閱讀工具" aria-controls="paperTools" aria-expanded="false">⋯</button></div>' +
         '<div class="paper-tools" id="paperTools" role="region" aria-label="閱讀工具" hidden>' +
