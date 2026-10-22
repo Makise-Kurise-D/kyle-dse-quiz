@@ -49,23 +49,37 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import { spawnSync } from 'node:child_process';
-          import { readFileSync } from 'node:fs';
-          import { join } from 'node:path';
 
           // This CLI's version upload does not require the dashboard route preview.
           // keep_vars in wrangler.toml retains existing variables and secrets.
-          const output = join(process.env.RUNNER_TEMP, 'worker-version-upload.ndjson');
-          function wrangler(args, extraEnv = {}) {
+          function wrangler(args, capture = false) {
             const result = spawnSync('npx', ['--yes', 'wrangler@4.58.0', ...args], {
-              stdio: 'inherit', env: { ...process.env, ...extraEnv },
+              stdio: capture ? 'pipe' : 'inherit', encoding: 'utf8', maxBuffer: 10 * 1024 * 1024,
             });
-            if (result.error || result.status !== 0) throw new Error('Version API deployment failed');
+            if (capture) {
+              process.stdout.write(result.stdout || '');
+              process.stderr.write(result.stderr || '');
+            }
+            if (result.error || (!capture && result.status !== 0)) throw new Error('Version API deployment failed');
+            return result;
           }
-          wrangler(['versions', 'upload'], { WRANGLER_OUTPUT_FILE_PATH: output });
-          const records = readFileSync(output, 'utf8').trim().split('\n').map(line => JSON.parse(line));
-          const id = records.findLast(record => record.type === 'version-upload')?.version_id;
-          if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id || '')) {
+          const message = 'Source commit ' + process.env.GITHUB_SHA;
+          const upload = wrangler(['versions', 'upload', '--message', message], true);
+          // The upload can succeed before URL discovery fails for a token without
+          // account-subdomain read permission. Verify that exact upload via its API.
+          const id = upload.stdout?.match(/^Worker Version ID: ([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})\s*$/im)?.[1];
+          if (!id) {
             throw new Error('No valid uploaded Worker version ID');
+          }
+          const response = await fetch('https://api.cloudflare.com/client/v4/accounts/' +
+            process.env.CLOUDFLARE_ACCOUNT_ID + '/workers/scripts/snowy-cake-a0a7/versions/' + id, {
+              headers: { Authorization: 'Bearer ' + process.env.CLOUDFLARE_API_TOKEN },
+              signal: AbortSignal.timeout(15000),
+            });
+          const verified = await response.json();
+          if (!response.ok || verified.success !== true || verified.result?.id !== id ||
+              verified.result?.annotations?.['workers/message'] !== message) {
+            throw new Error('Uploaded version does not match this source commit');
           }
           wrangler(['versions', 'deploy', id + '@100%', '--yes']);
           NODE
