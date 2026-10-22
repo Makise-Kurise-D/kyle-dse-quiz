@@ -6,7 +6,7 @@
     var manifest = options.manifest, current = options.page || 1, stopped = false;
     var rows = [], queue = [], active = 0, frame = null, atlasUrl = null, warmTimer;
     var atlas = manifest.thumbnails, sections = manifest.sections || [], resizeObserver;
-    var lastWidth = root.clientWidth, anchorFraction = 0;
+    var lastWidth = root.clientWidth, lastHeight = root.scrollHeight, anchorFraction = 0;
     function measureToolbar() {
       if (options.toolbar.getBoundingClientRect) options.toolbar.parentElement.style.setProperty('--paper-toolbar-height', options.toolbar.getBoundingClientRect().height + 'px');
     }
@@ -111,6 +111,11 @@
     function track() {
       frame = null;
       if (stopped || !root.getBoundingClientRect) return;
+      // A pending scroll frame can run before ResizeObserver after a style change.
+      // Restore the existing anchor before deciding which page is now visible.
+      if (lastWidth && (root.clientWidth !== lastWidth || (lastHeight && root.scrollHeight !== lastHeight))) {
+        resize(); return;
+      }
       var area = scroll.getBoundingClientRect(), toolbar = options.toolbar.getBoundingClientRect();
       var top = Math.max(area.top, toolbar.bottom) + 24;
       var next = current;
@@ -142,13 +147,13 @@
     scroll.addEventListener('scroll', schedule, { passive: true });
     function resize() {
       measureToolbar();
-      var width = root.clientWidth;
-      if (lastWidth && width !== lastWidth && root.getBoundingClientRect) {
+      var width = root.clientWidth, height = root.scrollHeight;
+      if (lastWidth && (width !== lastWidth || (lastHeight && height !== lastHeight)) && root.getBoundingClientRect) {
         var box = rows[current - 1].sheet.getBoundingClientRect();
         var top = scroll.getBoundingClientRect().top + options.toolbar.getBoundingClientRect().height + 24;
         scroll.scrollTop += box.top + anchorFraction * box.height - top;
       }
-      lastWidth = width; schedule();
+      lastWidth = width; lastHeight = height; schedule();
     }
     window.addEventListener('resize', resize);
     measureToolbar();

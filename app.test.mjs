@@ -18,6 +18,7 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
       get src() { return this._src; }, set src(value) { this._src = value; if (this.onload) this.onload(); },
       classList: { toggle() {}, add() {}, remove() {} },
       style: { setProperty() {} }, setAttribute(k, v) { this[k] = v; }, removeAttribute(k) { delete this[k]; },
+      focus() { this.focused = true; },
       removeEventListener(type, fn) { if (this.listeners[type] === fn) delete this.listeners[type]; },
       addEventListener(type, fn) { this.listeners[type] = fn; },
       querySelector: node, querySelectorAll: () => [],
@@ -577,6 +578,31 @@ test('a page cancelled by a distant jump loads normally when revisited', async (
   assert.equal(secondPageCalls, 2);
   assert.equal(app.node('#paperImage-2').src, 'blob:revisited');
   assert.equal(app.node('#paperRetry-2').hidden, true);
+});
+
+test('reading tools open on demand and restoring the site header neither reloads nor loses the current page', async () => {
+  const calls = [];
+  const app = boot('', async url => {
+    calls.push(url);
+    if (url.includes('/manifest')) return { ok: true, json: async () => ({ version: 'a'.repeat(16), pages: 2 }) };
+    return { ok: true, blob: async () => new Blob(['page']) };
+  }, { dse_quiz_sync_session_v1: 'valid-session' });
+  app.context.URL = { createObjectURL: () => 'blob:focus', revokeObjectURL() {} };
+  app.location.hash = '#/library/papers/chem/2022'; app.events.hashchange(); await settle();
+  assert.equal(app.node('#paperTools').hidden, true);
+  app.node('#paperToolsToggle').listeners.click();
+  assert.equal(app.node('#paperTools').hidden, false);
+  assert.equal(app.node('#paperToolsToggle')['aria-expanded'], 'true');
+  const count = calls.length;
+  app.node('#paperHeaderToggle').listeners.click();
+  assert.equal(app.node('#paperHeaderToggle')['aria-pressed'], 'true');
+  assert.equal(app.node('#paperTools').hidden, true);
+  assert.equal(app.node('#paperToolsToggle').focused, true);
+  assert.equal(app.node('#paperPageSelect').value, '1');
+  assert.equal(calls.length, count);
+  app.node('#paperToolsToggle').listeners.click(); app.node('#paperHeaderToggle').listeners.click();
+  assert.equal(app.node('#paperHeaderToggle')['aria-pressed'], 'false');
+  assert.equal(calls.length, count);
 });
 
 test('fortnight report counts latest full answers, first-time solves and regressions by unique question', () => {
