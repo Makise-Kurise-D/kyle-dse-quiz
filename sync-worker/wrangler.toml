@@ -10,11 +10,12 @@ keep_vars = true
 # The owner's existing OAuth connection initializes private storage on the first visit.
 # GITHUB_TOKEN is an optional server-only alternative for repository access.
 # DeepSeek: add DEEPSEEK_API_KEY as a Worker secret. The API base is official;
-# DEEPSEEK_MODEL optionally selects deepseek-flash (default) or deepseek-v4-pro.
-# Thinking uses high effort, with no local output token cap or automatic API retry.
-# These models accept text only; private figures are never sent to DeepSeek.
+# New DeepSeek calls use only deepseek-flash (4.1 Flash); Pro is disabled.
+# Plain first-level text hints disable thinking; other requests use high effort.
+# No local output token cap or automatic API retry.
+# Native vision is available; figures are sent only after the user opts in.
 # A custom provider instead requires all of AI_BASE_URL, AI_MODEL and AI_API_KEY.
-# AI_VISION="true" explicitly permits figures only for a custom vision provider.
+# AI_VISION="true" enables the optional figure checkbox for supported providers.
 # Limits: 20 calls/session/Beijing day, 80/service/day, 10 seconds between requests.
 # KV limits are best-effort across Cloudflare regions; each isolate also blocks overlap.
 
@@ -24,3 +25,5 @@ id = "abf716fb1a6b49338835370ac0026569"
 
 [vars]
 GITHUB_CLIENT_ID = "Iv23liDCF1nzb5DgalhR"
+DEEPSEEK_MODEL = "deepseek-flash"
+AI_VISION = "true"

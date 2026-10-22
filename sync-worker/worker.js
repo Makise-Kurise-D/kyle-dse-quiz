@@ -6,7 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'continuous-reader-20261022';
+const SERVICE_VERSION = 'flash41-vision-20261023';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
@@ -31,11 +31,11 @@ function aiSettings(env) {
     }
     catch { valid = false; }
   }
-  const invalidModel = deepseek && !['deepseek-flash', 'deepseek-v4-pro'].includes(model);
+  const invalidModel = deepseek && model !== 'deepseek-flash';
   return { baseUrl, model, apiKey, deepseek, configuration: {
     configured: missing.length === 0 && valid && !invalidModel, missing, invalidEndpoint: !valid, invalidModel,
     provider: deepseek ? 'DeepSeek' : 'custom', model,
-    figuresEnabled: !deepseek && env.AI_VISION === 'true', dailyLimit: 20,
+    figuresEnabled: env.AI_VISION === 'true' && (!deepseek || model === 'deepseek-flash'), dailyLimit: 20,
   } };
 }
 
@@ -88,14 +88,16 @@ export function validateAIFeedback(value, item, answer, mode) {
 export async function requestAIFeedback(item, body, env, figures = [], fetcher = fetch) {
   const settings = aiSettings(env);
   if (!settings.configuration.configured) throw new Error('ai_not_configured');
-  // DeepSeek currently accepts text; do not send private images to text models.
+  // 4.1 Flash supports images. Keep attachment delivery explicitly opt-in.
   if (!settings.configuration.figuresEnabled) figures = [];
   const endpoint = settings.baseUrl.replace(/\/+$/, '') + '/chat/completions';
   const payload = { model: settings.model, messages: aiMessages(item, body, figures),
     response_format: { type: 'json_object' }, stream: false };
   if (settings.deepseek) {
-    payload.thinking = { type: 'enabled' };
-    payload.reasoning_effort = 'high';
+    const simpleHint = body.mode === 'hint' && ![2, 3].includes(body.hintLevel) &&
+      !figures.length && !(item.figures || []).length && !(item.tables || []).length;
+    payload.thinking = { type: simpleHint ? 'disabled' : 'enabled' };
+    if (!simpleHint) payload.reasoning_effort = 'high';
   }
   const controller = new AbortController(), timer = setTimeout(()=>controller.abort(), 90000);
   try {
@@ -822,6 +824,7 @@ const worker = {
       version: SERVICE_VERSION, passwordConfigured: typeof env.SITE_PASSWORD === 'string' && !!env.SITE_PASSWORD.trim(),
       aiConfigured: aiConfiguration(env).configured,
       aiProvider: aiConfiguration(env).provider, aiModel: aiConfiguration(env).model,
+      aiFiguresEnabled: aiConfiguration(env).figuresEnabled,
     });
     return json({ error: 'not_found' }, 404);
   },
