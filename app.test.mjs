@@ -15,7 +15,10 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
   function node(selector) {
     if (!nodes.has(selector)) nodes.set(selector, {
       innerHTML: '', textContent: '', hidden: false, listeners: {},
+      get src() { return this._src; }, set src(value) { this._src = value; if (this.onload) this.onload(); },
       classList: { toggle() {}, add() {}, remove() {} },
+      style: { setProperty() {} }, setAttribute(k, v) { this[k] = v; }, removeAttribute(k) { delete this[k]; },
+      removeEventListener(type, fn) { if (this.listeners[type] === fn) delete this.listeners[type]; },
       addEventListener(type, fn) { this.listeners[type] = fn; },
       querySelector: node, querySelectorAll: () => [],
     });
@@ -35,7 +38,7 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
     clearTimeout(id) { if (timers[id - 1]) timers[id - 1].cleared = true; },
     setInterval(fn, delay) { intervals.push({ fn, delay }); }, clearInterval() {},
     confirm: () => true,
-    scrollTo() {}, addEventListener(type, fn) { events[type] = fn; },
+    scrollTo() {}, addEventListener(type, fn) { events[type] = fn; }, removeEventListener(type, fn) { if (events[type] === fn) delete events[type]; },
     QUIZ_SYNC_API: 'https://sync.example.workers.dev', QUIZ_PRIVATE_BANK: privateBank, QUIZ_PASSWORD_AUTH: passwordAuth,
     URL, Blob,
   };
@@ -43,6 +46,7 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
   vm.createContext(context);
   vm.runInContext(data, context);
   vm.runInContext(readFileSync(new URL('./library.js', import.meta.url), 'utf8'), context);
+  vm.runInContext(readFileSync(new URL('./paper-reader.js', import.meta.url), 'utf8'), context);
   vm.runInContext(source, context);
   return { context, location, nodes, node, saved, timers, intervals, events };
 }
@@ -401,14 +405,15 @@ test('library offers two entrances, then graded papers select subject and publis
     'https://sync.example.workers.dev/papers/chem/2024/manifest',
     'https://sync.example.workers.dev/papers/chem/2024/pages/cccccccccccccccc/1',
   ]);
-  assert.equal(app.node('#paperImage').src, 'blob:paper-1');
+  assert.equal(app.node('#paperImage-1').src, 'blob:paper-1');
   assert.equal(app.node('#paperReader').hidden, false);
   assert.equal(app.node('#paperOpen').href, 'blob:paper-1');
   app.node('#paperNext').listeners.click();
   await settle();
-  assert.equal(app.node('#paperImage').src, 'blob:paper-2');
+  assert.equal(app.node('#paperImage-2').src, 'blob:paper-2');
+  assert.equal(app.node('#paperImage-1').src, 'blob:paper-1', 'previous pages stay visible in the continuous stream');
   assert.equal(calls.at(-1).url, 'https://sync.example.workers.dev/papers/chem/2024/pages/cccccccccccccccc/2');
-  assert.deepEqual(revoked, ['blob:paper-1']);
+  assert.deepEqual(revoked, [], 'jumping does not revoke the previous visible page');
   app.location.hash = '#/library/papers/bio'; app.events.hashchange();
   assert.deepEqual(revoked, ['blob:paper-1', 'blob:paper-2']);
   assert.ok(calls.every(call => call.options.cache === 'no-store' &&
@@ -470,8 +475,8 @@ test('graded-paper reader shares an in-flight next-page request with navigation'
   assert.equal(calls.filter(url => url.endsWith('/2')).length, 1, 'navigation reuses the prefetch');
   finishNextPage({ ok: true, blob: async () => new Blob(['second-page'], { type: 'image/jpeg' }) });
   await settle();
-  assert.equal(app.node('#paperImage').src, 'blob:paper-cache-2');
-  assert.equal(app.node('#paperImage').hidden, false);
+  assert.equal(app.node('#paperImage-2').src, 'blob:paper-cache-2');
+  assert.equal(app.node('#paperImage-1').hidden, false);
 });
 
 test('graded-paper reload switches image version and empty subjects give a clear result', async () => {
@@ -493,12 +498,12 @@ test('graded-paper reload switches image version and empty subjects give a clear
   assert.equal(app.node('#paperYears').innerHTML, '');
   app.location.hash = '#/library/papers/chem/2022'; app.events.hashchange();
   await settle();
-  assert.equal(app.node('#paperImage').src, 'blob:graded-1');
+  assert.equal(app.node('#paperImage-1').src, 'blob:graded-1');
   version = 'e'.repeat(16);
   app.node('#paperReload').listeners.click();
   await settle();
   assert.deepEqual(revoked, ['blob:graded-1']);
-  assert.equal(app.node('#paperImage').src, 'blob:graded-2');
+  assert.equal(app.node('#paperImage-1').src, 'blob:graded-2');
   assert.equal(urls.at(-1), 'https://sync.example.workers.dev/papers/chem/2022/pages/eeeeeeeeeeeeeeee/1');
 });
 
@@ -509,7 +514,50 @@ test('unpublished graded papers show an explanation and no image', async () => {
   app.location.hash = '#/library/papers/bio/2022'; app.events.hashchange();
   await settle();
   assert.match(app.node('#paperStatus').textContent, /暫未發布/);
-  assert.equal(app.node('#paperImage').hidden, true);
+  assert.equal(app.node('#paperReader').hidden, true);
+});
+
+test('continuous reader bounds pending requests, skips abandoned pages and releases late private responses', async () => {
+  const pending = [], revoked = [];
+  const app = boot('', async (url, options) => {
+    if (url.includes('/manifest')) return { ok: true, json: async () => ({ version: 'a'.repeat(16), pages: 40 }) };
+    return new Promise(resolve => pending.push({ url, options, resolve }));
+  }, { dse_quiz_sync_session_v1: 'valid-session' });
+  let serial = 0;
+  app.context.URL = { createObjectURL: () => 'blob:bounded-' + (++serial), revokeObjectURL: url => revoked.push(url) };
+  app.location.hash = '#/library/papers/chem/2022'; app.events.hashchange(); await settle();
+  app.timers.find(timer => timer.delay === 200).fn();
+  assert.equal(pending.length, 2);
+  app.node('#paperPageSelect').listeners.change({ target: { value: '40' } });
+  assert.equal(pending.length, 2, 'no unbounded requests while both slots are occupied');
+  assert.ok(pending.every(r => r.options.signal.aborted), 'distant requests are cancelled for a jump');
+  pending[0].resolve({ ok: true, blob: async () => new Blob(['old']) }); await settle();
+  assert.ok(pending[2].url.endsWith('/40'), 'the jump target takes the first freed slot');
+  assert.equal(serial, 0, 'an abandoned page is never attached');
+  app.location.hash = '#/records'; app.events.hashchange();
+  for (const p of pending) p.resolve({ ok: true, blob: async () => new Blob(['late']) });
+  await settle();
+  assert.equal(serial, 0, 'late responses cannot attach private images on another route');
+  assert.deepEqual(revoked, []);
+});
+
+test('failed continuous pages retry locally without clearing readable neighbours or exercise records', async () => {
+  let attempts = 0;
+  const app = boot('', async url => {
+    if (url.includes('/manifest')) return { ok: true, json: async () => ({ version: 'a'.repeat(16), pages: 2 }) };
+    if (url.endsWith('/2') && ++attempts === 1) return { ok: false, status: 503, json: async () => ({ error: 'paper_unavailable' }) };
+    return { ok: true, blob: async () => new Blob(['page']) };
+  }, { dse_quiz_sync_session_v1: 'valid-session' });
+  let serial = 0;
+  app.context.URL = { createObjectURL: () => 'blob:retry-' + (++serial), revokeObjectURL() {} };
+  app.location.hash = '#/library/papers/chem/2022'; app.events.hashchange(); await settle();
+  app.node('#paperNext').listeners.click(); await settle();
+  assert.equal(app.node('#paperRetry-2').hidden, false);
+  assert.equal(app.node('#paperImage-1').src, 'blob:retry-1');
+  app.node('#paperRetry-2').listeners.click(); await settle();
+  assert.equal(app.node('#paperImage-2').src, 'blob:retry-2');
+  assert.equal(app.node('#paperRetry-2').hidden, true);
+  assert.ok(!app.saved.has('dse_quiz_sessions_v2'));
 });
 
 test('fortnight report counts latest full answers, first-time solves and regressions by unique question', () => {
