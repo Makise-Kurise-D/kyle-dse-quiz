@@ -92,7 +92,12 @@
             if (!atlas) row.preview.style.backgroundImage = 'url("' + row.url + '")';
             if (row.page === current) options.onPage(current, row.url);
             evict();
-          }).catch(function (error) { if (!stopped) fail(row, error); }).finally(function () { active--; pump(); });
+          }).catch(function (error) {
+            if (stopped) return;
+            if (error.name === 'AbortError' && Math.abs(row.page - current) > 3) {
+              row.state = 'idle'; row.placeholder.textContent = '第 ' + row.page + ' 頁';
+            } else fail(row, error);
+          }).finally(function () { active--; pump(); });
         })(r);
       }
     }

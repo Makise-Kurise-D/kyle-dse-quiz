@@ -560,6 +560,25 @@ test('failed continuous pages retry locally without clearing readable neighbours
   assert.ok(!app.saved.has('dse_quiz_sessions_v2'));
 });
 
+test('a page cancelled by a distant jump loads normally when revisited', async () => {
+  let secondPageCalls = 0;
+  const app = boot('', async (url, options) => {
+    if (url.includes('/manifest')) return { ok: true, json: async () => ({ version: 'a'.repeat(16), pages: 40 }) };
+    if (url.endsWith('/2') && ++secondPageCalls === 1) return new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' })));
+    });
+    return { ok: true, blob: async () => new Blob(['page']) };
+  }, { dse_quiz_sync_session_v1: 'valid-session' });
+  app.context.URL = { createObjectURL: () => 'blob:revisited', revokeObjectURL() {} };
+  app.location.hash = '#/library/papers/chem/2022'; app.events.hashchange(); await settle();
+  app.timers.find(timer => timer.delay === 200).fn();
+  app.node('#paperPageSelect').listeners.change({ target: { value: '40' } }); await settle();
+  app.node('#paperPageSelect').listeners.change({ target: { value: '2' } }); await settle();
+  assert.equal(secondPageCalls, 2);
+  assert.equal(app.node('#paperImage-2').src, 'blob:revisited');
+  assert.equal(app.node('#paperRetry-2').hidden, true);
+});
+
 test('fortnight report counts latest full answers, first-time solves and regressions by unique question', () => {
   const start = Date.UTC(2026, 9, 4, 16); // 2026/10/05 00:00 Beijing time
   const day = 864e5;
