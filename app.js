@@ -30,6 +30,7 @@
   var syncMessage = '';
   var paperSubject = '', paperYear = '', paperPage = 1, paperManifest = null;
   var paperReader = null, paperController = null, paperRequest = 0;
+  var paperToolsOpen = false, paperHeaderVisible = false;
   var readerPages = new Map();
   var paperCatalogSnapshot = null;
   var startupHash = location.hash;
@@ -1058,6 +1059,7 @@
   }
   function releasePaper() {
     paperRequest++;
+    paperToolsOpen = false; paperHeaderVisible = false;
     if (paperController) { paperController.abort(); paperController = null; }
     if (paperReader) { paperReader.destroy(); paperReader = null; }
     paperManifest = null;
@@ -1065,6 +1067,7 @@
   }
   function paperError(err, session, requestId, status, pageRequest) {
     if (requestId !== paperRequest) return;
+    status.classList.remove('is-reading');
     expireConnection(err, session);
     if (err.status === 401) return;
     if (err.name === 'AbortError') status.textContent = '載入逾時，請稍後重試。';
@@ -1163,6 +1166,7 @@
           }
         });
         $('#paperOpen').hidden = !url; $('#paperOpen').href = url || '';
+        $('#paperStatus').classList.add('is-reading');
         $('#paperStatus').textContent = '第 ' + page + ' / ' + manifest.pages + ' 頁 · 向下捲動連續閱讀';
       },
       onError: function (error) { paperError(error, session, requestId, $('#paperStatus'), true); },
@@ -1177,12 +1181,29 @@
   function goPaperPage(page) {
     if (paperReader) paperReader.go(page);
   }
+  function setPaperTools(open, restoreFocus) {
+    paperToolsOpen = open;
+    $('#paperTools').hidden = !open;
+    $('#paperToolsToggle').setAttribute('aria-expanded', String(open));
+    if (restoreFocus) $('#paperToolsToggle').focus({ preventScroll: true });
+  }
+  function togglePaperHeader() {
+    paperHeaderVisible = !paperHeaderVisible;
+    var change = function () {
+      $('#paperReadingPage').classList.toggle('paper-show-header', paperHeaderVisible);
+      $('#paperHeaderToggle').setAttribute('aria-pressed', String(paperHeaderVisible));
+      $('#paperHeaderToggle').textContent = paperHeaderVisible ? '隱藏網站頂欄' : '顯示網站頂欄';
+    };
+    if (paperReader) paperReader.layoutChange(change); else change();
+    setPaperTools(false, true);
+  }
   function setPaperThumbnails(open) {
     var change = function () {
       $('#paperWorkspace').classList.toggle('is-thumbs-hidden', !open);
       $('#paperThumbnails').hidden = !open;
       $('#paperThumbToggle').setAttribute('aria-expanded', String(open));
-      $('#paperThumbToggle').textContent = open ? '收起預覽' : '頁面預覽';
+      $('#paperThumbToggle').textContent = '預覽';
+      $('#paperThumbToggle').setAttribute('aria-label', open ? '收起頁面預覽' : '展開頁面預覽');
     };
     if (paperReader) paperReader.layoutChange(change); else change();
   }
@@ -1215,19 +1236,22 @@
   function renderPaperReader(subject, year, fresh) {
     if (paperSubject !== subject || paperYear !== year) paperPage = 1;
     paperSubject = subject; paperYear = year;
-    $('#app').innerHTML = '<section class="page library-page paper-reading-page">' +
-      '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> ' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷</h1>' +
-      '<p class="page-sub">向下捲動讀完整卷，按左側頁面預覽快速定位。</p></div>' +
-      '<a class="btn btn-ghost" href="#/library/papers/' + subject + '">← 返回年份</a></header>' +
+    paperToolsOpen = false; paperHeaderVisible = false;
+    $('#app').innerHTML = '<section class="page library-page paper-reading-page" id="paperReadingPage" aria-labelledby="paperTitle">' +
       '<div class="paper-toolbar" id="paperToolbar">' +
-        '<div class="paper-controls"><button class="btn btn-ghost" id="paperThumbToggle" type="button" aria-controls="paperThumbnails" aria-expanded="true">收起預覽</button>' +
-        '<button class="btn btn-ghost" id="paperPrev" type="button" disabled aria-label="跳至上一頁">←</button>' +
-        '<label>第 <select id="paperPageSelect" aria-label="選擇批改卷頁碼"></select> / <span id="paperPageCount">—</span> 頁</label>' +
-        '<button class="btn btn-ghost" id="paperNext" type="button" disabled aria-label="跳至下一頁">→</button>' +
-        '<button class="btn btn-ghost" id="paperReload" type="button">重新載入</button>' +
-        '<a class="btn btn-ghost" id="paperOpen" target="_blank" rel="noopener" hidden>放大本頁 ↗</a></div>' +
-      '<nav class="paper-sections" id="paperSections" aria-label="批改卷分部跳轉" hidden></nav></div>' +
-      '<p class="review-note" id="paperStatus" role="status" aria-live="polite"></p>' +
+        '<div class="paper-controls"><a class="btn btn-ghost paper-back" href="#/library/papers/' + subject + '" aria-label="返回批改卷年份" title="返回年份">←</a>' +
+        '<button class="btn btn-ghost" id="paperThumbToggle" type="button" aria-controls="paperThumbnails" aria-expanded="true" title="頁面預覽">預覽</button>' +
+        '<h1 class="paper-reader-title" id="paperTitle">' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷</h1>' +
+        '<label class="paper-page-label"><select id="paperPageSelect" aria-label="選擇批改卷頁碼"></select><span> / <span id="paperPageCount">—</span></span></label>' +
+        '<button class="btn btn-ghost" id="paperToolsToggle" type="button" aria-label="更多閱讀工具" title="更多閱讀工具" aria-controls="paperTools" aria-expanded="false">⋯</button></div>' +
+        '<div class="paper-tools" id="paperTools" role="region" aria-label="閱讀工具" hidden>' +
+          '<strong>分部跳轉</strong><nav class="paper-sections" id="paperSections" aria-label="批改卷分部跳轉" hidden></nav>' +
+          '<div class="paper-tool-actions"><button class="btn btn-ghost" id="paperPrev" type="button" disabled>← 上一頁</button>' +
+          '<button class="btn btn-ghost" id="paperNext" type="button" disabled>下一頁 →</button>' +
+          '<button class="btn btn-ghost" id="paperReload" type="button">重新載入</button>' +
+          '<a class="btn btn-ghost" id="paperOpen" target="_blank" rel="noopener" hidden>放大本頁 ↗</a>' +
+          '<button class="btn btn-ghost" id="paperHeaderToggle" type="button" aria-pressed="false">顯示網站頂欄</button></div></div></div>' +
+      '<p class="review-note paper-status" id="paperStatus" role="status" aria-live="polite"></p>' +
       '<div class="paper-workspace" id="paperWorkspace"><aside class="paper-thumbnails" id="paperThumbnails" aria-label="批改卷頁面預覽">' +
         '<div class="paper-thumb-heading"><strong>頁面預覽</strong><button class="btn btn-ghost" id="paperThumbClose" type="button">收起</button></div>' +
         '<p class="library-note" id="paperThumbStatus">點選頁面跳轉</p><div class="paper-thumb-list" id="paperThumbList"></div></aside>' +
@@ -1237,16 +1261,29 @@
     $('#paperReload').addEventListener('click', function () { releasePaper(); renderPaperReader(subject, year, true); });
     $('#paperSections').addEventListener('click', function (event) {
       var button = event.target.closest('[data-page]');
-      if (button) goPaperPage(Number(button.dataset.page));
+      if (button) { setPaperTools(false, true); goPaperPage(Number(button.dataset.page)); }
     });
-    $('#paperPrev').addEventListener('click', function () { goPaperPage(paperPage - 1); });
-    $('#paperNext').addEventListener('click', function () { goPaperPage(paperPage + 1); });
+    $('#paperPrev').addEventListener('click', function () { setPaperTools(false, true); goPaperPage(paperPage - 1); });
+    $('#paperNext').addEventListener('click', function () { setPaperTools(false, true); goPaperPage(paperPage + 1); });
+    $('#paperTools').hidden = true;
+    $('#paperToolsToggle').addEventListener('click', function () {
+      if (window.matchMedia && window.matchMedia('(max-width: 699px)').matches) setPaperThumbnails(false);
+      setPaperTools(!paperToolsOpen);
+    });
+    $('#paperHeaderToggle').addEventListener('click', togglePaperHeader);
     $('#paperPageSelect').addEventListener('change', function (event) { goPaperPage(Number(event.target.value)); });
-    $('#paperThumbToggle').addEventListener('click', function () { setPaperThumbnails($('#paperThumbnails').hidden); });
+    $('#paperThumbToggle').addEventListener('click', function () { setPaperTools(false); setPaperThumbnails($('#paperThumbnails').hidden); });
     $('#paperThumbClose').addEventListener('click', function () { setPaperThumbnails(false); $('#paperThumbToggle').focus(); });
     setPaperThumbnails(!(window.matchMedia && window.matchMedia('(max-width: 699px)').matches));
     loadPaper(fresh);
   }
+
+  document.addEventListener('click', function (event) {
+    if (paperToolsOpen && !event.target.closest('#paperToolbar')) setPaperTools(false);
+  });
+  document.addEventListener('keydown', function (event) {
+    if (paperToolsOpen && event.key === 'Escape') { event.preventDefault(); setPaperTools(false, true); }
+  });
 
   /* ---------------- 雙週倒計時 ---------------- */
   var cycleTimerId = null;
