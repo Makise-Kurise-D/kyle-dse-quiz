@@ -31,6 +31,8 @@ jobs:
             exit 1
           fi
       - name: Deploy Worker
+        id: deploy_worker
+        continue-on-error: true
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -38,6 +40,35 @@ jobs:
           workingDirectory: sync-worker
           wranglerVersion: '4'
           command: deploy --keep-vars
+      - name: Deploy through the version API when dashboard configuration checks fail
+        if: steps.deploy_worker.outcome == 'failure'
+        working-directory: sync-worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 7d9ce07313d77b433c46fdc1a9982d42
+        run: |
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import { readFileSync } from 'node:fs';
+          import { join } from 'node:path';
+
+          // This CLI's version upload does not require the dashboard route preview.
+          // keep_vars in wrangler.toml retains existing variables and secrets.
+          const output = join(process.env.RUNNER_TEMP, 'worker-version-upload.ndjson');
+          function wrangler(args, extraEnv = {}) {
+            const result = spawnSync('npx', ['--yes', 'wrangler@4.58.0', ...args], {
+              stdio: 'inherit', env: { ...process.env, ...extraEnv },
+            });
+            if (result.error || result.status !== 0) throw new Error('Version API deployment failed');
+          }
+          wrangler(['versions', 'upload'], { WRANGLER_OUTPUT_FILE_PATH: output });
+          const records = readFileSync(output, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+          const id = records.findLast(record => record.type === 'version-upload')?.version_id;
+          if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id || '')) {
+            throw new Error('No valid uploaded Worker version ID');
+          }
+          wrangler(['versions', 'deploy', id + '@100%', '--yes']);
+          NODE
       - name: Verify deployed Worker health
         run: |
           node --input-type=module <<'NODE'

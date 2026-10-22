@@ -3,6 +3,8 @@
 name = "snowy-cake-a0a7"
 main = "worker.js"
 compatibility_date = "2026-10-08"
+# Keep dashboard-managed variables and secrets in both deployment paths.
+keep_vars = true
 
 # Set SITE_PASSWORD as a Worker secret, alongside SESSION_SECRET and GITHUB_CLIENT_SECRET.
 # The owner's existing OAuth connection initializes private storage on the first visit.
