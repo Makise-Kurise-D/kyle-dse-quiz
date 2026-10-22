@@ -46,7 +46,7 @@ jobs:
           const base = 'https://snowy-cake-a0a7.3355718646.workers.dev';
           const origin = 'https://makise-kurisu-d.github.io';
           const probes = [
-            { name: 'health', path: '/health', expected: r => r.status === 200 && r.body.ok === true && r.body.passwordConfigured === true && r.body.version === expectedVersion },
+            { name: 'health', path: '/health', expected: r => r.status === 200 && r.body.ok === true && r.body.passwordConfigured === true && r.body.version === expectedVersion && r.body.aiConfigured === true && r.body.aiProvider === 'DeepSeek' && r.body.aiModel === 'deepseek-flash' && r.body.aiFiguresEnabled === true },
             { name: 'login-preflight', path: '/auth/password', options: { method: 'OPTIONS',
               headers: { Origin: origin, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' } },
               expected: r => r.status === 204 && r.allowOrigin === origin },
@@ -73,7 +73,7 @@ jobs:
               const result = { probe: probe.name, status: response.status, elapsedMs: Date.now() - started,
                 allowOrigin: response.headers.get('access-control-allow-origin'),
                 preflightMaxAge: response.headers.get('access-control-max-age'),
-                body: probe.name === 'health' ? { expectedVersion, ok: body.ok, version: body.version, passwordConfigured: body.passwordConfigured } : { error: body.error } };
+                body: probe.name === 'health' ? { expectedVersion, ok: body.ok, version: body.version, passwordConfigured: body.passwordConfigured, aiConfigured: body.aiConfigured, aiProvider: body.aiProvider, aiModel: body.aiModel, aiFiguresEnabled: body.aiFiguresEnabled } : { error: body.error } };
               console.log(JSON.stringify(result));
               if (!probe.expected(result)) process.exitCode = 1;
             } catch (error) {

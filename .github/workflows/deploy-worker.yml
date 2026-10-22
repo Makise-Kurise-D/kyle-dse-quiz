@@ -103,11 +103,13 @@ jobs:
               if (!response.ok) throw new Error(`Health endpoint returned HTTP ${response.status}`);
               const health = await response.json();
               if (health.ok !== true || health.service !== 'kyle-dse-quiz-sync'
-                  || health.version !== expectedVersion || health.passwordConfigured !== true) {
+                  || health.version !== expectedVersion || health.passwordConfigured !== true
+                  || health.aiConfigured !== true || health.aiProvider !== 'DeepSeek'
+                  || health.aiModel !== 'deepseek-flash' || health.aiFiguresEnabled !== true) {
                 throw new Error(`Unexpected /health response: ${JSON.stringify(health)}`);
               }
               console.log(`Verified ${health.service} ${health.version}; password configured`);
-              console.log(`AI configured: ${health.aiConfigured === true}`);
+              console.log(`AI configured: ${health.aiConfigured === true}; model: ${health.aiModel}; optional figures: ${health.aiFiguresEnabled === true}`);
               lastError = null;
               break;
             } catch (error) {

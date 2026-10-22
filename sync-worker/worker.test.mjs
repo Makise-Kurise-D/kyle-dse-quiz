@@ -18,19 +18,20 @@ test('AI stays unconfigured without an authorized provider, model and server key
   assert.equal(aiConfiguration(aiEnv).configured,true);
 });
 
-test('DeepSeek defaults need only its secret, support Pro and never expose credentials or enable images',()=>{
+test('DeepSeek defaults use 4.1 Flash, reject Pro, and keep native vision opt-in',()=>{
   const env={DEEPSEEK_API_KEY:'test-only-deepseek-key',AI_VISION:'true'};
   const config=aiConfiguration(env);
   assert.equal(config.configured,true);assert.equal(config.provider,'DeepSeek');
-  assert.equal(config.model,'deepseek-flash');assert.equal(config.figuresEnabled,false);
+  assert.equal(config.model,'deepseek-flash');assert.equal(config.figuresEnabled,true);
+  assert.equal(aiConfiguration({DEEPSEEK_API_KEY:'test-only-key'}).figuresEnabled,false);
   assert.doesNotMatch(JSON.stringify(config),/test-only-deepseek-key/);
-  assert.equal(aiConfiguration({...env,DEEPSEEK_MODEL:'deepseek-v4-pro'}).configured,true);
+  assert.equal(aiConfiguration({...env,DEEPSEEK_MODEL:'deepseek-v4-pro'}).configured,false);
   assert.equal(aiConfiguration({...env,DEEPSEEK_MODEL:'typo'}).configured,false);
   assert.equal(aiConfiguration({...env,AI_BASE_URL:'https://other.example'}).configured,false,'partial custom settings cannot reuse the DeepSeek key');
   assert.equal(aiConfiguration({...env,...aiEnv}).provider,'custom');
 });
 
-test('DeepSeek uses high thinking without output token caps and sends only text',async()=>{
+test('DeepSeek uses high thinking without output token caps and sends images only when enabled',async()=>{
   const answer='從較濃的地方走向較稀的地方，不耗能。';
   const out=await requestAIFeedback({...aiItem,figures:[{path:'private.jpg'}]}, {answer,mode:'review'},
     {DEEPSEEK_API_KEY:'test-only-deepseek-key',AI_VISION:'true'},['data:image/jpeg;base64,private'],async(url,init)=>{
@@ -40,12 +41,39 @@ test('DeepSeek uses high thinking without output token caps and sends only text'
       assert.equal(payload.model,'deepseek-flash');assert.deepEqual(payload.thinking,{type:'enabled'});
       assert.equal(payload.reasoning_effort,'high');assert.equal(payload.stream,false);
       assert.equal(payload.max_tokens,undefined);assert.equal(payload.max_completion_tokens,undefined);
-      assert.equal(typeof payload.messages.at(-1).content,'string');
-      assert.doesNotMatch(init.body,/base64,private/);
+      assert.ok(Array.isArray(payload.messages.at(-1).content));
+      assert.match(init.body,/base64,private/);
       return Response.json({model:'deepseek-flash',choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture(answer))}}]});
     });
   assert.equal(out.provider,'DeepSeek');assert.equal(out.model,'deepseek-flash');
+  assert.equal(out.materialNotes,'');
+});
+
+test('DeepSeek vision-disabled calls strip even supplied image content',async()=>{
+  const answer='答案';
+  const out=await requestAIFeedback({...aiItem,figures:[{path:'private.jpg'}]}, {answer},
+    {DEEPSEEK_API_KEY:'test-only-key'},['data:image/jpeg;base64,private'],async(url,init)=>{
+      assert.equal(typeof JSON.parse(init.body).messages.at(-1).content,'string');
+      assert.doesNotMatch(init.body,/base64,private/);
+      return Response.json({model:'deepseek-flash',choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture(answer))}}]});
+    });
   assert.match(out.materialNotes,/圖表未送入/);
+});
+
+test('only first-level text-only hints skip thinking; deeper or visual hints keep high',async()=>{
+  const answer='答案';
+  for (const [item,body,expected] of [
+    [aiItem,{answer,mode:'hint',hintLevel:1},'disabled'],
+    [aiItem,{answer,mode:'hint',hintLevel:2},'enabled'],
+    [{...aiItem,tables:[{rows:[]}]},{answer,mode:'hint',hintLevel:1},'enabled'],
+    [{...aiItem,figures:[{path:'private.jpg'}]},{answer,mode:'hint',hintLevel:1},'enabled']]) {
+    await requestAIFeedback(item,body,{DEEPSEEK_API_KEY:'test-only-key'},[],async(url,init)=>{
+      const payload=JSON.parse(init.body);
+      assert.equal(payload.thinking.type,expected);
+      assert.equal(payload.reasoning_effort,expected==='enabled'?'high':undefined);
+      return Response.json({model:'deepseek-flash',choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture(answer))}}]});
+    });
+  }
 });
 
 test('complete feedback is preserved, while even parseable truncated responses are rejected',async()=>{
@@ -158,8 +186,14 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'continuous-reader-20261022');
+  assert.equal(status.version, 'flash41-vision-20261023');
   assert.equal(status.passwordConfigured, false);
+  assert.equal(status.aiFiguresEnabled, false);
+  const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
+  const enabledStatus = await enabled.json();
+  assert.equal(enabledStatus.aiModel, 'deepseek-flash');
+  assert.equal(enabledStatus.aiFiguresEnabled, true);
+  assert.doesNotMatch(JSON.stringify(enabledStatus), /synthetic-only/);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
     method: 'OPTIONS', headers: { Origin: ORIGIN, 'Access-Control-Request-Method': 'PUT' },
@@ -186,7 +220,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'continuous-reader-20261022', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash' });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'flash41-vision-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
