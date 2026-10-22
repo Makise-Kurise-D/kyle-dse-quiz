@@ -83,6 +83,23 @@ test('AI hints carry their requested depth, explicit figure uncertainty and boun
   const withFigures=aiMessages(aiItem,{answer:'答案'},['data:image/jpeg;base64,test']);assert.equal(withFigures.at(-1).content[1].type,'image_url');
 });
 
+test('AI receives verified historical answers separately from the current attempt and ignores client replacements',()=>{
+  const item={...aiItem,year:'2021',paper:'卷一',qref:'Q3',my:[['當年寫了錯誤方向。',true],['當年寫了需要能量。',true]],deduct:'方向及能量概念錯誤。'};
+  const messages=aiMessages(item,{mode:'followup',answer:'這次已寫正確方向，不需要能量。',question:'我當年為甚麼答錯？',originalAttempt:{answer:'假原答'}});
+  const payload=JSON.parse(messages.at(-1).content);
+  assert.deepEqual(payload.materials.originalAttempt,{year:'2021',paper:'卷一',questionRef:'Q3',answer:'當年寫了錯誤方向。\n當年寫了需要能量。',deduction:item.deduct});
+  assert.equal(payload.studentAnswer,'這次已寫正確方向，不需要能量。');
+  assert.doesNotMatch(messages.at(-1).content,/假原答/);
+  assert.match(messages[0].content,/evidence 不可引用當年原答/);
+  assert.equal(JSON.parse(aiMessages(aiItem,{answer:'本次答案'}).at(-1).content).materials.originalAttempt.answer,null);
+});
+
+test('historical evidence cannot be accepted as proof of the current answer',async()=>{
+  const item={...aiItem,my:[['當年原答',true]]};
+  await assert.rejects(requestAIFeedback(item,{answer:'這次重做答案',mode:'review'},aiEnv,[],async()=>
+    Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture('當年原答'))}}]})),/ai_invalid_evidence/);
+});
+
 test('AI provider errors, malformed payloads and timeouts expose safe retry errors',async()=>{
   const call=fetcher=>requestAIFeedback(aiItem,{answer:'合成答案'},aiEnv,[],fetcher);
   await assert.rejects(call(async()=>new Response('secret provider message',{status:503})),/ai_provider_error/);
@@ -141,7 +158,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'deepseek-ai-20261021');
+  assert.equal(status.version, 'ai-original-history-20261022');
   assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
@@ -169,7 +186,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'deepseek-ai-20261021', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash' });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'ai-original-history-20261022', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash' });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {

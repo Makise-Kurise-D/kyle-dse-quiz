@@ -6,7 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'deepseek-ai-20261021';
+const SERVICE_VERSION = 'ai-original-history-20261022';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
@@ -47,6 +47,9 @@ export function aiMessages(item, body, figures = []) {
   const mode = body.mode || 'review', level = [1,2,3].includes(body.hintLevel) ? body.hintLevel : 1;
   const materials = { questionId: item.id, question: item.stemFull || item.stem,
     tables: item.tables || [], reference: item.correct || '', notes: item.points || '',
+    originalAttempt: { year: item.year || '', paper: item.paper || '', questionRef: item.qref || '',
+      answer: Array.isArray(item.my) ? item.my.filter(s => Array.isArray(s) && typeof s[0] === 'string').map(s => s[0]).join('\n') || null : null,
+      deduction: item.deduct || '' },
     checks: (item.checks || []).map((basis, index) => ({ index, basis, scoring: !/^✗/.test(basis) })),
     figureAvailability: (item.figures || []).length ? (figures.length ? '已附圖表' : '圖表未提供；涉及圖表的判斷須標示不確定') : '未收錄圖表' };
   const system = '你是 DSE 文字主觀題輔評助手，只依據隨附的題幹、參考解析和 checks 給分依據，不是正式判卷。' +
@@ -54,6 +57,8 @@ export function aiMessages(item, body, figures = []) {
     '資料或圖表不足、題意不明時標示 uncertain 並說明不足，不可編造評分準則，不輸出分數或 DSE 等級。' +
     '僅輸出 JSON：{summary:string,points:[{index:number,status:"hit"|"partial"|"missed"|"uncertain",evidence:string,reason:string,suggestion:string}],tags:string[],reply:string,uncertainty:string}。' +
     'review 模式須逐一對應所有 checks，包括不計分的防錯提醒；index 必須與提供的 checks 完全一致，evidence 必須原文引用學生答案。' +
+    'materials.originalAttempt 是私人題庫中該年份原卷的已核實作答與當年錯因；studentAnswer 才是本次重做答案，兩者必須分開。' +
+    'review 只核對本次 studentAnswer，evidence 不可引用當年原答。追問當年作答時可引用 originalAttempt.answer 並解釋 deduction；原答為 null 就明說未收錄，不可猜寫或拿正解冒充。' +
     'tags 只可選概念混淆、審題遺漏、計算失誤、表達不完整。hint 或 followup 模式 points 與 tags 留空。' +
     'hint 第1層只指方向，第2層說關鍵概念，不洩漏完整正解；第3層才可展開完整解析。追問只回答本題。用繁體中文。';
   const task = JSON.stringify({ materials, studentAnswer: body.answer || '', mode, hintLevel: level, question: body.question || '' });
