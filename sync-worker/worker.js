@@ -467,12 +467,19 @@ async function githubPaperManifest(subject, year, token, fresh = false) {
   if (sizes && (!Array.isArray(sizes) || sizes.length !== manifest.pages || sizes.some(size =>
     !Array.isArray(size) || size.length !== 2 || size.some(n => !Number.isFinite(n) || n < 1 || n > 20000)))) throw new Error('invalid_paper_sizes');
   const atlas = manifest.thumbnails;
+  const mistakes = manifest.mistakes;
+  if (mistakes !== undefined && (!Array.isArray(mistakes) || mistakes.length > 2000 || mistakes.some((m, i) =>
+    !m || typeof m.label !== 'string' || !m.label.trim() || m.label.length > 100 ||
+    !Number.isInteger(m.page) || m.page < 1 || m.page > manifest.pages ||
+    !Number.isFinite(m.x) || m.x < 0 || m.x >= 1 || !Number.isFinite(m.y) || m.y < 0 || m.y >= 1 ||
+    (i > 0 && (m.page < mistakes[i - 1].page || (m.page === mistakes[i - 1].page && m.y <= mistakes[i - 1].y)))))) throw new Error('invalid_paper_mistakes');
   if (atlas && (!Number.isInteger(atlas.columns) || atlas.columns < 1 || atlas.columns > 5 ||
     !Number.isInteger(atlas.rows) || atlas.rows !== Math.ceil(manifest.pages / atlas.columns) ||
     manifest.pages > 200 || atlas.width !== 200 || atlas.height !== 283)) throw new Error('invalid_paper_thumbnails');
   return { version: manifest.version, pages: manifest.pages, format: 'jpeg',
     source_sha256: sha, dpi: manifest.dpi, quality: manifest.quality,
     ...(sizes ? { page_sizes: sizes } : {}),
+    ...(mistakes ? { mistakes: mistakes.map(({ label, page, x, y }) => ({ label, page, x, y })) } : {}),
     ...(atlas ? { thumbnails: { columns: atlas.columns, rows: atlas.rows, width: 200, height: 283 } } : {}),
     ...(manifest.sections ? { sections: paperSections(manifest) } : {}) };
 }
