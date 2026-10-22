@@ -287,7 +287,7 @@
     clearArchiveBackdrop();
     imageReads.clear();
     paperCatalogSnapshot = null;
-    aiStatusSnapshot = null; todaySelection = null;
+    aiStatusSnapshot = null; aiReplyHistories = Object.create(null); todaySelection = null;
     imageUrls.forEach(function (url) { URL.revokeObjectURL(url); });
     imageUrls.clear();
     if (PRIVATE_BANK) { DATA = emptyBank(); bankLoaded = false; }
@@ -1870,6 +1870,7 @@
 
   var AI_TAGS = ['概念混淆', '審題遺漏', '計算失誤', '表達不完整'];
   var aiStatusSnapshot = null;
+  var aiReplyHistories = Object.create(null);
   function latestAI(id) {
     return Object.values(aiReviews).filter(function (r) { return r && r.questionId === id && r.confirmedAt; })
       .sort(function (a,b) { return b.confirmedAt-a.confirmedAt; })[0];
@@ -1887,6 +1888,7 @@
     canReview = canReview !== false;
     return '<section class="ai-panel" data-ai-id="' + esc(item.id) + '" data-can-review="' + canReview + '"><h3>AI 逐點輔評與提示</h3>' +
       '<p class="review-note">' + (canReview ? '先完成自評，再主動請 AI 檢查。輔評確認後另行儲存，不改原卷分數或 DSE 參考等級。' : '先自行作答；需要時逐層查看提示。提交並自評後可請 AI 逐點檢查。') + '</p>' +
+      (item.my && item.my.length ? '<p class="review-note">AI 可參考本題已收錄的當年作答及錯因；逐點輔評仍只核對本次答案。</p>' : '') +
       '<p class="ai-status" role="status">正在核對 AI 連線…</p>' +
       (canReview ? '<label>供 AI 檢查的本次答案<textarea class="ai-answer" maxlength="6000" rows="4">' + esc(answer) + '</textarea></label>' : '') +
       '<label class="ai-figure-choice" hidden><input class="ai-figures" type="checkbox"> 同時提供本題相關圖表</label>' +
@@ -1895,11 +1897,16 @@
       '<button class="btn btn-ghost" data-ai-mode="hint" data-level="2" type="button" disabled>2 關鍵概念</button>' +
       '<button class="btn btn-ghost" data-ai-mode="hint" data-level="3" type="button" disabled>3 完整解析</button>' +
       '<button class="btn btn-ghost ai-reconnect" type="button">重新檢查連線</button></div>' +
+      '<div class="ai-pager" role="group" aria-label="AI 回覆翻頁" hidden>' +
+      '<button class="btn btn-ghost ai-page-prev" type="button" aria-label="查看上一則 AI 回覆">‹ 上一則</button>' +
+      '<span class="ai-page-label" aria-live="polite"></span>' +
+      '<button class="btn btn-ghost ai-page-next" type="button" aria-label="查看下一則 AI 回覆">下一則 ›</button>' +
+      '<small>未確認的回覆在目前登入頁面內保留，重新整理後清除。</small></div>' +
       '<div class="ai-feedback" aria-live="polite"></div><div class="ai-confirm" hidden><p>確認本次錯因標籤（可取消或補選）</p>' +
       AI_TAGS.map(function (tag) { return '<label><input type="checkbox" value="' + tag + '"> ' + tag + '</label>'; }).join('') +
       '<button class="btn btn-primary ai-save" type="button">確認並儲存輔評</button></div>' +
       '<div class="ai-chat" hidden><label>繼續追問本題<input class="ai-question" type="text" maxlength="2000"></label>' +
-      '<button class="btn btn-ghost" data-ai-mode="followup" type="button" disabled>送出追問</button><div class="ai-conversation" aria-live="polite"></div></div></section>';
+      '<button class="btn btn-ghost" data-ai-mode="followup" type="button" disabled>送出追問</button></div></section>';
   }
   function aiError(code) {
     return { ai_not_configured:'AI 服務尚未配置，暫時不能取得真實輔評。', ai_empty_answer:'請先填寫文字答案，再請 AI 檢查。', ai_insufficient_basis:'本題尚未提供給分依據，無法可靠輔評。',
@@ -1910,9 +1917,40 @@
   function bindAIPanels(root, items) {
     $all('.ai-panel', root).forEach(function (widget) {
       var item = items.filter(function (it) { return it.id === widget.dataset.aiId; })[0], auth = localStorage.getItem(LS_SYNC_SESSION);
-      var status = $('.ai-status',widget), output = $('.ai-feedback',widget), pending = null, ready = false, busy = false, hintLevel = 0, messages = [];
+      var status = $('.ai-status',widget), output = $('.ai-feedback',widget), pending = null, ready = false, busy = false;
+      var history = aiReplyHistories[item.id];
+      if (!history || history.auth !== auth) history = aiReplyHistories[item.id] = { auth:auth, entries:[], index:-1, hintLevel:0, messages:[] };
+      var viewIndex = history.index;
       function current() { return widget.isConnected && localStorage.getItem(LS_SYNC_SESSION) === auth; }
-      function enable() { $all('[data-ai-mode]',widget).forEach(function (b) { b.disabled = !ready || busy || (b.dataset.aiMode==='hint' && Number(b.dataset.level)>hintLevel+1); }); }
+      function enable() {
+        $all('[data-ai-mode]',widget).forEach(function (b) { b.disabled = !ready || busy || (b.dataset.aiMode==='hint' && Number(b.dataset.level)>history.hintLevel+1); });
+        $('.ai-save',widget).disabled = !pending || busy;
+      }
+      function showReply(index) {
+        if (!current()) return;
+        viewIndex = history.index = Math.max(0, Math.min(index, history.entries.length-1));
+        var entry = history.entries[viewIndex];
+        $('.ai-pager',widget).hidden = !entry;
+        $('.ai-page-prev',widget).disabled = viewIndex <= 0;
+        $('.ai-page-next',widget).disabled = viewIndex >= history.entries.length-1;
+        pending = entry && entry.mode === 'review' && !entry.confirmedAt && widget.dataset.canReview !== 'false' ? entry : null;
+        $('.ai-confirm',widget).hidden = !pending;
+        $('.ai-chat',widget).hidden = !entry;
+        if (entry) {
+          var title = entry.mode === 'review' ? '逐點輔評' : entry.mode === 'followup' ? '本題追問' : ['','方向提示','關鍵概念','完整解析'][entry.hintLevel];
+          $('.ai-page-label',widget).textContent = (viewIndex+1)+' / '+history.entries.length+' · '+title;
+          output.innerHTML = '<p class="ai-reply-meta">'+esc(fmtDateTime(entry.generatedAt))+(entry.confirmedAt?' · 已確認儲存':'')+'</p>' +
+            (entry.mode === 'review' ? '<details class="ai-reviewed-answer"><summary>這則輔評對應的本次答案</summary><p>'+esc(entry.answer)+'</p></details>' : '') +
+            (entry.mode === 'followup' ? '<p><b>你的追問：</b>'+esc(entry.question)+'</p>' : '') + aiFeedbackHtml(entry.feedback);
+          $all('.ai-confirm input',widget).forEach(function (cb) { cb.checked = entry.tags.indexOf(cb.value)>=0; });
+        }
+        enable();
+      }
+      $('.ai-page-prev',widget).addEventListener('click',function () { showReply(viewIndex-1); });
+      $('.ai-page-next',widget).addEventListener('click',function () { showReply(viewIndex+1); });
+      $all('.ai-confirm input',widget).forEach(function (cb) { cb.addEventListener('change',function () {
+        if (current() && pending) pending.tags = $all('.ai-confirm input:checked',widget).map(function (c) { return c.value; });
+      }); });
       function call(path, body) {
         if (!auth || !SYNC_API) return Promise.reject({code:'not_connected'});
         return syncFetch(path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+auth,'Content-Type':'application/json'},cache:'no-store',body:body?JSON.stringify(body):undefined},function (response) {
@@ -1937,30 +1975,28 @@
         if(mode==='review' && !answer.trim()){status.textContent=aiError('ai_empty_answer');return;}
         if(mode==='followup' && !question.trim()){status.textContent='請輸入關於本題的問題。';return;}
         busy=true;enable();status.textContent='AI 正在核對本題資料…';
-        call('/ai/review',{questionId:item.id,answer:answer,mode:mode,hintLevel:Number(button.dataset.level)||1,question:question,messages:messages.slice(-6),includeFigures:$('.ai-figures',widget).checked}).then(function (data) {
+        call('/ai/review',{questionId:item.id,answer:answer,mode:mode,hintLevel:Number(button.dataset.level)||1,question:question,messages:history.messages.slice(-6),includeFigures:$('.ai-figures',widget).checked}).then(function (data) {
           if(!current())return;
           if(data.questionId!==item.id || !Array.isArray(data.points))throw {code:'ai_invalid_response'};
           status.textContent='AI 輔助建議 · 請核對給分依據及判斷限制。';
-          if(mode==='review') {
-            pending={questionId:item.id,answer:answer,feedback:data,tags:data.tags||[],generatedAt:data.generatedAt};
-            output.innerHTML=aiFeedbackHtml(data);$('.ai-confirm',widget).hidden=false;
-            $all('.ai-confirm input',widget).forEach(function (cb) { cb.checked=pending.tags.indexOf(cb.value)>=0; });
-            $('.ai-save',widget).disabled=false;
-          } else if(mode==='hint') { pending=null;$('.ai-confirm',widget).hidden=true;hintLevel=Math.max(hintLevel,Number(button.dataset.level));output.innerHTML=aiFeedbackHtml(data); }
-          else {
-            var row=document.createElement('div');row.className='ai-reply';row.textContent='你：'+question+'\nAI：'+(data.reply||data.summary);$('.ai-conversation',widget).appendChild(row);$('.ai-question',widget).value='';
-          }
-          messages.push({role:'user',content:(mode==='followup'?question:mode==='hint'?'提示第 '+button.dataset.level+' 層':'請逐點核對本次答案').slice(0,3000)},{role:'assistant',content:JSON.stringify(data).slice(0,3000)});
-          $('.ai-chat',widget).hidden=false;
+          history.entries.push({questionId:item.id,answer:answer,feedback:data,tags:(data.tags||[]).slice(),generatedAt:data.generatedAt,
+            mode:mode,hintLevel:Number(button.dataset.level)||1,question:question});
+          if(mode==='hint') history.hintLevel=Math.max(history.hintLevel,Number(button.dataset.level));
+          if(mode==='followup') $('.ai-question',widget).value='';
+          history.messages.push({role:'user',content:(mode==='followup'?question:mode==='hint'?'提示第 '+button.dataset.level+' 層':'請逐點核對本次答案').slice(0,3000)},{role:'assistant',content:JSON.stringify(data).slice(0,3000)});
+          history.messages=history.messages.slice(-6);
+          showReply(history.entries.length-1);
         }).catch(function (err) { if(current()){status.textContent=aiError(err.code);if(err.status===401)expireConnection(err,auth);} }).finally(function () {busy=false;if(current())enable();});
       }); });
       $('.ai-save',widget).addEventListener('click',function () {
-        if(!pending || busy)return;
+        if(!current() || !pending || busy)return;
+        if(pending.confirmedAt){showReply(viewIndex);return;}
         if($('.ai-answer',widget).value!==pending.answer){status.textContent='答案已更改，請重新檢查後再儲存。';return;}
         var at=Date.now(), id='ai-'+at+'-'+Math.random().toString(36).slice(2);
         aiReviews[id]=Object.assign({},pending,{confirmedAt:at,tags:$all('.ai-confirm input:checked',widget).map(function (cb) { return cb.value; })});
-        pending=null;$('.ai-save',widget).disabled=true;save();status.textContent='已獨立儲存輔評與你確認的標籤 · '+fmtDateTime(at)+'。原卷成績及練習次數不變。';
+        pending.confirmedAt=at;pending=null;showReply(viewIndex);save();status.textContent='已獨立儲存輔評與你確認的標籤 · '+fmtDateTime(at)+'。原卷成績及練習次數不變。';
       });
+      if(history.entries.length) showReply(history.index);
       connect();
     });
   }
