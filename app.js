@@ -1533,6 +1533,28 @@
     hydratePrivateImages();
   }
 
+  function questionContentHtml(it) {
+    // Older MC cards carry a complete question image, including their options.
+    if (it.kind === 'mc' && it.img) return '<img class="q-img" ' +
+      (PRIVATE_BANK ? 'data-bank-image="' + esc(it.img) + '"' : 'src="' + esc(it.img) + '"') + ' alt="原題裁圖">';
+    function text(value) { return esc(value).replace(/\n/g, '<br>'); }
+    return '<div class="q-stem q-content"><p>' + text(it.stemFull || it.stem) + '</p>' +
+      (Array.isArray(it.tables) ? it.tables.map(function (table) {
+        return '<div class="ml-table-wrap" tabindex="0" role="region" aria-label="' + esc(table.caption) + '"><table><caption>' + text(table.caption) +
+          '</caption><thead><tr>' + table.headers.map(function (h) { return '<th scope="col">' + text(h) + '</th>'; }).join('') +
+          '</tr></thead><tbody>' + table.rows.map(function (row) { return '<tr>' + row.map(function (cell) { return '<td>' + text(cell) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
+      }).join('') : '') +
+      (Array.isArray(it.figures) ? it.figures.map(function (f) {
+        if (!f || !/^images\/(?:chem|bio|math)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path)) return '';
+        return '<figure><img class="q-img" ' + (PRIVATE_BANK ? 'data-bank-image="' + esc(f.path) + '"' : 'src="' + esc(f.path) + '"') +
+          ' loading="lazy" decoding="async" alt="' + esc(f.alt || '原題圖表') + '"' +
+          (f.width > 0 && f.height > 0 ? ' width="' + Number(f.width) + '" height="' + Number(f.height) + '"' : '') +
+          '><figcaption>' + text(f.alt || '') + '</figcaption></figure>';
+      }).join('') : '') +
+      (it.kind === 'mc' && Array.isArray(it.options) ? '<ol class="q-options" type="A" aria-label="選項內容">' +
+        it.options.map(function (option) { return '<li>' + text(option) + '</li>'; }).join('') + '</ol>' : '') + '</div>';
+  }
+
   function questionHtml(it, idx, draft, mcOnly) {
     var head =
       '<div class="sq-head">' +
@@ -1550,8 +1572,7 @@
     if (it.kind === 'mc') {
       var picked = draft.pick[it.id] || '';
       body =
-        (it.img ? '<img class="q-img" ' + (PRIVATE_BANK ? 'data-bank-image="' + esc(it.img) + '"' : 'src="' + esc(it.img) + '"') + ' alt="原題裁圖">' :
-                  '<div class="q-stem">' + esc(it.stemFull || it.stem).replace(/\n/g, '<br>') + '</div>') +
+        questionContentHtml(it) +
         '<div class="opts" role="group" aria-label="第 ' + (idx + 1) + ' 題，選擇答案" data-id="' + esc(it.id) + '">' +
           ['A', 'B', 'C', 'D'].map(function (l) {
             return '<button type="button" class="opt' + (picked === l ? ' picked' : '') +
@@ -1561,7 +1582,7 @@
     } else {
       var v = draft.text[it.id] || '';
       body =
-        '<div class="q-stem">' + esc(it.stemFull || it.stem).replace(/\n/g, '<br>') + '</div>' +
+        questionContentHtml(it) +
         '<textarea class="ans-box" aria-label="第 ' + (idx + 1) + ' 題默寫答案" data-id="' + esc(it.id) + '" rows="4" ' +
           'placeholder="默寫答案（可留白，改用紙寫就剔下面格仔）……">' + esc(v) + '</textarea>' +
         '<label class="paper-lbl"><input type="checkbox" class="paper-chk" data-id="' + esc(it.id) + '"' +
