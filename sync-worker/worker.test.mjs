@@ -186,7 +186,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'flash41-vision-20261023');
+  assert.equal(status.version, 'reader-mistake-jump-20261023');
   assert.equal(status.passwordConfigured, false);
   assert.equal(status.aiFiguresEnabled, false);
   const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
@@ -220,7 +220,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'flash41-vision-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'reader-mistake-jump-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -676,6 +676,7 @@ test('paper navigation validates final pages and metadata caching never bypasses
   const sha = 'e'.repeat(64), version = sha.slice(0, 16);
   let thumbnails = { columns: 2, rows: 1, width: 200, height: 283 };
   let page_sizes = [[595, 842], [700, 842]];
+  let mistakes = [{ label: 'Q1(a)', page: 2, x: 0.75, y: 0.1, privateExtra: 'omit' }, { label: 'Q1(b)', page: 2, x: 0.75, y: 0.4 }];
   let sections = [{ label: 'Summary', page: 1 }, { label: 'Part B', page: 2 }];
   globalThis.fetch = async input => {
     const url = String(input);
@@ -686,7 +687,7 @@ test('paper navigation validates final pages and metadata caching never bypasses
     }
     if (url.endsWith('/manifest.json')) {
       counts.manifest++;
-      return Response.json({ encoding: 'base64', content: b64json({ version, source_sha256: sha, pages: 2, format: 'jpeg', dpi: 200, quality: 85, sections, thumbnails, page_sizes }) });
+      return Response.json({ encoding: 'base64', content: b64json({ version, source_sha256: sha, pages: 2, format: 'jpeg', dpi: 200, quality: 85, sections, thumbnails, page_sizes, mistakes }) });
     }
     if (url.includes('/question-bank/images/')) counts.figures++; else counts.pages++;
     return Response.json({ encoding: 'base64', content: btoa(String.fromCharCode(255, 216, 255, 217)) });
@@ -713,6 +714,20 @@ test('paper navigation validates final pages and metadata caching never bypasses
   assert.equal(counts.pages, 3, 'all previews use one private image request');
   assert.equal((await request(`/papers/chem/2022/thumbnails/${'f'.repeat(16)}`)).status, 404);
   assert.equal(counts.pages, 3);
+  const indexed = await (await request('/papers/chem/2022/manifest?refresh=mistakes')).json();
+  assert.deepEqual(indexed.mistakes, mistakes.map(({ label, page, x, y }) => ({ label, page, x, y })));
+  const goodMistakes = mistakes;
+  for (const invalid of [[{ ...mistakes[0], page: 3 }], [{ ...mistakes[0], y: 1 }],
+    [{ ...mistakes[0], x: -0.1 }], [...mistakes].reverse(), [mistakes[0], mistakes[0]],
+    [{ ...mistakes[0], label: '' }], { page: 2 }]) {
+    mistakes = invalid;
+    assert.equal((await request('/papers/chem/2022/manifest?refresh=invalid-mistake')).status, 502);
+  }
+  mistakes = [];
+  assert.deepEqual((await (await request('/papers/chem/2022/manifest?refresh=no-mistakes')).json()).mistakes, []);
+  mistakes = undefined;
+  assert.equal('mistakes' in await (await request('/papers/chem/2022/manifest?refresh=legacy')).json(), false);
+  mistakes = goodMistakes;
   thumbnails = { ...thumbnails, rows: 0 };
   assert.equal((await request('/papers/chem/2022/manifest?refresh=atlas')).status, 502);
   thumbnails = { columns: 2, rows: 1, width: 200, height: 283 };

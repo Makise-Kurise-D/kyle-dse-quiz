@@ -7,6 +7,11 @@
     var rows = [], queue = [], active = 0, frame = null, atlasUrl = null, warmTimer;
     var atlas = manifest.thumbnails, sections = manifest.sections || [], resizeObserver;
     var lastWidth = root.clientWidth, lastHeight = root.scrollHeight, anchorFraction = 0;
+    var mistakes = (manifest.mistakes || []).filter(function (m) {
+      return Number.isInteger(m.page) && m.page > 0 && m.page <= manifest.pages &&
+        Number.isFinite(m.x) && m.x >= 0 && m.x < 1 && Number.isFinite(m.y) && m.y >= 0 && m.y < 1;
+    }).sort(function (a, b) { return a.page - b.page || a.y - b.y; });
+    var lastJump = null, marker = null;
     function measureToolbar() {
       if (options.toolbar.getBoundingClientRect) options.toolbar.parentElement.style.setProperty('--paper-toolbar-height', options.toolbar.getBoundingClientRect().height + 'px');
     }
@@ -134,15 +139,41 @@
       if (stopped || frame !== null) return;
       frame = window.requestAnimationFrame ? window.requestAnimationFrame(track) : setTimeout(track, 16);
     }
-    function go(page) {
+    function go(page, position) {
       if (stopped || !Number.isInteger(page) || page < 1 || page > manifest.pages) return;
+      clearTimeout(warmTimer); lastJump = null;
+      if (marker) { marker.remove(); marker = null; }
       current = page; anchorFraction = 0; notify();
       if (rows[page - 1].sheet.getBoundingClientRect) {
         var targetTop = scroll.getBoundingClientRect().top + options.toolbar.getBoundingClientRect().height + 16;
-        var delta = rows[page - 1].sheet.getBoundingClientRect().top - targetTop;
+        var body = rows[page - 1].sheet.querySelector('.paper-sheet-body');
+        var box = position ? body.getBoundingClientRect() : rows[page - 1].sheet.getBoundingClientRect();
+        var delta = box.top + (position ? position.y * box.height : 0) - targetTop;
         scroll.scrollTop += delta;
+        if (position) {
+          marker = document.createElement('span'); marker.className = 'paper-mistake-marker';
+          marker.setAttribute('aria-hidden', 'true');
+          marker.style.left = position.x * 100 + '%'; marker.style.top = position.y * 100 + '%';
+          body.appendChild(marker);
+        }
       }
       nearby();
+    }
+    function nextMistake() {
+      if (stopped || !mistakes.length) return null;
+      var top = Math.max(scroll.getBoundingClientRect().top, options.toolbar.getBoundingClientRect().bottom) + 16;
+      var index = -1;
+      if (lastJump && Math.abs(scroll.scrollTop - lastJump.scrollTop) < 3) index = lastJump.index + 1;
+      else index = mistakes.findIndex(function (m) {
+        if (m.page < current) return false;
+        var box = rows[m.page - 1].sheet.querySelector('.paper-sheet-body').getBoundingClientRect();
+        return box.top + m.y * box.height > top + 8;
+      });
+      var wrapped = index < 0 || index >= mistakes.length;
+      if (wrapped) index = 0;
+      var mistake = mistakes[index]; go(mistake.page, mistake);
+      lastJump = { index: index, scrollTop: scroll.scrollTop };
+      return { label: mistake.label, page: mistake.page, index: index + 1, total: mistakes.length, wrapped: wrapped };
     }
     scroll.addEventListener('scroll', schedule, { passive: true });
     function resize() {
@@ -173,7 +204,7 @@
         });
       }).catch(function () { if (!stopped && options.onThumbnailError) options.onThumbnailError(); });
     }
-    return { go: go, layoutChange: function (change) { change(); resize(); }, destroy: function () {
+    return { go: go, nextMistake: nextMistake, layoutChange: function (change) { change(); resize(); }, destroy: function () {
       stopped = true; clearTimeout(warmTimer); queue = [];
       scroll.removeEventListener('scroll', schedule); window.removeEventListener('resize', resize);
       if (resizeObserver) resizeObserver.disconnect();
