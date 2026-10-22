@@ -13,9 +13,48 @@ function aiFixture(answer,status='hit') { return {summary:'合成服務測試回
 
 test('AI stays unconfigured without an authorized provider, model and server key',()=>{
   assert.equal(aiConfiguration({}).configured,false);
-  assert.deepEqual(aiConfiguration({}).missing,['AI_BASE_URL','AI_MODEL','AI_API_KEY']);
+  assert.deepEqual(aiConfiguration({}).missing,['DEEPSEEK_API_KEY']);
   assert.equal(aiConfiguration({...aiEnv,AI_BASE_URL:'http://example.com'}).configured,false);
   assert.equal(aiConfiguration(aiEnv).configured,true);
+});
+
+test('DeepSeek defaults need only its secret, support Pro and never expose credentials or enable images',()=>{
+  const env={DEEPSEEK_API_KEY:'test-only-deepseek-key',AI_VISION:'true'};
+  const config=aiConfiguration(env);
+  assert.equal(config.configured,true);assert.equal(config.provider,'DeepSeek');
+  assert.equal(config.model,'deepseek-flash');assert.equal(config.figuresEnabled,false);
+  assert.doesNotMatch(JSON.stringify(config),/test-only-deepseek-key/);
+  assert.equal(aiConfiguration({...env,DEEPSEEK_MODEL:'deepseek-v4-pro'}).configured,true);
+  assert.equal(aiConfiguration({...env,DEEPSEEK_MODEL:'typo'}).configured,false);
+  assert.equal(aiConfiguration({...env,AI_BASE_URL:'https://other.example'}).configured,false,'partial custom settings cannot reuse the DeepSeek key');
+  assert.equal(aiConfiguration({...env,...aiEnv}).provider,'custom');
+});
+
+test('DeepSeek uses high thinking without output token caps and sends only text',async()=>{
+  const answer='從較濃的地方走向較稀的地方，不耗能。';
+  const out=await requestAIFeedback({...aiItem,figures:[{path:'private.jpg'}]}, {answer,mode:'review'},
+    {DEEPSEEK_API_KEY:'test-only-deepseek-key',AI_VISION:'true'},['data:image/jpeg;base64,private'],async(url,init)=>{
+      assert.equal(url,'https://api.deepseek.com/chat/completions');
+      assert.equal(init.headers.authorization,'Bearer test-only-deepseek-key');
+      const payload=JSON.parse(init.body);
+      assert.equal(payload.model,'deepseek-flash');assert.deepEqual(payload.thinking,{type:'enabled'});
+      assert.equal(payload.reasoning_effort,'high');assert.equal(payload.stream,false);
+      assert.equal(payload.max_tokens,undefined);assert.equal(payload.max_completion_tokens,undefined);
+      assert.equal(typeof payload.messages.at(-1).content,'string');
+      assert.doesNotMatch(init.body,/base64,private/);
+      return Response.json({model:'deepseek-flash',choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture(answer))}}]});
+    });
+  assert.equal(out.provider,'DeepSeek');assert.equal(out.model,'deepseek-flash');
+  assert.match(out.materialNotes,/圖表未送入/);
+});
+
+test('complete feedback is preserved, while even parseable truncated responses are rejected',async()=>{
+  const fixture=aiFixture('答案');fixture.reply='完整解析'.repeat(1000);
+  const call=finish_reason=>requestAIFeedback(aiItem,{answer:'答案',mode:'review'},aiEnv,[],async()=>
+    Response.json({choices:[{finish_reason,message:{content:JSON.stringify(fixture)}}]}));
+  assert.equal((await call('stop')).reply,fixture.reply);
+  await assert.rejects(call('length'),/ai_invalid_response/);
+  await assert.rejects(call('content_filter'),/ai_invalid_response/);
 });
 
 test('synthetic provider fixtures map synonymous, partial and incorrect answers to the supplied checks',async()=>{
@@ -24,7 +63,7 @@ test('synthetic provider fixtures map synonymous, partial and incorrect answers 
       assert.equal(url,'https://ai.example/v1/chat/completions');
       const payload=JSON.parse(init.body);assert.match(payload.messages[0].content,/同義表達/);
       assert.match(payload.messages.at(-1).content,/由高濃度向低濃度移動/);
-      return Response.json({choices:[{message:{content:JSON.stringify(aiFixture(answer,status))}}]});
+      return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture(answer,status))}}]});
     });
     assert.equal(out.points.length,3);assert.equal(out.points[0].status,status);assert.equal(out.points[0].basis,aiItem.checks[0]);assert.equal(out.points[2].scoring,false);
   }
@@ -76,7 +115,7 @@ test('AI routes reuse auth, reject blank answers, enforce limits and preserve se
     const url=String(input);
     if(url.endsWith('/user'))return Response.json({login:'Makise-Kurisu-D'});
     if(url.includes('/contents/question-bank/bank.json'))return Response.json({encoding:'base64',content:b64json({subjects:{chem:{items:[aiItem,{...aiItem,id:'no-basis',checks:[]}]}}})});
-    if(url==='https://ai.example/v1/chat/completions'){providerCalls++;const payload=JSON.parse(init.body),answer=JSON.parse(payload.messages.at(-1).content).studentAnswer;return Response.json({choices:[{message:{content:JSON.stringify(aiFixture(answer))}}]});}
+    if(url==='https://ai.example/v1/chat/completions'){providerCalls++;const payload=JSON.parse(init.body),answer=JSON.parse(payload.messages.at(-1).content).studentAnswer;return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture(answer))}}]});}
     throw new Error('Unexpected synthetic network request');
   };t.after(()=>{globalThis.fetch=original;});
   const env={...aiEnv,SESSIONS:new MemoryKV(),SESSION_SECRET:SECRET,SITE_PASSWORD:'test-password',GITHUB_TOKEN:'synthetic-ai-token'};
@@ -102,7 +141,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'review-ai-search-20261019');
+  assert.equal(status.version, 'deepseek-ai-20261021');
   assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
@@ -130,7 +169,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'review-ai-search-20261019', passwordConfigured: false, aiConfigured: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'deepseek-ai-20261021', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash' });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {

@@ -6,21 +6,41 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'review-ai-search-20261019';
+const SERVICE_VERSION = 'deepseek-ai-20261021';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
 const aiFlights = new Set();
 export const AI_TAGS = ['概念混淆', '審題遺漏', '計算失誤', '表達不完整'];
 
-export function aiConfiguration(env) {
-  const missing = ['AI_BASE_URL', 'AI_MODEL', 'AI_API_KEY'].filter(key => typeof env[key] !== 'string' || !env[key].trim());
+function aiSettings(env) {
+  const present = key => typeof env[key] === 'string' && !!env[key].trim();
+  // Never send the DeepSeek credential to a separately configured provider.
+  const custom = ['AI_BASE_URL', 'AI_MODEL', 'AI_API_KEY'].some(present);
+  const baseUrl = custom ? (env.AI_BASE_URL || '').trim() : 'https://api.deepseek.com';
+  const model = (custom ? env.AI_MODEL || '' : env.DEEPSEEK_MODEL || 'deepseek-flash').trim();
+  const apiKey = custom ? env.AI_API_KEY : env.DEEPSEEK_API_KEY;
+  const missing = (custom ? ['AI_BASE_URL', 'AI_MODEL', 'AI_API_KEY'] : ['DEEPSEEK_API_KEY']).filter(key => !present(key));
   let valid = true;
-  if (!missing.includes('AI_BASE_URL')) {
-    try { const u = new URL(env.AI_BASE_URL); valid = u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash; }
+  let deepseek = false;
+  if (baseUrl) {
+    try {
+      const u = new URL(baseUrl);
+      valid = u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash;
+      deepseek = u.hostname === 'api.deepseek.com';
+    }
     catch { valid = false; }
   }
-  return { configured: missing.length === 0 && valid, missing, invalidEndpoint: !valid, figuresEnabled: env.AI_VISION === 'true', dailyLimit: 20 };
+  const invalidModel = deepseek && !['deepseek-flash', 'deepseek-v4-pro'].includes(model);
+  return { baseUrl, model, apiKey, deepseek, configuration: {
+    configured: missing.length === 0 && valid && !invalidModel, missing, invalidEndpoint: !valid, invalidModel,
+    provider: deepseek ? 'DeepSeek' : 'custom', model,
+    figuresEnabled: !deepseek && env.AI_VISION === 'true', dailyLimit: 20,
+  } };
+}
+
+export function aiConfiguration(env) {
+  return aiSettings(env).configuration;
 }
 
 export function aiMessages(item, body, figures = []) {
@@ -45,7 +65,7 @@ export function aiMessages(item, body, figures = []) {
 
 export function validateAIFeedback(value, item, answer, mode) {
   if (!value || typeof value.summary !== 'string' || !Array.isArray(value.points) || !Array.isArray(value.tags)) throw new Error('ai_invalid_response');
-  const clean = text => typeof text === 'string' ? text.slice(0, 3000) : '';
+  const clean = text => typeof text === 'string' ? text : '';
   const checks = item.checks || [];
   if (mode === 'review' && (value.points.length !== checks.length || new Set(value.points.map(p=>p.index)).size !== checks.length)) throw new Error('ai_invalid_response');
   const points = mode !== 'review' ? [] : value.points.map(p => {
@@ -61,20 +81,34 @@ export function validateAIFeedback(value, item, answer, mode) {
 }
 
 export async function requestAIFeedback(item, body, env, figures = [], fetcher = fetch) {
-  if (!aiConfiguration(env).configured) throw new Error('ai_not_configured');
-  const endpoint = env.AI_BASE_URL.replace(/\/+$/, '') + '/chat/completions';
-  const controller = new AbortController(), timer = setTimeout(()=>controller.abort(), 25000);
+  const settings = aiSettings(env);
+  if (!settings.configuration.configured) throw new Error('ai_not_configured');
+  // DeepSeek currently accepts text; do not send private images to text models.
+  if (!settings.configuration.figuresEnabled) figures = [];
+  const endpoint = settings.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+  const payload = { model: settings.model, messages: aiMessages(item, body, figures),
+    response_format: { type: 'json_object' }, stream: false };
+  if (settings.deepseek) {
+    payload.thinking = { type: 'enabled' };
+    payload.reasoning_effort = 'high';
+  }
+  const controller = new AbortController(), timer = setTimeout(()=>controller.abort(), 90000);
   try {
     const response = await fetcher(endpoint, { method: 'POST', signal: controller.signal,
-      headers: { authorization: `Bearer ${env.AI_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: env.AI_MODEL, messages: aiMessages(item, body, figures), response_format: { type: 'json_object' }, max_tokens: 3000 }) });
+      headers: { authorization: `Bearer ${settings.apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify(payload) });
     if (!response.ok) throw new Error(response.status === 429 ? 'ai_provider_busy' : 'ai_provider_error');
-    const raw = await response.text();
-    if (raw.length > 100000) throw new Error('ai_invalid_response');
-    let value;
-    try { value = JSON.parse(JSON.parse(raw).choices[0].message.content); } catch { throw new Error('ai_invalid_response'); }
+    let value, result;
+    try {
+      result = await response.json();
+      const choice = result.choices[0];
+      if (choice.finish_reason !== 'stop') throw new Error('incomplete');
+      value = JSON.parse(choice.message.content);
+    } catch { throw new Error('ai_invalid_response'); }
     return { ...validateAIFeedback(value, item, body.answer || '', body.mode || 'review'), questionId: item.id,
-      mode: body.mode || 'review', generatedAt: Date.now(), model: env.AI_MODEL, materialNotes: (item.figures || []).length && !figures.length ? '圖表未送入 AI；涉及圖表的判斷需另行核實。' : '' };
+      mode: body.mode || 'review', generatedAt: Date.now(), model: result.model || settings.model,
+      provider: settings.configuration.provider,
+      materialNotes: (item.figures || []).length && !figures.length ? '圖表未送入 AI；涉及圖表的判斷需另行核實。' : '' };
   } catch (error) {
     if (error.name === 'AbortError' || controller.signal.aborted) throw new Error('ai_timeout');
     throw error;
@@ -772,6 +806,7 @@ const worker = {
     if (url.pathname === '/health') return json({ ok: true, service: 'kyle-dse-quiz-sync',
       version: SERVICE_VERSION, passwordConfigured: typeof env.SITE_PASSWORD === 'string' && !!env.SITE_PASSWORD.trim(),
       aiConfigured: aiConfiguration(env).configured,
+      aiProvider: aiConfiguration(env).provider, aiModel: aiConfiguration(env).model,
     });
     return json({ error: 'not_found' }, 404);
   },
