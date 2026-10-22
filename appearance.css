@@ -219,6 +219,17 @@ html[data-appearance=full] .rail-item:after{background:var(--header);border-radi
 html[data-appearance=full][data-theme=night] .rail-item:before{background:rgba(237,84,142,.4)}
 html[data-appearance=full][data-theme=night] .rail-item:after{background:rgba(255,195,220,.76)}
 html[data-appearance=full][data-theme=night] .rail-item.active:after{background:rgba(255,241,248,.88)}
+/* Night frames stay upright and rounded in every interaction state. */
+html[data-appearance=full][data-theme=night] .rail-item{transform:none;border-radius:14px}
+html[data-appearance=full][data-theme=night] .rail-item:before,
+html[data-appearance=full][data-theme=night] .rail-item:after{clip-path:none;border-radius:14px;transform:none}
+html[data-appearance=full][data-theme=night] .rail-item.active:after{transform:translate(-3px,-2px)}
+html[data-appearance=full][data-theme=night] .rail-item:hover{transform:translate(4px,-3px)}
+html[data-appearance=full][data-theme=night] .rail-item:hover:before{transform:translate(-5px,4px)}
+html[data-appearance=full][data-theme=night] .home-stage .tile{clip-path:none;border-radius:14px;transform:none}
+html[data-appearance=full][data-theme=night] .home-stage .tile:hover{transform:translate(-4px,-3px)}
+html[data-appearance=full][data-theme=night] .continue-command{transform:none;border-radius:14px}
+
 html[data-appearance=full] .home-stage .hero .hero-bubble{
  background:var(--glass-sheen),var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);
  border-radius:var(--radius);filter:none;box-shadow:var(--glass-shadow);
