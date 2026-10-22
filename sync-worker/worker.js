@@ -477,9 +477,19 @@ async function githubPaperManifest(subject, year, token, fresh = false) {
     ...(manifest.sections ? { sections: paperSections(manifest) } : {}) };
 }
 
+const PASSWORD_VERIFIER = /^pbkdf2-sha256:100000:([0-9a-f]{32}):([0-9a-f]{64})$/;
 function userPassword(env, userId) {
-  if (userId === 'yeelam') return /^[0-9a-f]{64}$/.test(env.YEELAM_PASSWORD_SHA256 || '') ? env.YEELAM_PASSWORD_SHA256 : null;
+  const configured = userId === 'kyle' ? env.KYLE_PASSWORD_VERIFIER : userId === 'yeelam' ? env.YEELAM_PASSWORD_VERIFIER : null;
+  if (configured !== undefined && configured !== null) return PASSWORD_VERIFIER.test(configured) ? configured : null;
   return userId === 'kyle' ? env.SITE_PASSWORD : null;
+}
+async function passwordDigests(password, configured) {
+  const verifier = PASSWORD_VERIFIER.exec(configured || '');
+  if (!verifier) return [await digest(password), await digest(configured || 'unconfigured-user')];
+  const salt = Uint8Array.from(verifier[1].match(/../g), byte => parseInt(byte, 16));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100000 }, key, 256);
+  return [[...new Uint8Array(bits)].map(byte => byte.toString(16).padStart(2, '0')).join(''), verifier[2]];
 }
 async function passwordVersion(env, userId = 'kyle') {
   return signedState(String(userPassword(env, userId)), env.SESSION_SECRET);
@@ -618,11 +628,9 @@ const worker = {
       const attempts = JSON.parse(await env.SESSIONS.get(limitKey) || 'null');
       const recent = attempts && attempts.until > Date.now() ? attempts : { count: 0, until: Date.now() + 900000 };
       if (recent.count >= 5) return json({ error: 'too_many_attempts' }, 429, cors(request, { 'retry-after': String(Math.ceil((recent.until - Date.now()) / 1000)) }));
-      const suppliedDigest = userId === 'yeelam'
-        ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body.password)))].map(b => b.toString(16).padStart(2, '0')).join('')
-        : await digest(body.password);
+      const [suppliedDigest, expectedDigest] = await passwordDigests(body.password, password);
       const supplied = new TextEncoder().encode(suppliedDigest);
-      const expected = new TextEncoder().encode(userId === 'yeelam' && /^[0-9a-f]{64}$/.test(password || '') ? password : await digest(password || 'unconfigured-user'));
+      const expected = new TextEncoder().encode(expectedDigest);
       let mismatch = 0;
       supplied.forEach((byte, i) => { mismatch |= byte ^ expected[i]; });
       if (mismatch || !password) {

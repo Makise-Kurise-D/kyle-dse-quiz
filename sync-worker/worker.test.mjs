@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { pbkdf2Sync } from 'node:crypto';
 import worker, { mergeBackup, aiConfiguration, aiMessages, validateAIFeedback, requestAIFeedback } from './worker.js';
 
 const ORIGIN = 'https://makise-kurisu-d.github.io';
@@ -819,8 +820,9 @@ test('mathematics papers and figures keep the same authentication and path restr
 
 test('Yeelam identity isolates every private route and cannot upgrade or select another user', async t => {
   const password = 'synthetic-yeelam-password';
-  const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password)))].map(b => b.toString(16).padStart(2,'0')).join('');
-  const env = { ...aiEnv, SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'synthetic-owner-password', YEELAM_PASSWORD_SHA256: hash, GITHUB_TOKEN: 'synthetic-isolation-token' };
+  const salt = '0123456789abcdef0123456789abcdef';
+  const hash = `pbkdf2-sha256:100000:${salt}:${pbkdf2Sync(password, Buffer.from(salt,'hex'), 100000, 32, 'sha256').toString('hex')}`;
+  const env = { ...aiEnv, SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'synthetic-owner-password', YEELAM_PASSWORD_VERIFIER: hash, GITHUB_TOKEN: 'synthetic-isolation-token' };
   const seen = [], files = new Map();
   const original = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
@@ -842,7 +844,7 @@ test('Yeelam identity isolates every private route and cannot upgrade or select 
   }), { ...env, ...options });
   assert.equal((await login('Kyle')).status, 401);
   assert.equal((await login('../kyle')).status, 401);
-  assert.equal((await login('Yeelam', password, { YEELAM_PASSWORD_SHA256: undefined })).status, 401);
+  assert.equal((await login('Yeelam', password, { YEELAM_PASSWORD_VERIFIER: undefined })).status, 401);
   const response = await login(' Yeelam ');
   assert.equal(response.status, 200);
   const session = await response.json();
@@ -864,8 +866,58 @@ test('Yeelam identity isolates every private route and cannot upgrade or select 
   assert.ok(seen.some(v => v.path.endsWith('/users/yeelam/records.json') && v.method === 'PUT'));
   assert.equal((await call('/sync', 'DELETE')).status, 200);
   assert.equal((await (await call('/sync')).json()).data, null);
-  env.YEELAM_PASSWORD_SHA256 = '0'.repeat(64);
+  env.YEELAM_PASSWORD_VERIFIER = '0'.repeat(64);
   assert.equal((await call('/sync')).status, 401, 'changing only guest verifier revokes guest sessions');
   const owner = await login('Kyle', env.SITE_PASSWORD);
   assert.equal(owner.status, 200, 'guest verifier rotation does not invalidate owner login');
+});
+
+test('salted Kyle verifier replaces legacy password and revokes old sessions without affecting Yeelam', async () => {
+  const salt = 'abcdef0123456789abcdef0123456789';
+  const verifier = password => `pbkdf2-sha256:100000:${salt}:${pbkdf2Sync(password, Buffer.from(salt, 'hex'), 100000, 32, 'sha256').toString('hex')}`;
+  const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'synthetic-old-owner', GITHUB_TOKEN: 'synthetic-verifier-token' };
+  const login = (username, password) => worker.fetch(new Request(`${BASE}/auth/password`, {
+    method: 'POST', headers: { Origin: ORIGIN }, body: JSON.stringify({ username, password })
+  }), env);
+  const old = await (await login('Kyle', env.SITE_PASSWORD)).json();
+  env.KYLE_PASSWORD_VERIFIER = verifier('synthetic-new-owner');
+  env.YEELAM_PASSWORD_VERIFIER = verifier('synthetic-new-guest');
+  assert.equal((await login('Kyle', env.SITE_PASSWORD)).status, 401);
+  assert.equal((await login('Kyle', 'synthetic-new-guest')).status, 401);
+  assert.equal((await login('Yeelam', 'synthetic-new-owner')).status, 401);
+  assert.equal((await login('Kyle', 'synthetic-new-owner')).status, 200);
+  assert.equal((await login('Yeelam', 'synthetic-new-guest')).status, 200);
+  const upgrade = await worker.fetch(new Request(`${BASE}/auth/upgrade`, {
+    method: 'POST', headers: { Origin: ORIGIN, Authorization: `Bearer ${old.sessionId}` }
+  }), env);
+  assert.equal(upgrade.status, 401);
+  env.KYLE_PASSWORD_VERIFIER = 'invalid';
+  assert.equal((await login('Kyle', env.SITE_PASSWORD)).status, 401, 'invalid verifier cannot fall back to old password');
+});
+
+test('deployment requires both protected passwords before any secret write and never logs verifiers', async () => {
+  const { readFileSync } = await import('node:fs');
+  const workflow = readFileSync(new URL('../.github/workflows/deploy-worker.yml', import.meta.url), 'utf8');
+  const section = workflow.split('      - name: Configure isolated account password secrets\n')[1].split('      - name: Deploy Worker\n')[0];
+  const code = section.split("node --input-type=module <<'NODE'\n")[1].split('          NODE')[0]
+    .split('\n').map(line => line.startsWith('          ') ? line.slice(10) : line).join('\n')
+    .replace("import { pbkdf2Sync } from 'node:crypto';", '');
+  const execute = new (Object.getPrototypeOf(async function(){}).constructor)('pbkdf2Sync', 'process', 'fetch', 'console', code);
+  let writes = 0;
+  const logged = [];
+  const sink = { log: value => logged.push(value) };
+  await assert.rejects(execute(pbkdf2Sync, { env: { KYLE_SITE_PASSWORD: 'synthetic-owner' } }, async () => { writes++; }, sink), /YEELAM_SITE_PASSWORD/);
+  assert.equal(writes, 0);
+  await execute(pbkdf2Sync, { env: { KYLE_SITE_PASSWORD: 'synthetic-owner', YEELAM_SITE_PASSWORD: 'synthetic-guest', CLOUDFLARE_API_TOKEN: 'synthetic-cloud-token' } }, async (url, init) => {
+    writes++;
+    assert.match(url, /\/workers\/scripts\/snowy-cake-a0a7\/secrets$/);
+    const body = JSON.parse(init.body);
+    const [method, iterations, salt, derived] = body.text.split(':');
+    assert.equal(method, 'pbkdf2-sha256');
+    const password = body.name === 'KYLE_PASSWORD_VERIFIER' ? 'synthetic-owner' : 'synthetic-guest';
+    assert.equal(derived, pbkdf2Sync(password, Buffer.from(salt, 'hex'), Number(iterations), 32, 'sha256').toString('hex'));
+    return Response.json({ success: true });
+  }, sink);
+  assert.equal(writes, 2);
+  assert.doesNotMatch(logged.join('\n'), /synthetic-|pbkdf2|[a-f0-9]{32}/);
 });

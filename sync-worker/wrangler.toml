@@ -28,5 +28,8 @@ GITHUB_CLIENT_ID = "Iv23liDCF1nzb5DgalhR"
 DEEPSEEK_MODEL = "deepseek-flash"
 AI_VISION = "true"
 
-# SHA-256 verifier of a generated 192-bit password; plaintext is never committed.
-YEELAM_PASSWORD_SHA256 = "fdab204386d4ab480bb83efa23276586668985015e9d3db2e680093bd4488e9e"
+
+
+# Account passwords are protected Worker secrets: KYLE_PASSWORD_VERIFIER and
+# YEELAM_PASSWORD_VERIFIER (pbkdf2-sha256:100000:<salt hex>:<derived key hex>).
+# Never place password verifiers in public source or [vars].
