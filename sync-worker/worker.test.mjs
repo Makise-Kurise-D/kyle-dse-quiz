@@ -158,7 +158,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'ai-original-history-20261022');
+  assert.equal(status.version, 'continuous-reader-20261022');
   assert.equal(status.passwordConfigured, false);
 
   const preflight = await worker.fetch(new Request(`${BASE}/sync`, {
@@ -186,7 +186,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'ai-original-history-20261022', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash' });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'continuous-reader-20261022', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash' });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -640,6 +640,8 @@ test('paper navigation validates final pages and metadata caching never bypasses
   const originalFetch = globalThis.fetch, counts = { catalog: 0, manifest: 0, pages: 0, figures: 0 };
   const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'synthetic-password', GITHUB_TOKEN: 'unique-metadata-token' };
   const sha = 'e'.repeat(64), version = sha.slice(0, 16);
+  let thumbnails = { columns: 2, rows: 1, width: 200, height: 283 };
+  let page_sizes = [[595, 842], [700, 842]];
   let sections = [{ label: 'Summary', page: 1 }, { label: 'Part B', page: 2 }];
   globalThis.fetch = async input => {
     const url = String(input);
@@ -650,7 +652,7 @@ test('paper navigation validates final pages and metadata caching never bypasses
     }
     if (url.endsWith('/manifest.json')) {
       counts.manifest++;
-      return Response.json({ encoding: 'base64', content: b64json({ version, source_sha256: sha, pages: 2, format: 'jpeg', dpi: 200, quality: 85, sections }) });
+      return Response.json({ encoding: 'base64', content: b64json({ version, source_sha256: sha, pages: 2, format: 'jpeg', dpi: 200, quality: 85, sections, thumbnails, page_sizes }) });
     }
     if (url.includes('/question-bank/images/')) counts.figures++; else counts.pages++;
     return Response.json({ encoding: 'base64', content: btoa(String.fromCharCode(255, 216, 255, 217)) });
@@ -670,6 +672,19 @@ test('paper navigation validates final pages and metadata caching never bypasses
   assert.equal((await request('/bank/images/chem-2022-fig-../../records.json')).status, 404);
   assert.equal((await request(`/papers/chem/2022/pages/${'f'.repeat(16)}/1`)).status, 404);
   assert.equal(counts.pages, 2, 'old versions never request an archived image');
+  const atlas = await request(`/papers/chem/2022/thumbnails/${version}`);
+  assert.equal(atlas.status, 200);
+  assert.equal(atlas.headers.get('cache-control'), 'no-store');
+  assert.equal(atlas.headers.get('content-type'), 'image/jpeg');
+  assert.equal(counts.pages, 3, 'all previews use one private image request');
+  assert.equal((await request(`/papers/chem/2022/thumbnails/${'f'.repeat(16)}`)).status, 404);
+  assert.equal(counts.pages, 3);
+  thumbnails = { ...thumbnails, rows: 0 };
+  assert.equal((await request('/papers/chem/2022/manifest?refresh=atlas')).status, 502);
+  thumbnails = { columns: 2, rows: 1, width: 200, height: 283 };
+  page_sizes = [[595, 0], [700, 842]];
+  assert.equal((await request('/papers/chem/2022/manifest?refresh=sizes')).status, 502);
+  page_sizes = [[595, 842], [700, 842]];
   sections = [{ label: 'Invalid', page: 3 }];
   assert.equal((await request('/papers/chem/2022/manifest?refresh=1')).status, 502);
   sections = [{ label: 'Revised section', page: 1 }];
@@ -678,6 +693,7 @@ test('paper navigation validates final pages and metadata caching never bypasses
   assert.equal((await worker.fetch(new Request(`${BASE}/papers/catalog`, { headers: { ...headers, Origin: 'https://other.example' } }), env)).status, 403);
   await worker.fetch(new Request(`${BASE}/auth/logout`, { method: 'POST', headers }), env);
   assert.equal((await request('/papers/chem/2022/manifest')).status, 401);
+  assert.equal((await request(`/papers/chem/2022/thumbnails/${version}`)).status, 401);
   assert.equal((await request('/bank/images/chem-2022-fig-example.jpg')).status, 401);
   assert.equal(JSON.stringify(counts), before, 'invalid origin and logged-out sessions cannot consume cached private metadata');
 });

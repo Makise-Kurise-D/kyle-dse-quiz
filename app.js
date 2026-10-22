@@ -29,7 +29,7 @@
   var syncTimer = null, syncBusy = false, syncAgain = false, syncRevision = 0;
   var syncMessage = '';
   var paperSubject = '', paperYear = '', paperPage = 1, paperManifest = null;
-  var paperUrl = null, paperController = null, paperRequest = 0;
+  var paperReader = null, paperController = null, paperRequest = 0;
   var readerPages = new Map();
   var paperCatalogSnapshot = null;
   var startupHash = location.hash;
@@ -907,9 +907,6 @@
     }
     return entry.promise;
   }
-  function prefetchReaderPage(path, session) {
-    if (localStorage.getItem(LS_SYNC_SESSION) === session) readerPage(path, session).catch(function () {});
-  }
   function renderLibrary(parts) {
     releasePaper();
     parts = parts || [];
@@ -1062,7 +1059,7 @@
   function releasePaper() {
     paperRequest++;
     if (paperController) { paperController.abort(); paperController = null; }
-    if (paperUrl) { URL.revokeObjectURL(paperUrl); paperUrl = null; }
+    if (paperReader) { paperReader.destroy(); paperReader = null; }
     paperManifest = null;
     clearReaderPages();
   }
@@ -1123,9 +1120,12 @@
   }
   function updatePaperControls() {
     if (!paperManifest) return;
-    $('#paperPageSelect').innerHTML = Array.from({ length: paperManifest.pages }, function (_, index) {
-      return '<option value="' + (index + 1) + '">' + (index + 1) + '</option>';
-    }).join('');
+    if ($('#paperPageSelect')._manifest !== paperManifest) {
+      $('#paperPageSelect').innerHTML = Array.from({ length: paperManifest.pages }, function (_, index) {
+        return '<option value="' + (index + 1) + '">' + (index + 1) + '</option>';
+      }).join('');
+      $('#paperPageSelect')._manifest = paperManifest;
+    }
     $('#paperPageSelect').value = String(paperPage);
     var sections = Array.isArray(paperManifest.sections) ? paperManifest.sections : [];
     var current = sections.filter(function (s) { return s.page <= paperPage; }).pop();
@@ -1144,46 +1144,47 @@
     $('#paperPrev').disabled = paperPage <= 1;
     $('#paperNext').disabled = paperPage >= paperManifest.pages;
   }
-  function loadPaperPage() {
-    if (!paperManifest) return;
-    if (paperController) { paperController.abort(); paperController = null; }
-    if (paperUrl) { URL.revokeObjectURL(paperUrl); paperUrl = null; }
-    var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++paperRequest;
-    var subject = paperSubject, year = paperYear, manifest = paperManifest, page = paperPage;
-    var status = $('#paperStatus'), image = $('#paperImage'), open = $('#paperOpen');
-    image.hidden = true;
-    image.src = '';
-    open.hidden = true;
-    open.href = '';
-    updatePaperControls();
-    if (!session) { status.textContent = '請先登入網站，再閱讀批改卷。'; return; }
-    status.textContent = '正在載入' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷第 ' + page + ' 頁…';
-    readerPage('/papers/' + subject + '/' + year + '/pages/' + manifest.version + '/' + page, session).then(function (blob) {
-      if (requestId !== paperRequest || localStorage.getItem(LS_SYNC_SESSION) !== session ||
-        paperSubject !== subject || paperYear !== year) return;
-      paperUrl = URL.createObjectURL(blob);
-      image.alt = SUBJECT_META[subject].name + ' ' + year + ' 年紅筆批改卷第 ' + page + ' 頁';
-      image.onerror = function () {
-        if (requestId === paperRequest) status.textContent = '頁面圖片未能顯示，請按「重新載入」再試。';
-      };
-      image.src = paperUrl;
-      image.hidden = false;
-      open.href = paperUrl;
-      open.hidden = false;
-      status.textContent = '第 ' + page + ' / ' + manifest.pages + ' 頁，可用上方按鈕翻頁。';
-      if (page < manifest.pages) setTimeout(function () {
-        if (requestId === paperRequest && paperManifest === manifest && paperSubject === subject && paperYear === year) {
-          prefetchReaderPage('/papers/' + subject + '/' + year + '/pages/' + manifest.version + '/' + (page + 1), session);
+  function startPaperReader(session, requestId) {
+    var subject = paperSubject, year = paperYear, manifest = paperManifest;
+    var base = '/papers/' + subject + '/' + year;
+    paperReader = window.DSEPaperReader({
+      root: $('#paperReader'), scrollRoot: $('#contentScroll'), thumbs: $('#paperThumbList'),
+      toolbar: $('#paperToolbar'), manifest: manifest, page: paperPage,
+      title: SUBJECT_META[subject].name + ' ' + year + ' 年紅筆批改卷',
+      loadPage: function (page) { return readerPage(base + '/pages/' + manifest.version + '/' + page, session); },
+      loadThumbnails: function () { return readerPage(base + '/thumbnails/' + manifest.version, session); },
+      onPage: function (page, url) {
+        if (requestId !== paperRequest) return;
+        paperPage = page; updatePaperControls();
+        readerPages.forEach(function (entry, key) {
+          var prefix = session + ':' + base + '/pages/' + manifest.version + '/';
+          if (entry.controller && key.indexOf(prefix) === 0 && Math.abs(Number(key.slice(prefix.length)) - page) > 3) {
+            readerPages.delete(key); entry.controller.abort();
+          }
+        });
+        $('#paperOpen').hidden = !url; $('#paperOpen').href = url || '';
+        $('#paperStatus').textContent = '第 ' + page + ' / ' + manifest.pages + ' 頁 · 向下捲動連續閱讀';
+      },
+      onError: function (error) { paperError(error, session, requestId, $('#paperStatus'), true); },
+      onThumbnailError: function () { $('#paperThumbStatus').textContent = '預覽暫未載入，仍可按頁碼跳轉。'; },
+      onNavigate: function () {
+        if (window.matchMedia && window.matchMedia('(max-width: 699px)').matches) {
+          setPaperThumbnails(false); $('#paperThumbToggle').focus();
         }
-      }, 200);
-    }).catch(function (err) {
-      paperError(err, session, requestId, status, true);
+      }
     });
   }
   function goPaperPage(page) {
-    if (!paperManifest || !Number.isInteger(page) || page < 1 || page > paperManifest.pages || page === paperPage) return;
-    paperPage = page;
-    loadPaperPage();
+    if (paperReader) paperReader.go(page);
+  }
+  function setPaperThumbnails(open) {
+    var change = function () {
+      $('#paperWorkspace').classList.toggle('is-thumbs-hidden', !open);
+      $('#paperThumbnails').hidden = !open;
+      $('#paperThumbToggle').setAttribute('aria-expanded', String(open));
+      $('#paperThumbToggle').textContent = open ? '收起預覽' : '頁面預覽';
+    };
+    if (paperReader) paperReader.layoutChange(change); else change();
   }
   function loadPaper(fresh) {
     var session = localStorage.getItem(LS_SYNC_SESSION), requestId = ++paperRequest;
@@ -1199,11 +1200,11 @@
     }).then(readSyncResponse).then(function (manifest) {
       if (requestId !== paperRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
       if (!manifest || !/^[a-f0-9]{16}$/.test(manifest.version) ||
-        !Number.isInteger(manifest.pages) || manifest.pages < 1) throw new Error('批改卷頁面清單無效');
+        !Number.isInteger(manifest.pages) || manifest.pages < 1 || manifest.pages > 9999) throw new Error('批改卷頁面清單無效');
       paperManifest = manifest;
       if (paperPage > manifest.pages) paperPage = 1;
       $('#paperReader').hidden = false;
-      loadPaperPage();
+      startPaperReader(session, requestId);
     }).catch(function (err) {
       paperError(err, session, requestId, status, false);
     }).finally(function () {
@@ -1213,29 +1214,26 @@
   }
   function renderPaperReader(subject, year, fresh) {
     if (paperSubject !== subject || paperYear !== year) paperPage = 1;
-    paperSubject = subject;
-    paperYear = year;
-    $('#app').innerHTML = '<section class="page library-page">' +
+    paperSubject = subject; paperYear = year;
+    $('#app').innerHTML = '<section class="page library-page paper-reading-page">' +
       '<header class="page-head"><div><h1 class="page-title"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> ' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷</h1>' +
-      '<p class="page-sub">保留原答與紅筆批注，使用分部導航直接跳到需要的位置。</p></div>' +
+      '<p class="page-sub">向下捲動讀完整卷，按左側頁面預覽快速定位。</p></div>' +
       '<a class="btn btn-ghost" href="#/library/papers/' + subject + '">← 返回年份</a></header>' +
-      '<div class="panel"><div class="library-toolbar"><div class="record-tools">' +
+      '<div class="paper-toolbar" id="paperToolbar">' +
+        '<div class="paper-controls"><button class="btn btn-ghost" id="paperThumbToggle" type="button" aria-controls="paperThumbnails" aria-expanded="true">收起預覽</button>' +
+        '<button class="btn btn-ghost" id="paperPrev" type="button" disabled aria-label="跳至上一頁">←</button>' +
+        '<label>第 <select id="paperPageSelect" aria-label="選擇批改卷頁碼"></select> / <span id="paperPageCount">—</span> 頁</label>' +
+        '<button class="btn btn-ghost" id="paperNext" type="button" disabled aria-label="跳至下一頁">→</button>' +
         '<button class="btn btn-ghost" id="paperReload" type="button">重新載入</button>' +
-        '<a class="btn btn-ghost" id="paperOpen" target="_blank" rel="noopener" hidden>在新分頁開啟</a>' +
-      '</div></div><p class="review-note" id="paperStatus" role="status" aria-live="polite"></p>' +
-      '<nav class="paper-sections" id="paperSections" aria-label="批改卷分部跳轉" hidden></nav>' +
-      '<div class="book-reader" id="paperReader" hidden><div class="book-page-controls">' +
-        '<button class="btn btn-ghost" id="paperPrev" type="button">← 上一頁</button>' +
-        '<label>第 <select id="paperPageSelect" aria-label="選擇批改卷頁碼"></select> / ' +
-        '<span id="paperPageCount">—</span> 頁</label>' +
-        '<button class="btn btn-ghost" id="paperNext" type="button">下一頁 →</button></div>' +
-        '<img class="book-image" id="paperImage" alt="紅筆批改卷頁面" hidden></div>' +
-      '<p class="library-note">閱讀時預先載入下一頁，已看過的頁面暫存在此分頁；更新批改卷後按「重新載入」可取得新版。</p></div></section>';
+        '<a class="btn btn-ghost" id="paperOpen" target="_blank" rel="noopener" hidden>放大本頁 ↗</a></div>' +
+      '<nav class="paper-sections" id="paperSections" aria-label="批改卷分部跳轉" hidden></nav></div>' +
+      '<p class="review-note" id="paperStatus" role="status" aria-live="polite"></p>' +
+      '<div class="paper-workspace" id="paperWorkspace"><aside class="paper-thumbnails" id="paperThumbnails" aria-label="批改卷頁面預覽">' +
+        '<div class="paper-thumb-heading"><strong>頁面預覽</strong><button class="btn btn-ghost" id="paperThumbClose" type="button">收起</button></div>' +
+        '<p class="library-note" id="paperThumbStatus">點選頁面跳轉</p><div class="paper-thumb-list" id="paperThumbList"></div></aside>' +
+        '<div class="paper-stream" id="paperReader" hidden></div></div></section>';
     $('#paperReader').hidden = true;
-    $('#paperImage').hidden = true;
-    $('#paperImage').src = '';
-    $('#paperOpen').hidden = true;
-    $('#paperOpen').href = '';
+    $('#paperOpen').hidden = true; $('#paperOpen').href = '';
     $('#paperReload').addEventListener('click', function () { releasePaper(); renderPaperReader(subject, year, true); });
     $('#paperSections').addEventListener('click', function (event) {
       var button = event.target.closest('[data-page]');
@@ -1244,6 +1242,9 @@
     $('#paperPrev').addEventListener('click', function () { goPaperPage(paperPage - 1); });
     $('#paperNext').addEventListener('click', function () { goPaperPage(paperPage + 1); });
     $('#paperPageSelect').addEventListener('change', function (event) { goPaperPage(Number(event.target.value)); });
+    $('#paperThumbToggle').addEventListener('click', function () { setPaperThumbnails($('#paperThumbnails').hidden); });
+    $('#paperThumbClose').addEventListener('click', function () { setPaperThumbnails(false); $('#paperThumbToggle').focus(); });
+    setPaperThumbnails(!(window.matchMedia && window.matchMedia('(max-width: 699px)').matches));
     loadPaper(fresh);
   }
 

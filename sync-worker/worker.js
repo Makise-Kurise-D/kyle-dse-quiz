@@ -6,7 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'ai-original-history-20261022';
+const SERVICE_VERSION = 'continuous-reader-20261022';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
@@ -446,8 +446,17 @@ async function githubPaperManifest(subject, year, token, fresh = false) {
       !Number.isInteger(manifest.quality) || manifest.quality < 1 || manifest.quality > 100) {
     throw new Error('invalid_paper_manifest');
   }
+  const sizes = manifest.page_sizes;
+  if (sizes && (!Array.isArray(sizes) || sizes.length !== manifest.pages || sizes.some(size =>
+    !Array.isArray(size) || size.length !== 2 || size.some(n => !Number.isFinite(n) || n < 1 || n > 20000)))) throw new Error('invalid_paper_sizes');
+  const atlas = manifest.thumbnails;
+  if (atlas && (!Number.isInteger(atlas.columns) || atlas.columns < 1 || atlas.columns > 5 ||
+    !Number.isInteger(atlas.rows) || atlas.rows !== Math.ceil(manifest.pages / atlas.columns) ||
+    manifest.pages > 200 || atlas.width !== 200 || atlas.height !== 283)) throw new Error('invalid_paper_thumbnails');
   return { version: manifest.version, pages: manifest.pages, format: 'jpeg',
     source_sha256: sha, dpi: manifest.dpi, quality: manifest.quality,
+    ...(sizes ? { page_sizes: sizes } : {}),
+    ...(atlas ? { thumbnails: { columns: atlas.columns, rows: atlas.rows, width: 200, height: 283 } } : {}),
     ...(manifest.sections ? { sections: paperSections(manifest) } : {}) };
 }
 
@@ -723,7 +732,8 @@ const worker = {
       const catalog = url.pathname === '/papers/catalog';
       const manifest = url.pathname.match(/^\/papers\/(chem|bio|math)\/(20\d{2})\/manifest$/);
       const page = url.pathname.match(/^\/papers\/(chem|bio|math)\/(20\d{2})\/pages\/([0-9a-f]{16})\/([1-9]\d{0,3})$/);
-      if (!catalog && !manifest && !page) return json({ error: 'not_found' }, 404, cors(request));
+      const thumbnails = url.pathname.match(/^\/papers\/(chem|bio|math)\/(20\d{2})\/thumbnails\/([0-9a-f]{16})$/);
+      if (!catalog && !manifest && !page && !thumbnails) return json({ error: 'not_found' }, 404, cors(request));
       const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
       if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
       if (request.headers.get('Origin') !== SITE_ORIGIN) return json({ error: 'origin_denied' }, 403, cors(request));
@@ -733,15 +743,15 @@ const worker = {
         if (!await isOwner(auth, env)) return json({ error: 'owner_only' }, 403, cors(request));
         const available = await githubPaperCatalog(auth.token, url.searchParams.has('refresh'));
         if (catalog) return json(available, 200, cors(request));
-        const subject = (manifest || page)[1], year = (manifest || page)[2];
+        const subject = (manifest || page || thumbnails)[1], year = (manifest || page || thumbnails)[2];
         if (!available.subjects[subject].includes(year)) return json({ error: 'paper_not_accessible' }, 404, cors(request));
         const current = await githubPaperManifest(subject, year, auth.token, url.searchParams.has('refresh'));
         if (manifest) return json(current, 200, cors(request));
-        const version = page[3], number = Number(page[4]);
-        if (version !== current.version || number > current.pages) {
+        const version = (page || thumbnails)[3], number = page ? Number(page[4]) : 0;
+        if (version !== current.version || number > current.pages || (thumbnails && !current.thumbnails)) {
           return json({ error: 'paper_not_accessible' }, 404, cors(request));
         }
-        const filename = `page-${String(number).padStart(4, '0')}.jpg`;
+        const filename = thumbnails ? 'thumbnails.jpg' : `page-${String(number).padStart(4, '0')}.jpg`;
         const file = await github(`/repos/${REPO}/contents/papers/${subject}/${year}/${version}/${filename}`, auth.token);
         if (file.encoding !== 'base64' || typeof file.content !== 'string' || file.content.length > 1_400_000) {
           throw new Error('invalid_paper_page');
