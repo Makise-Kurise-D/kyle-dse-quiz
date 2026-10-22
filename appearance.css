@@ -646,17 +646,21 @@ html[data-appearance=simple] .home-info .hero-bubble{margin:0}
 }
 html[data-appearance=full] .rail-portrait{background-image:url('images/sidebar-day.webp');transform:none}
 html[data-appearance=full][data-theme=night] .rail-portrait{background-image:url('images/sidebar-night.webp')}
-/* Double the image-to-HOME gap relative to the menu's spacing.
-   Account for their inset, tilted artwork; the simple view needs no offset. */
-/* Plaque backgrounds sit inside their link boxes. Use their visible spacing
-   for the top clearance, rather than only the smaller CSS row gap. */
-.rail{--rail-link-gap:18px;--rail-frame-gap:23px;--rail-visible-gap:calc(var(--rail-link-gap) + var(--rail-frame-gap));padding-top:max(calc(2.5 * var(--rail-visible-gap)),env(safe-area-inset-top,0px))}
-html[data-theme=night] .rail{--rail-frame-gap:17px}
-html[data-appearance=simple] .rail{--rail-frame-gap:0px}
-.rail-links{display:flex;flex-direction:column;flex:1 0 auto;--rail-image-inset:12px}
-.rail-menu{display:flex;flex:none;flex-direction:column;gap:var(--rail-link-gap);margin:calc(2 * (var(--rail-link-gap) + var(--rail-image-inset))) 0 var(--rail-link-gap)}
-html[data-theme=night] .rail-links{--rail-image-inset:17px}
-html[data-appearance=simple] .rail-links{--rail-image-inset:0px}
+/* Both versions share the compact navigation geometry. Theme silhouettes
+   stay inside each link so their artwork cannot change the visible gaps. */
+.rail{--rail-link-gap:18px;--rail-item-height:52px;padding-top:max(calc(2.5 * var(--rail-link-gap)),env(safe-area-inset-top,0px))}
+.rail-links{display:flex;flex-direction:column;flex:1 0 auto}
+.rail-menu{display:flex;flex:none;flex-direction:column;gap:var(--rail-link-gap);margin:calc(2 * var(--rail-link-gap)) 0 var(--rail-link-gap)}
+html[data-appearance=full] .rail-menu .rail-item{
+ min-height:var(--rail-item-height);padding:4px 12px;transform:none;
+ display:flex;flex-direction:column;justify-content:center;gap:0;
+}
+html[data-appearance=full] .rail-menu .rail-item:is(:hover,:focus-visible){transform:translateX(3px)}
+html[data-appearance=full] .rail-menu .rail-item:before,
+html[data-appearance=full] .rail-menu .rail-item:after,
+html[data-appearance=full][data-theme=night] .rail-menu .rail-item.active:after{inset:0;transform:none}
+html[data-appearance=full] .rail-menu .rail-word{font-size:27px;line-height:1}
+html[data-appearance=full] .rail-menu .rail-cn{font-size:9px;line-height:1.4;padding:2px 5px;letter-spacing:1px}
 .rail .rail-links .rail-item{margin:0}
 .rail .rail-caption{margin-top:0}
 @media screen and (min-width:861px) and (max-height:900px){
@@ -668,8 +672,10 @@ html[data-appearance=simple] .rail-links{--rail-image-inset:0px}
  .rail .rail-caption{font-size:9px;margin:0 0 8px}
 }
 @media screen and (min-width:861px) and (max-height:650px){
- .rail{--rail-link-gap:6px}
+ .rail{--rail-link-gap:6px;--rail-item-height:48px}
  .rail .rail-links .rail-item{min-height:48px}
+ html[data-appearance=full] .rail-menu .rail-word{font-size:24px}
+ html[data-appearance=full] .rail-menu .rail-cn{font-size:8px}
 }
 @media screen and (min-width:861px) and (max-height:550px){
  .rail{--rail-link-gap:4px;padding-bottom:max(5px,env(safe-area-inset-bottom,0px))}
