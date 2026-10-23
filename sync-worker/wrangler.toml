@@ -11,7 +11,9 @@ keep_vars = true
 # GITHUB_TOKEN is an optional server-only alternative for repository access.
 # DeepSeek: add DEEPSEEK_API_KEY as a Worker secret. The API base is official;
 # New DeepSeek calls use only deepseek-flash (4.1 Flash); Pro is disabled.
-# Plain first-level text hints disable thinking; other requests use high effort.
+# AI is available for submitted-answer review and follow-up only, at high effort.
+# Practice hints and scaffolds are disabled; per-question input labels are authored
+# in private answerFields metadata and do not call any model during practice.
 # No local output token cap or automatic API retry.
 # Native vision is available; figures are sent only after the user opts in.
 # A custom provider instead requires all of AI_BASE_URL, AI_MODEL and AI_API_KEY.

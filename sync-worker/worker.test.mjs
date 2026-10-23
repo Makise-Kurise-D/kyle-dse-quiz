@@ -61,20 +61,15 @@ test('DeepSeek vision-disabled calls strip even supplied image content',async()=
   assert.match(out.materialNotes,/圖表未送入/);
 });
 
-test('only first-level text-only hints skip thinking; deeper or visual hints keep high',async()=>{
-  const answer='答案';
-  for (const [item,body,expected] of [
-    [aiItem,{answer,mode:'hint',hintLevel:1},'disabled'],
-    [aiItem,{answer,mode:'hint',hintLevel:2},'enabled'],
-    [{...aiItem,tables:[{rows:[]}]},{answer,mode:'hint',hintLevel:1},'enabled'],
-    [{...aiItem,figures:[{path:'private.jpg'}]},{answer,mode:'hint',hintLevel:1},'enabled']]) {
-    await requestAIFeedback(item,body,{DEEPSEEK_API_KEY:'test-only-key'},[],async(url,init)=>{
-      const payload=JSON.parse(init.body);
-      assert.equal(payload.thinking.type,expected);
-      assert.equal(payload.reasoning_effort,expected==='enabled'?'high':undefined);
-      return Response.json({model:'deepseek-flash',choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture(answer))}}]});
-    });
+test('practice hints and scaffolds are rejected before any model call',async()=>{
+  let calls=0;
+  for(const mode of ['hint','scaffold']) {
+    assert.throws(()=>aiMessages(aiItem,{answer:'答案',mode}),/ai_practice_disabled/);
+    await assert.rejects(requestAIFeedback(aiItem,{answer:'答案',mode},aiEnv,[],async()=>{calls++;}),/ai_practice_disabled/);
   }
+  assert.equal(calls,0);
+  assert.equal(aiConfiguration(aiEnv).practiceEnabled,false);
+  assert.deepEqual(aiConfiguration(aiEnv).modes,['review','followup']);
 });
 
 test('complete feedback is preserved, while even parseable truncated responses are rejected',async()=>{
@@ -106,9 +101,12 @@ test('AI rejects invented evidence, missing or duplicate checks, and never accep
   const out=validateAIFeedback(valid,aiItem,'原答','review');assert.equal(out.score,undefined);assert.equal(out.level,undefined);
 });
 
-test('AI hints carry their requested depth, explicit figure uncertainty and bounded question chat',()=>{
-  const messages=aiMessages({...aiItem,figures:[{path:'unused'}]},{answer:'合成答覆',mode:'hint',hintLevel:1,messages:[{role:'user',content:'追問本題'}]});
-  assert.match(messages.at(-1).content,/圖表未提供/);assert.match(messages.at(-1).content,/"hintLevel":1/);assert.match(messages[0].content,/第1層只指方向/);
+test('submitted analysis carries figure limits, independent-answer rules and bounded question chat',()=>{
+  const messages=aiMessages({...aiItem,figures:[{path:'unused'}]},{answer:'合成答覆',mode:'followup',question:'漏了哪一點？',messages:[{role:'user',content:'追問本題'}]});
+  assert.match(messages.at(-1).content,/圖表未提供/);
+  assert.match(messages.at(-1).content,/"phase":"submitted_review"/);
+  assert.match(messages[0].content,/不提供作答前提示或拆題/);
+  assert.match(messages[0].content,/數量不等於題目分數/);
   const withFigures=aiMessages(aiItem,{answer:'答案'},['data:image/jpeg;base64,test']);assert.equal(withFigures.at(-1).content[1].type,'image_url');
 });
 
@@ -172,6 +170,8 @@ test('AI routes reuse auth, reject blank answers, enforce limits and preserve se
   assert.equal((await worker.fetch(new Request(BASE+'/ai/status',{headers:{...headers,Origin:'https://other.example'}}),env)).status,403);
   assert.equal((await (await worker.fetch(new Request(BASE+'/ai/status',{headers}),env)).json()).configured,true);
   assert.equal((await worker.fetch(post({questionId:aiItem.id,answer:'',mode:'review'}),env)).status,400);assert.equal(providerCalls,0);
+  for(const mode of ['hint','scaffold'])assert.equal((await worker.fetch(post({questionId:aiItem.id,answer:'',mode}),env)).status,410);
+  assert.equal(providerCalls,0);
   assert.equal((await worker.fetch(post({questionId:'no-basis',answer:'答案'}),env)).status,422);
   const noAI={...env,AI_API_KEY:''};assert.equal((await worker.fetch(post({questionId:aiItem.id,answer:'答案'}),noAI)).status,503);
   assert.equal((await worker.fetch(post({questionId:aiItem.id,answer:'合成同義答案'}),env)).status,200);
@@ -187,7 +187,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'step-answer-ai-20261023');
+  assert.equal(status.version, 'independent-practice-20261023');
   assert.equal(status.passwordConfigured, false);
   assert.equal(status.aiFiguresEnabled, false);
   const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
@@ -221,7 +221,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'step-answer-ai-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'independent-practice-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -989,20 +989,6 @@ test('account subject profiles isolate M2 and physics materials while preserving
   assert.ok(seen.filter(url=>/m2|physics/.test(url)).every(url=>url.includes('/users/yeelam/')));
 });
 
-test('scaffold excludes private reference answers and accepts only bounded question prompts', () => {
-  const item={...aiItem,correct:'HIDDEN_SOLUTION',points:'HIDDEN_NOTES',my:[['HIDDEN_OLD_ANSWER']],deduct:'HIDDEN_ERROR'};
-  const messages=aiMessages(item,{mode:'scaffold',answer:'我的草稿'});
-  const task=JSON.parse(messages.at(-1).content);
-  assert.equal(task.studentAnswer,'我的草稿');
-  assert.doesNotMatch(messages.at(-1).content,/HIDDEN_|checks|reference|originalAttempt/);
-  assert.match(messages[0].content,/不可替學生補出未表達的推理/);
-  const value={summary:'拆題',points:[],tags:[],steps:[{prompt:'先選哪個方法？',answer:'DO_NOT_ACCEPT'},{prompt:'結論要附甚麼？'}]};
-  const out=validateAIFeedback(value,item,'','scaffold');
-  assert.equal(out.steps.length,2);assert.equal(out.steps[0].answer,undefined);assert.equal(out.points.length,0);
-  assert.throws(()=>validateAIFeedback({...value,steps:[]},item,'','scaffold'),/ai_invalid_response/);
-  assert.throws(()=>validateAIFeedback({...value,steps:[{prompt:''},{prompt:'下一步'}]},item,'','scaffold'),/ai_invalid_response/);
-});
-
 test('fallback requires independent complete HTTPS settings and never reveals either credential', () => {
   const env={DEEPSEEK_API_KEY:'private-primary',AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'backup'};
   assert.equal(aiConfiguration(env).fallbackConfigured,false);
@@ -1068,8 +1054,9 @@ test('AI probe performs real synthetic generation without reading a bank or writ
     if(String(url).endsWith('/user'))return Response.json({login:'Makise-Kurisu-D'});
     assert.equal(url,'https://ai.example/v1/chat/completions');providerCalls++;
     const task=JSON.parse(JSON.parse(init.body).messages.at(-1).content);
-    assert.equal(task.materials.questionId,'service-probe');
-    return Response.json({model:'synthetic-model',choices:[{finish_reason:'stop',message:{content:JSON.stringify({summary:'成功',points:[],tags:[],reply:'合成測試',uncertainty:''})}}]});
+    assert.equal(task.materials.questionId,'service-probe');assert.equal(task.mode,'review');
+    const fixture={summary:'成功',points:task.materials.checks.map(c=>({index:c.index,status:'hit',evidence:task.studentAnswer,reason:'符合合成核對點',suggestion:''})),tags:[],reply:'合成測試',uncertainty:''};
+    return Response.json({model:'synthetic-model',choices:[{finish_reason:'stop',message:{content:JSON.stringify(fixture)}}]});
   };t.after(()=>{globalThis.fetch=original;});
   const env={...aiEnv,SESSIONS:new MemoryKV(),SESSION_SECRET:SECRET,SITE_PASSWORD:'probe-password',GITHUB_TOKEN:'probe-only-token'};
   const login=await worker.fetch(new Request(BASE+'/auth/password',{method:'POST',headers:{Origin:ORIGIN},body:JSON.stringify({password:'probe-password'})}),env);

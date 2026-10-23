@@ -177,7 +177,15 @@ jobs:
               const configuration = await fetch(base + '/ai/status', {signal:AbortSignal.timeout(15000),
                 headers:{Origin:origin,Authorization:'Bearer '+session.sessionId}});
               const ai = await configuration.json();
-              if (!configuration.ok || !ai.configured) throw new Error('AI configuration check failed for '+username);
+              if (!configuration.ok || !ai.configured || ai.practiceEnabled !== false || JSON.stringify(ai.modes) !== JSON.stringify(['review','followup'])) throw new Error('AI submitted-analysis policy check failed for '+username);
+              for (const mode of ['hint','scaffold']) {
+                const disabled = await fetch(base + '/ai/review', {method:'POST',signal:AbortSignal.timeout(15000),
+                  headers:{Origin:origin,Authorization:'Bearer '+session.sessionId,'Content-Type':'application/json'},
+                  body:JSON.stringify({questionId:'synthetic-disabled-practice',answer:'',mode})});
+                const result = await disabled.json();
+                if (disabled.status !== 410 || result.error !== 'ai_practice_disabled') throw new Error('Practice AI is still enabled for '+username);
+              }
+              console.log('Verified practice AI disabled and submitted analysis enabled for '+username);
               if (username === 'Kyle') {
                 const probe = await fetch(base + '/ai/probe', {method:'POST',signal:AbortSignal.timeout(110000),
                   headers:{Origin:origin,Authorization:'Bearer '+session.sessionId,'Content-Type':'application/json'},body:'{}'});

@@ -1618,15 +1618,33 @@
         it.options.map(function (option) { return '<li>' + text(option) + '</li>'; }).join('') + '</ol>' : '') + '</div>';
   }
 
-  function answerStepState(value, saved) {
-    if (saved && Array.isArray(saved.rows) && saved.rows.length && saved.rows.length <= 6 &&
-      saved.rows.every(function (r) { return r && typeof r.prompt === 'string' && typeof r.answer === 'string'; })) {
-      return { mode: saved.mode === 'text' ? 'text' : 'steps', assisted: !!saved.assisted,
-        rows: saved.rows.map(function (r) { return { prompt:r.prompt, answer:r.answer }; }) };
+  function questionAnswerFields(item) {
+    var maximum=marksOf(item), fields=item.answerFields;
+    if(Array.isArray(fields) && fields.length && fields.length<=6 && fields.every(function(s){return typeof s==='string' && s.trim() && s.length<=90;})) {
+      return maximum<=1?fields.slice(0,1):fields.slice();
     }
-    return { mode: value ? 'text' : 'steps', assisted:false, rows: [
-      {prompt:'我的思路／使用的方法',answer:value || ''}, {prompt:'關鍵關係／推導／解釋',answer:''}, {prompt:'結論／單位／條件',answer:''}
-    ] };
+    var stem=item.stemFull || item.stem || '', single='本題答案';
+    if(/名稱|名称/.test(stem))single='名稱';
+    else if(/顏色變化|颜色变化/.test(stem))single='顏色變化';
+    else if(/方程式/.test(stem))single='方程式';
+    else if(/計算|计算|求|整數|整数/.test(stem))single='結果／必要計算';
+    else if(/解釋|解释|為何|为何|为什么|為什麼/.test(stem))single='原因／解釋';
+    if(maximum<=1)return [single];
+    var count=stem.match(/(?:寫出|写出|提出|列出).{0,18}?([兩两二三四五六2-6])(?:種|种|項|项|個|个)/), numbers={'兩':2,'两':2,'二':2,'三':3,'四':4,'五':5,'六':6};
+    if(count)return Array.from({length:Math.min(maximum,numbers[count[1]] || Number(count[1]))},function(_,i){return '第 '+(i+1)+' 項';});
+    if(/計算|计算|求/.test(stem))return ['列式與計算','結果（連單位／條件）'];
+    return ['本題作答'];
+  }
+  function stepAnswerText(rows) {
+    return rows.map(function(r,i){return r.answer.trim()?(rows.length===1?'':(i+1)+'. ')+r.answer.trim():'';}).filter(Boolean).join('\n');
+  }
+  function answerStepState(item, value, saved) {
+    var fields=questionAnswerFields(item), rows=fields.map(function(prompt){return {prompt:prompt,answer:''};});
+    var compatible=saved && saved.version===2 && Array.isArray(saved.rows) && saved.rows.length>=fields.length && saved.rows.length<=6 &&
+      saved.rows.every(function(r){return r && typeof r.answer==='string';});
+    if(compatible)rows=saved.rows.map(function(r,i){return {prompt:fields[i] || '補充答案',answer:r.answer};});
+    else if(value)rows[0].answer=value;
+    return { version:2, mode:saved?saved.mode==='text'?'text':'steps':value?'text':'steps', assisted:!!(saved && saved.assisted), rows:rows };
   }
   function stepRowsHtml(rows) {
     return rows.map(function (row, index) {
@@ -1635,23 +1653,23 @@
     }).join('');
   }
   function stepAnswerHtml(item, value, saved) {
-    var state = answerStepState(value, saved), steps = state.mode === 'steps';
+    var state = answerStepState(item, value, saved), steps = state.mode === 'steps';
     return '<section class="step-answer" data-answer-id="'+esc(item.id)+'" aria-label="輕量作答">' +
-      '<div class="answer-modes" role="group" aria-label="作答方式"><button class="btn btn-ghost" type="button" data-answer-mode="steps" aria-pressed="'+steps+'">分步簡答</button>' +
+      '<div class="answer-modes" role="group" aria-label="作答方式"><button class="btn btn-ghost" type="button" data-answer-mode="steps" aria-pressed="'+steps+'">按題分欄</button>' +
       '<button class="btn btn-ghost" type="button" data-answer-mode="text" aria-pressed="'+!steps+'">自由輸入</button></div>' +
-      '<p class="review-note">只寫你想到的關鍵式或短句，不用重抄完整解答。需要時可按下方「AI 幫我拆題」。</p>' +
+      '<p class="review-note">'+(marksOf(item)<=1?'本題 1 分，一格作答即可。':'按本題要求分欄；可用短句、關鍵詞或公式作答。')+' 提交後再核對答案。</p>' +
       '<div class="step-rows"'+(steps?'':' hidden')+'>'+stepRowsHtml(state.rows)+'</div>' +
       '<button class="btn btn-ghost step-add" type="button"'+(steps?'':' hidden')+'>＋ 加一步</button>' +
       '<label class="answer-free"'+(steps?' hidden':'')+'>我的答案<textarea class="ans-box" maxlength="6000" aria-label="本題文字答案" data-id="'+esc(item.id)+'" rows="4" placeholder="例如：設 x → 列式 → 結論；AI 會檢查有沒有缺少必要步驟">'+esc(value)+'</textarea></label>' +
       '<div class="formula-pad" role="group" aria-label="常用公式符號">'+['＝','＋','−','×','÷','/','²','³','√()','()','→','∴','∵','Δ','θ','π','≤','≥','mol','cm³'].map(function (symbol) {
         return '<button type="button" data-formula="'+esc(symbol)+'" aria-label="插入 '+esc(symbol)+'">'+esc(symbol)+'</button>';
-      }).join('')+'</div><p class="step-note" role="status">'+(state.assisted?'已使用 AI 拆題引導。':'答案會自動保存；AI 不會代填你的作答。')+'</p></section>';
+      }).join('')+'</div><p class="step-note" role="status">答案會自動保存；未使用的欄位可留空。</p></section>';
   }
-  function bindStepAnswers(root, draft, persist) {
+  function bindStepAnswers(root, draft, items, persist) {
     $all('.step-answer', root).forEach(function (widget) {
-      var id=widget.dataset.answerId, field=$('.ans-box',widget), state=answerStepState(field.value,(draft.steps || {})[id]), target=null;
+      var id=widget.dataset.answerId, item=items.filter(function(i){return i.id===id;})[0], field=$('.ans-box',widget), state=answerStepState(item,field.value,(draft.steps || {})[id]), target=null;
       function save() {
-        if(state.mode==='steps') field.value=state.rows.map(function (r,i) { return r.answer.trim()?(i+1)+'. '+r.answer.trim():''; }).filter(Boolean).join('\n');
+        if(state.mode==='steps') field.value=stepAnswerText(state.rows);
         persist(id,state,field.value);
       }
       function bindRows() {
@@ -1668,8 +1686,8 @@
         if(reviewState)return;
         var mode=button.dataset.answerMode;
         if(mode===state.mode)return;
-        if(mode==='steps' && field.value!==state.rows.map(function(r,i){return r.answer.trim()?(i+1)+'. '+r.answer.trim():'';}).filter(Boolean).join('\n')) {
-          state.rows=[{prompt:'已有草稿（保留原文）',answer:field.value},{prompt:'下一步／結論',answer:''}];renderRows();
+        if(mode==='steps' && field.value!==stepAnswerText(state.rows)) {
+          state.rows=questionAnswerFields(item).map(function(prompt,i){return {prompt:prompt,answer:i===0?field.value:''};});renderRows();
         }
         state.mode=mode;target=null;
         $('.step-rows',widget).hidden=mode!=='steps';$('.step-add',widget).hidden=mode!=='steps';$('.answer-free',widget).hidden=mode==='steps';
@@ -1685,15 +1703,6 @@
         if(symbol.endsWith('()'))input.setSelectionRange(start+symbol.length-1,start+symbol.length-1);
         input.focus();input.dispatchEvent(new Event('input',{bubbles:true}));
       });});
-      widget.addEventListener('answer-scaffold',function(event){
-        if(reviewState || !Array.isArray(event.detail))return;
-        var existing=field.value.trim();
-        state.rows=(existing?[{prompt:'已有草稿（保留原文）',answer:field.value}]:[]).concat(event.detail.map(function(s){return {prompt:s.prompt,answer:''};}));
-        state.assisted=true;state.mode='steps';renderRows();
-        $('.step-rows',widget).hidden=false;$('.step-add',widget).hidden=false;$('.answer-free',widget).hidden=true;
-        $all('[data-answer-mode]',widget).forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.answerMode==='steps'));});
-        $('.step-note',widget).textContent='已使用 AI 拆題引導；每格只需填關鍵詞或公式。';save();
-      });
       bindRows();
     });
   }
@@ -1727,7 +1736,7 @@
       body =
         questionContentHtml(it) + stepAnswerHtml(it, v, (draft.steps || {})[it.id]) +
         '<label class="paper-lbl"><input type="checkbox" class="paper-chk" data-id="' + esc(it.id) + '"' +
-          (draft.paper[it.id] ? ' checked' : '') + '> 我已喺紙上寫完</label>' + aiPanelHtml(it, v, false);
+          (draft.paper[it.id] ? ' checked' : '') + '> 我已喺紙上寫完</label>';
     }
     return '<article class="sq" data-id="' + esc(it.id) + '" data-kind="' + it.kind + '" aria-label="第 ' + (idx + 1) + ' 題"' + (mcOnly && it.kind === 'sub' ? ' hidden' : '') + '>' + head + body + '</article>';
   }
@@ -1762,11 +1771,10 @@
         : '<span class="persona-icon persona-icon-success" aria-hidden="true"></span> 全部做完，一次過提交';
     }
     updateAnswered(); submitLabel();
-    bindStepAnswers($('#qPaper'), draft, function (id, state, answer) {
+    bindStepAnswers($('#qPaper'), draft, renderItems, function (id, state, answer) {
       draft.steps[id] = state; draft.text[id] = answer;
       persist('text', id); persist('steps', id);
     });
-    bindAIPanels($('#qPaper'), renderItems);
 
     // 隨機十題「換一組」：清走之前未提交嘅隨機草稿，重新抽題打亂
     var rerollBtn = $('#rerollBtn');
@@ -1847,6 +1855,7 @@
   /* ---------- 提交批改 ---------- */
   function submitSession(code, topic, dkey, items, draft, mcOnly) {
     reviewState = { results: {} };
+    $all('input,textarea,button', $('#qPaper')).forEach(function(control){control.disabled=true;});
     var submitted = false;
     var mcFull = 0, mcMarks = 0, subFull = 0;
 
@@ -1864,10 +1873,10 @@
 
     // 渲染批改面板（MC 直接出結果；大題出踩分點表單）
     var html = '<div class="rp-head">' +
-      '<h2><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 批改結果' + (mcOnly ? '（只做選擇題，已自動批改）' : '（MC 已自動改，大題自己照踩分點剔分）') + '</h2>' +
+      '<h2><span class="persona-icon persona-icon-records" aria-hidden="true"></span> 批改結果' + (mcOnly ? '（只做選擇題，已自動批改）' : '（大題可請 AI 逐點分析）') + '</h2>' +
       '<div class="rp-score">MC <b id="mcScore">' + mcMarks + ' / ' + mcFull + '</b> 分' +
-      (mcOnly ? '' : '　·　大題 <b id="subScore">0 / ' + subFull + '</b> 分') +
-      '　·　總分 <b id="allScore">' + mcMarks + ' / ' + (mcFull + subFull) + '</b></div></div>';
+      (mcOnly ? '' : '　·　大題自評 <b id="subScore">待核對 / ' + subFull + '</b> 分') +
+      '　·　'+(mcOnly?'總分':'練習自評')+' <b id="allScore">' + (mcOnly?mcMarks + ' / ' + mcFull:'待核對') + '</b></div></div>';
 
     items.forEach(function (it, idx) {
       html += '<article class="rq ' + (it.kind === 'mc' ? 'rq-mc' : 'rq-sub') + '" data-id="' + esc(it.id) + '">';
@@ -1883,15 +1892,15 @@
       } else {
         var draftText = draft.text[it.id] || '';
         if (draftText.trim()) {
-          html += '<div class="ans-block ans-type"><div class="ans-title"><span class="persona-icon persona-icon-practice" aria-hidden="true"></span> 你今次默寫</div>' +
+          html += '<div class="ans-block ans-type"><div class="ans-title"><span class="persona-icon persona-icon-practice" aria-hidden="true"></span> 你本次提交的答案</div>' +
             '<div class="ans-body">' + highlight(draftText, keywordsOf(it)) + '</div></div>';
         }
-        if ((draft.steps || {})[it.id]?.assisted) html += '<p class="review-note">本次使用了 AI 拆題引導；以下只記錄你實際填寫的答案。</p>';
-        html += answerBlocks(it, true, '');
+        if ((draft.steps || {})[it.id]?.assisted) html += '<p class="review-note">此草稿保留了先前 AI 引導的作答記錄；以下只核對你實際填寫的答案。</p>';
+        html += aiPanelHtml(it, draftText) + '<details class="review-reference"><summary>查看參考答案與當年錯因</summary>'+answerBlocks(it, true, '')+'</details>';
         var checks = it.checks || [];
         var wList = checks.map(function (c) { return /^✗/.test(c) ? 0 : 1; });
         var wTot = wList.reduce(function (a, b) { return a + b; }, 0);
-        html += '<div class="chk-form" data-id="' + esc(it.id) + '" data-marks="' + marksOf(it) +
+        html += '<details class="review-self-check"><summary>自行核對／調整練習得分</summary><p class="review-note">核對項可能含替代答案或同一分的細節，圈點數量不直接等於分數；練習自評與 AI 分析分開保存。</p><div class="chk-form" data-id="' + esc(it.id) + '" data-marks="' + marksOf(it) +
           '" data-wtot="' + wTot + '">' +
           '<div class="chk-form-h"><span class="persona-icon persona-icon-notes" aria-hidden="true"></span> 你寫到邊個踩分點？（剔中 ' +
             '<span class="chk-got">0</span>/<span class="chk-tot">' + wTot + '</span>' +
@@ -1900,13 +1909,13 @@
             return '<label class="chk-line' + (wList[i] ? '' : ' is-warn') + '">' +
               '<input type="checkbox" data-i="' + i + '" data-w="' + wList[i] + '">' +
               '<span class="chk-text">' + checkText(c) + '</span></label>';
-          }).join('') + '</div>' + aiPanelHtml(it, draftText);
+          }).join('') + '</div></details>';
       }
       html += '</article>';
     });
 
     html += '<div class="rp-actions">' +
-      '<button class="btn btn-primary btn-lg" id="saveSessionBtn" type="button"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> 儲存做題記錄</button>' +
+      '<button class="btn btn-primary btn-lg" id="saveSessionBtn" type="button"><span class="persona-icon persona-icon-papers" aria-hidden="true"></span> '+(mcOnly?'儲存做題記錄':'確認自評並儲存練習記錄')+'</button>' +
       '<a class="btn btn-ghost" href="' + practiceHref(code, sessState.year) + '">返課題列表</a></div>';
 
     var panel = $('#resultPanel');
@@ -2025,28 +2034,28 @@
   }
   function confirmedTags(id) { var row = latestAI(id); return row && Array.isArray(row.tags) ? row.tags.filter(function (t) { return AI_TAGS.indexOf(t)>=0; }) : []; }
   function aiFeedbackHtml(data) {
-    var labels = { hit:'命中', partial:'部分命中', missed:'未命中', uncertain:'未能確定' };
-    return '<p>' + esc(data.summary) + '</p>' + (data.uncertainty ? '<p class="ai-uncertainty">判斷限制：' + esc(data.uncertainty) + '</p>' : '') +
+    var labels = { hit:'已達到', partial:'部分達到', missed:'未達到', uncertain:'待核實' }, symbols={hit:'●',partial:'◐',missed:'○',uncertain:'？'};
+    var points=data.points || [], scoring=points.filter(function(p){return p.scoring!==false;}), counts={hit:0,partial:0,missed:0,uncertain:0};
+    scoring.forEach(function(p){counts[labels[p.status]?p.status:'uncertain']++;});
+    var overview=scoring.length?'<div class="ai-point-overview"><div class="ai-coverage-dots" aria-label="給分要點核對結果">'+scoring.map(function(p){var state=labels[p.status]?p.status:'uncertain';return '<span class="ai-dot ai-dot-'+state+'" role="img" aria-label="'+esc(labels[state]+'：'+p.basis)+'">'+symbols[state]+'</span>';}).join('')+'</div><p><b>已達到 '+counts.hit+' 項</b> · 待補 '+counts.missed+' 項'+(counts.partial?' · 部分達到 '+counts.partial+' 項':'')+(counts.uncertain?' · 待核實 '+counts.uncertain+' 項':'')+'</p><p class="review-note">● 已達到　○ 未達到　◐ 部分達到　？待核實。核對項數不直接等於分數，替代答案及防錯提醒需按題意判斷。</p></div>':'';
+    return overview+'<p>' + esc(data.summary) + '</p>' + (data.uncertainty ? '<p class="ai-uncertainty">判斷限制：' + esc(data.uncertainty) + '</p>' : '') +
       (data.materialNotes ? '<p class="ai-uncertainty">' + esc(data.materialNotes) + '</p>' : '') +
-      (data.points || []).map(function (p) { return '<div class="ai-point"><h4>' + esc((p.scoring ? '給分依據' : '防錯提醒（不計分）') + ' ' + (p.index+1) + ' · ' + (labels[p.status] || '未能確定')) + '</h4>' +
-        '<p><b>依據：</b>' + esc(p.basis) + '</p><p><b>你的表達：</b>' + esc(p.evidence || '未找到對應表達') + '</p><p><b>判斷原因：</b>' + esc(p.reason) + '</p><p><b>建議補充：</b>' + esc(p.suggestion || '無補充建議') + '</p></div>'; }).join('') +
+      points.map(function (p) { var state=labels[p.status]?p.status:'uncertain',warning=p.scoring===false;
+        return '<details class="ai-point ai-point-'+state+(warning?' ai-point-warning':'')+'"'+(!warning && state!=='hit'?' open':'')+'><summary>'+
+        '<span class="ai-point-symbol ai-dot-'+state+'" aria-hidden="true">'+(warning?'!':symbols[state])+'</span><span class="ai-point-basis">'+(warning?'防錯提醒（不計分）：':'')+esc(p.basis)+'</span><span class="ai-point-state">'+(warning?'查看核對':labels[state])+'</span></summary><div class="ai-point-detail">'+
+        '<p><b>你的原答：</b>' + esc(p.evidence || '未找到對應表達') + '</p><p><b>判斷：</b>' + esc(p.reason) + '</p>'+(p.suggestion?'<p><b>補充方向：</b>' + esc(p.suggestion) + '</p>':'')+'</div></details>'; }).join('') +
       (data.reply ? '<p class="ai-reply">' + esc(data.reply) + '</p>' : '');
   }
   function aiPanelHtml(item, answer, canReview) {
-    canReview = canReview !== false;
-    return '<section class="ai-panel" data-ai-id="' + esc(item.id) + '" data-can-review="' + canReview + '"><h3>AI 逐點輔評與提示</h3>' +
-      '<p class="review-note">' + (canReview ? '先完成自評，再主動請 AI 檢查。輔評確認後另行儲存，不改原卷分數或 DSE 參考等級。' : '先自行作答；需要時逐層查看提示。提交並自評後可請 AI 逐點檢查。') + '</p>' +
-      (item.my && item.my.length ? '<p class="review-note">AI 可參考本題已收錄的當年作答及錯因；逐點輔評仍只核對本次答案。</p>' : '') +
-      '<p class="ai-status" role="status">正在核對 AI 連線…</p>' +
-      (canReview ? '<label>供 AI 檢查的本次答案<textarea class="ai-answer" maxlength="6000" rows="4">' + esc(answer) + '</textarea></label>' : '') +
+    if(canReview===false)return '';
+    return '<section class="ai-panel" data-ai-id="' + esc(item.id) + '" data-can-review="true"><h3>AI 作答分析</h3>' +
+      '<p class="review-note">核對本次已提交的答案，逐點查看已達到與尚欠的內容。分析確認後另行保存。</p>' +
+      '<details class="ai-submitted"><summary>核對本次提交原文</summary><label>已提交答案<textarea class="ai-answer" maxlength="6000" rows="3" readonly>' + esc(answer) + '</textarea></label></details>' +
       '<label class="ai-figure-choice" hidden><input class="ai-figures" type="checkbox"> 同時提供本題相關圖表</label>' +
-      '<div class="ai-actions">' + (canReview ? '<button class="btn btn-primary" data-ai-mode="review" type="button" disabled>檢查我的答案</button>' : '') +
-      (!canReview ? '<button class="btn btn-primary" data-ai-mode="scaffold" type="button" disabled>AI 幫我拆題</button>' : '') +
-      '<button class="btn btn-ghost" data-ai-mode="hint" data-level="1" type="button" disabled>1 方向提示</button>' +
-      '<button class="btn btn-ghost" data-ai-mode="hint" data-level="2" type="button" disabled>2 關鍵概念</button>' +
-      '<button class="btn btn-ghost" data-ai-mode="hint" data-level="3" type="button" disabled>3 完整解析</button>' +
+      '<div class="ai-actions"><button class="btn btn-primary" data-ai-mode="review" type="button" disabled>分析本次答案</button></div><p class="ai-status" role="status">正在核對 AI 連線…</p>' +
+      '<details class="ai-connection"><summary>連線檢查與用量</summary><p>每日最多 20 次分析，請求間隔至少 10 秒。測試服務每分鐘一次。</p>'+
       '<button class="btn btn-ghost ai-reconnect" type="button">重新檢查配置</button>' +
-      '<button class="btn btn-ghost ai-probe" type="button">測試 AI 服務</button></div>' +
+      '<button class="btn btn-ghost ai-probe" type="button">測試 AI 服務</button></details>' +
       '<div class="ai-pager" role="group" aria-label="AI 回覆翻頁" hidden>' +
       '<button class="btn btn-ghost ai-page-prev" type="button" aria-label="查看上一則 AI 回覆">‹ 上一則</button>' +
       '<span class="ai-page-label" aria-live="polite"></span>' +
@@ -2054,7 +2063,7 @@
       '<small>未確認的回覆在目前登入頁面內保留，重新整理後清除。</small></div>' +
       '<div class="ai-feedback" aria-live="polite"></div><div class="ai-confirm" hidden><p>確認本次錯因標籤（可取消或補選）</p>' +
       AI_TAGS.map(function (tag) { return '<label><input type="checkbox" value="' + tag + '"> ' + tag + '</label>'; }).join('') +
-      '<button class="btn btn-primary ai-save" type="button">確認並儲存輔評</button></div>' +
+      '<button class="btn btn-primary ai-save" type="button">確認並儲存分析</button></div>' +
       '<div class="ai-chat" hidden><label>繼續追問本題<input class="ai-question" type="text" maxlength="2000"></label>' +
       '<button class="btn btn-ghost" data-ai-mode="followup" type="button" disabled>送出追問</button></div></section>';
   }
@@ -2065,18 +2074,19 @@
       ai_auth_error:'AI 服務端密鑰無效或權限不足，需修正服務配置。', ai_balance_exhausted:'AI 帳戶餘額不足，暫時無法作答。',
       ai_request_rejected:'AI 服務拒絕了請求格式，需檢查模型與接口設定。', ai_network_error:'AI 上游網絡未能連接，草稿已保留。',
       ai_provider_error:'AI 上游服務發生錯誤，請稍後重試。', ai_probe_limited:'連線測試每分鐘可執行一次，請稍後再試。',
+      ai_practice_disabled:'練習階段的 AI 已停用，請自行作答後提交批改。',
       ai_figure_unavailable:'相關圖表未能讀取，請重試或取消附圖。', not_connected:'登入已失效，請重新登入。' }[code] || 'AI 暫時未能完成，請按原按鈕重試。';
   }
   function bindAIPanels(root, items) {
     $all('.ai-panel', root).forEach(function (widget) {
       var item = items.filter(function (it) { return it.id === widget.dataset.aiId; })[0], auth = localStorage.getItem(LS_SYNC_SESSION);
       var status = $('.ai-status',widget), output = $('.ai-feedback',widget), pending = null, ready = false, busy = false;
-      var history = aiReplyHistories[item.id];
-      if (!history || history.auth !== auth) history = aiReplyHistories[item.id] = { auth:auth, entries:[], index:-1, hintLevel:0, messages:[] };
+      var submittedAnswer=$('.ai-answer',widget).value, history = aiReplyHistories[item.id];
+      if (!history || history.auth !== auth || history.answer!==submittedAnswer) history = aiReplyHistories[item.id] = { auth:auth, answer:submittedAnswer, entries:[], index:-1, messages:[] };
       var viewIndex = history.index;
       function current() { return widget.isConnected && localStorage.getItem(LS_SYNC_SESSION) === auth; }
       function enable() {
-        $all('[data-ai-mode]',widget).forEach(function (b) { b.disabled = !ready || busy || (b.dataset.aiMode==='hint' && Number(b.dataset.level)>history.hintLevel+1); });
+        $all('[data-ai-mode]',widget).forEach(function (b) { b.disabled = !ready || busy || !submittedAnswer.trim(); });
         $('.ai-save',widget).disabled = !pending || busy;
         $('.ai-probe',widget).disabled = !ready || busy;
       }
@@ -2091,7 +2101,7 @@
         $('.ai-confirm',widget).hidden = !pending;
         $('.ai-chat',widget).hidden = !entry;
         if (entry) {
-          var title = entry.mode === 'review' ? '逐點輔評' : entry.mode === 'followup' ? '本題追問' : entry.mode === 'scaffold' ? '分步引導' : ['','方向提示','關鍵概念','完整解析'][entry.hintLevel];
+          var title = entry.mode === 'review' ? '逐點分析' : '批改後追問';
           $('.ai-page-label',widget).textContent = (viewIndex+1)+' / '+history.entries.length+' · '+title;
           output.innerHTML = '<p class="ai-reply-meta">'+esc(fmtDateTime(entry.generatedAt))+(entry.confirmedAt?' · 已確認儲存':'')+'</p>' +
             (entry.mode === 'review' ? '<details class="ai-reviewed-answer"><summary>這則輔評對應的本次答案</summary><p>'+esc(entry.answer)+'</p></details>' : '') +
@@ -2117,7 +2127,7 @@
         aiStatusSnapshot={auth:auth,until:Date.now()+30000,promise:check};
         check.then(function (config) {
           if(!current())return;
-          ready=config.configured===true;status.textContent=ready?(config.provider==='DeepSeek'?'DeepSeek 已配置（尚未實測）':'AI 服務已配置（尚未實測）')+(config.fallbackConfigured?' · 已配置自動備用接口。':' · 未配置備用接口。')+' 每日最多 20 次，請求間隔至少 10 秒。':'AI 尚未配置：需先設定服務端密鑰。自評與練習仍可正常使用。';
+          ready=config.configured===true;status.textContent=!submittedAnswer.trim()?'本題未提交文字答案，可自行核對參考解答。':ready?'AI 分析已配置，按上方按鈕核對本次答案。':'AI 分析暫時未配置，你仍可自行核對給分點。';
           $('.ai-figure-choice',widget).hidden=!(config.figuresEnabled && (item.figures || []).length);enable();
         }).catch(function (err) { if(current()){status.textContent=aiError(err.code);enable();} });
       }
@@ -2129,25 +2139,18 @@
       });
       $all('[data-ai-mode]',widget).forEach(function (button) { button.addEventListener('click',function () {
         if(!ready || busy)return;
-        var mode=button.dataset.aiMode, field=$('.ai-answer',widget), source=field || $('.ans-box[data-id="'+item.id+'"]');
-        var answer=source?source.value:'', question=$('.ai-question',widget).value;
+        var mode=button.dataset.aiMode, answer=submittedAnswer, question=$('.ai-question',widget).value;
         if(mode==='review' && !answer.trim()){status.textContent=aiError('ai_empty_answer');return;}
         if(mode==='followup' && !question.trim()){status.textContent='請輸入關於本題的問題。';return;}
         busy=true;enable();status.textContent='AI 正在核對本題資料…';
-        call('/ai/review',{questionId:item.id,answer:answer,mode:mode,hintLevel:Number(button.dataset.level)||1,question:question,messages:history.messages.slice(-6),includeFigures:$('.ai-figures',widget).checked}).then(function (data) {
+        call('/ai/review',{questionId:item.id,answer:answer,mode:mode,question:question,messages:history.messages.slice(-6),includeFigures:$('.ai-figures',widget).checked}).then(function (data) {
           if(!current())return;
           if(data.questionId!==item.id || !Array.isArray(data.points))throw {code:'ai_invalid_response'};
           status.textContent='AI 已回覆 · '+data.provider+' / '+data.model+(data.failover?' · 已自動使用備用接口':'')+'。請核對判斷限制。';
-          if(mode==='scaffold') {
-            if(!Array.isArray(data.steps) || data.steps.length<2 || data.steps.length>5 || data.steps.some(function(s){return !s || typeof s.prompt!=='string';}))throw {code:'ai_invalid_response'};
-            var editor=widget.parentElement.querySelector('.step-answer');
-            if(editor)editor.dispatchEvent(new CustomEvent('answer-scaffold',{detail:data.steps}));
-          }
           history.entries.push({questionId:item.id,answer:answer,feedback:data,tags:(data.tags||[]).slice(),generatedAt:data.generatedAt,
-            mode:mode,hintLevel:Number(button.dataset.level)||1,question:question});
-          if(mode==='hint') history.hintLevel=Math.max(history.hintLevel,Number(button.dataset.level));
+            mode:mode,question:question});
           if(mode==='followup') $('.ai-question',widget).value='';
-          history.messages.push({role:'user',content:(mode==='followup'?question:mode==='hint'?'提示第 '+button.dataset.level+' 層':'請逐點核對本次答案').slice(0,3000)},{role:'assistant',content:JSON.stringify(data).slice(0,3000)});
+          history.messages.push({role:'user',content:(mode==='followup'?question:'請逐點核對本次已提交答案').slice(0,3000)},{role:'assistant',content:JSON.stringify(data).slice(0,3000)});
           history.messages=history.messages.slice(-6);
           showReply(history.entries.length-1);
         }).catch(function (err) { if(current()){status.textContent=aiError(err.code);if(err.status===401)expireConnection(err,auth);} }).finally(function () {busy=false;if(current())enable();});
