@@ -46,7 +46,8 @@ function boot(hash = '', fetch = async () => { throw new Error('offline'); }, in
   context.window = context;
   vm.createContext(context);
   vm.runInContext(data, context);
-  vm.runInContext(readFileSync(new URL('./library.js', import.meta.url), 'utf8'), context);
+  vm.runInContext(readFileSync(new URL('./subject-config.js', import.meta.url), 'utf8'), context);
+vm.runInContext(readFileSync(new URL('./library.js', import.meta.url), 'utf8'), context);
   vm.runInContext(readFileSync(new URL('./paper-reader.js', import.meta.url), 'utf8'), context);
   vm.runInContext(source, context);
   return { context, location, nodes, node, saved, timers, intervals, events };
@@ -1537,4 +1538,36 @@ test('switching from Kyle to Yeelam reloads before any old records can sync', as
   assert.equal(app.saved.get('dse_quiz_user_v1'), 'yeelam');
   assert.equal(app.saved.get('dse_quiz_sessions_v2'), JSON.stringify(owner));
   assert.ok(![...app.saved.values()].some(v => String(v).includes('synthetic-guest-password')));
+});
+
+test('Yeelam subject entrances use math, M2 and physics while Kyle keeps all original subjects', async () => {
+  const guest = boot('', undefined, { dse_quiz_user_v1: 'yeelam' });
+  const source = guest.context.QUIZ_DATA.subjects;
+  assert.deepEqual(Object.keys(source), ['math', 'm2', 'physics']);
+  source.math.items.push({ id:'guest-math',kind:'sub',topic:'U1',year:'2024',stem:'數學示例',checks:['步驟'],correct:'示例解答' });
+  source.math.topics.push({ code:'U1',name:'數學課題' });
+  ['m2','physics'].forEach(code => {
+    source[code].topics.push({code:'U1',name:code+' 課題'});
+    source[code].items.push({id:code+'-synthetic',kind:'sub',topic:'U1',year:'2024',stem:'完整'+code+' 題幹',checks:['說明'],correct:'示例解答',figures:[{path:'images/'+code+'-2024-fig-synthetic.jpg',alt:'合成圖表'}]});
+  });
+  for (const hash of ['#/','#/random','#/library/books','#/library/papers','#/today','#/records']) {
+    guest.location.hash = hash; guest.events.hashchange();
+    const html = guest.node('#app').innerHTML;
+    assert.match(html,/數學/); assert.match(html,/M2/); assert.match(html,/物理/);
+    assert.doesNotMatch(html,/化學|生物|href="#\/(?:session|practice)\/(?:chem|bio)/);
+  }
+  guest.location.hash = '#/library/books/m2'; guest.events.hashchange();
+  assert.match(guest.node('#app').innerHTML,/數學延伸 2（M2）/);
+  assert.match(guest.node('#app').innerHTML, /下一個學科：物理/);
+  for (const code of ['math','m2','physics']) {
+    guest.location.hash = '#/practice/'+code; guest.events.hashchange();
+    assert.match(guest.node('#app').innerHTML,/1 道錯題/);
+    guest.location.hash = '#/session/'+code+'/U1/2024'; guest.events.hashchange();
+    assert.equal(guest.node('#totalCount').textContent,1);
+  }
+  guest.location.hash = '#/practice/chem'; guest.events.hashchange();
+  assert.doesNotMatch(guest.node('#app').innerHTML,/化學|生物/);
+  const owner = boot('#/library/books');
+  assert.match(owner.node('#app').innerHTML,/化學/); assert.match(owner.node('#app').innerHTML,/生物/);
+  assert.match(owner.node('#app').innerHTML,/數學/); assert.doesNotMatch(owner.node('#app').innerHTML,/M2|物理/);
 });

@@ -3,12 +3,12 @@
  */
 (function () {
   'use strict';
-  function emptyBank() {
-    return { subjects: { chem: { name: '化學', topics: [], items: [] }, bio: { name: '生物', topics: [], items: [] }, math: { name: '數學', topics: [], items: [] } } };
-  }
+  var activeUser = localStorage.getItem('dse_quiz_user_v1') || 'kyle';
+  var subjectConfig = window.DSESubjects;
+  function emptyBank() { return subjectConfig.emptyBank(activeUser); }
   var PRIVATE_BANK = window.QUIZ_PRIVATE_BANK === true;
   var DATA = PRIVATE_BANK ? emptyBank() : window.QUIZ_DATA;
-  if (DATA && DATA.subjects && !Object.prototype.hasOwnProperty.call(DATA.subjects, 'math')) DATA.subjects.math = emptyBank().subjects.math;
+  if (DATA && DATA.subjects) DATA.subjects = subjectConfig.bankFor(activeUser, DATA).subjects;
   var bankLoaded = !PRIVATE_BANK, bankPromise = null, bankMessage = '', bankFailed = false, bankRequest = 0, bankAutoRetry = false;
   var imageUrls = new Map(), imageReads = new Map(), imageObserver = null;
   var LS_SESS = 'dse_quiz_sessions_v2';
@@ -18,7 +18,6 @@
   var LS_REVIEW = 'dse_quiz_review_v1';
   var LS_TODAY = 'dse_quiz_today_v1';
   var LS_AI = 'dse_quiz_ai_reviews_v1';
-  var activeUser = localStorage.getItem('dse_quiz_user_v1') || 'kyle';
   // Preserve legacy Kyle keys. Other accounts never load or migrate those keys.
   function userKey(key) { return activeUser === 'kyle' ? key : key + ':' + activeUser; }
   LS_SESS = userKey(LS_SESS); LS_DRAFT = userKey(LS_DRAFT);
@@ -50,13 +49,11 @@
   var archive = load(LS_ARCHIVE, []);
   var drafts = load(LS_DRAFT, {});
   var reviewPlan = load(LS_REVIEW, {});
-  var SUBJECT_ORDER = ['chem', 'bio', 'math'];
-  var SUBJECT_META = {
-    all: { name: '全部科目', icon: '<span class="persona-icon persona-icon-practice" aria-hidden="true"></span>' },
-    chem: { name: '化學', icon: '<span class="persona-icon persona-icon-chem" aria-hidden="true"></span>', soon: false },
-    bio: { name: '生物', icon: '<span class="persona-icon persona-icon-bio" aria-hidden="true"></span>', soon: false },
-    math: { name: '數學', icon: '<span class="persona-icon persona-icon-math" aria-hidden="true"></span>', soon: false }
-  };
+  var SUBJECT_ORDER = subjectConfig.codes(activeUser);
+  var SUBJECT_META = { all: { name: '全部科目', icon: '<span class="persona-icon persona-icon-practice" aria-hidden="true"></span>' } };
+  Object.keys(subjectConfig.names).forEach(function (code) {
+    SUBJECT_META[code] = { name: subjectConfig.names[code], icon: subjectConfig.icon(code), soon: false };
+  });
 
   function load(k, d) {
     try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; }
@@ -374,15 +371,15 @@
     }
     bankPromise = readBank(0).then(function (bank) {
       if (requestId !== bankRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return false;
-      if (bank && bank.subjects && !Object.prototype.hasOwnProperty.call(bank.subjects, 'math')) bank.subjects.math = emptyBank().subjects.math;
+      bank = subjectConfig.bankFor(activeUser, bank);
       SUBJECT_ORDER.forEach(function (code) {
         if (!bank.subjects || !bank.subjects[code] || !Array.isArray(bank.subjects[code].items) || !Array.isArray(bank.subjects[code].topics)) {
           throw new Error('錯題庫格式有誤');
         }
         bank.subjects[code].items.forEach(function (it) {
-          if (it.img && !/^images\/(?:chem|bio|math)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg$/.test(it.img)) throw new Error('原題圖片路徑有誤');
+          if (it.img && !/^images\/(?:chem|bio|math|m2|physics)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg$/.test(it.img)) throw new Error('原題圖片路徑有誤');
         if (it.figures && (!Array.isArray(it.figures) || !it.figures.every(function (f) {
-          return f && /^images\/(?:chem|bio|math)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path);
+          return f && /^images\/(?:chem|bio|math|m2|physics)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path);
         }))) throw new Error('原題圖表路徑有誤');
         });
       });
@@ -421,7 +418,7 @@
   }
   function renderBankGate() {
     $('#app').innerHTML = '<section class="home"><div class="hero">' +
-      '<div class="hero-kicker">DSE · 化學 / 生物</div><h1 class="hero-title">' + (activeUser === 'yeelam' ? 'Yeelam' : 'Kyle') + ' 嘅錯題本</h1>' +
+      '<div class="hero-kicker">DSE · ' + SUBJECT_ORDER.map(function (code) { return SUBJECT_META[code].name; }).join(' / ') + '</div><h1 class="hero-title">' + (activeUser === 'yeelam' ? 'Yeelam' : 'Kyle') + ' 嘅錯題本</h1>' +
       '<p class="hero-sub">' + (PASSWORD_AUTH ? '輸入密碼即可讀取你的錯題庫、原題圖片和做題記錄。' : '連接 GitHub 後即可讀取你的錯題庫和原題圖片。') + '</p>' +
       '<p class="review-note" id="syncStatus" role="status" aria-live="polite">' + esc(bankMessage || syncMessage || '你的做題記錄會保留。') + '</p>' +
       (SYNC_API ? (PASSWORD_AUTH ? passwordForm() : '<a class="btn btn-primary" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">連接 GitHub</a>') : '') +
@@ -721,7 +718,7 @@
       if (view !== 'home' && !(view === 'library' && parts[1] === 'papers')) return renderBankLoading();
     }
     if (view === 'home') return renderHome();
-    if (view === 'practice') return renderPractice(parts[1] || 'chem', parts[2]);
+    if (view === 'practice') return renderPractice(SUBJECT_ORDER.indexOf(parts[1]) >= 0 ? parts[1] : SUBJECT_ORDER[0], parts[2]);
     if (view === 'library') return renderLibrary(parts.slice(1));
     if (view === 'random') return renderRandomPicker();
     if (view === 'today') return renderToday(parts[1], parts[2]);
@@ -794,11 +791,11 @@
           '</div>' +
         '</div>' +
         '<div class="tile-grid">' +
-          tile('#/practice/chem', '<span class="persona-icon persona-icon-practice" aria-hidden="true"></span>', '開始練習', '按課題逐個擊破', 'tile-blue') +
+          tile('#/practice/' + SUBJECT_ORDER[0], '<span class="persona-icon persona-icon-practice" aria-hidden="true"></span>', '開始練習', '按課題逐個擊破', 'tile-blue') +
           tile('#/library/books', '<span class="persona-icon persona-icon-library" aria-hidden="true"></span>', '錯題庫', '歸納原答案、錯因與正解', 'tile-gold') +
           tile('#/library/papers', '<span class="persona-icon persona-icon-papers" aria-hidden="true"></span>', '紅筆批改卷', '按年份回顧原答與批注', 'tile-green') +
           tile('#/records', '<span class="persona-icon persona-icon-records" aria-hidden="true"></span>', '做題記錄', '查看歷次練習與雙周進度', 'tile-gold') +
-          tile('#/random', '<span class="persona-icon persona-icon-random" aria-hidden="true"></span>', '隨機十題', '化學／生物十題速測', 'tile-green') +
+          tile('#/random', '<span class="persona-icon persona-icon-random" aria-hidden="true"></span>', '隨機十題', SUBJECT_ORDER.map(function (code) { return SUBJECT_META[code].name; }).join('／') + '十題速測', 'tile-green') +
         '</div></div>' +
         todayMarkup() + '<div class="home-stat-strip">' +
           '<div>本輪待複習<strong class="c-red">' + (bankLoaded ? due : '—') + '<small>題</small></strong></div>' +
@@ -812,7 +809,7 @@
         '</div>' +
 
         '<div class="home-sec">' +
-          '<div class="home-sec-h"><h2><span class="persona-icon persona-icon-chem" aria-hidden="true"></span> 建議優先複習</h2><a class="link" href="#/practice/chem">全部課題 →</a></div>' +
+          '<div class="home-sec-h"><h2><span class="persona-icon persona-icon-practice" aria-hidden="true"></span> 建議優先複習</h2><a class="link" href="#/practice/' + SUBJECT_ORDER[0] + '">全部課題 →</a></div>' +
           '<div class="rec-grid">' +
             (bankLoaded ? top.map(function (r) {
               var pct = pctOf(r.code, r.marks);
@@ -993,7 +990,7 @@
     return fetch(SYNC_API + '/papers/catalog', {
       method: 'GET', headers: { Authorization: 'Bearer ' + session }, cache: 'no-store', signal: signal,
     }).then(readSyncResponse).then(function (catalog) {
-      if (catalog && catalog.subjects && !Object.prototype.hasOwnProperty.call(catalog.subjects, 'math')) catalog.subjects.math = [];
+      if (catalog && catalog.subjects) SUBJECT_ORDER.forEach(function (code) { if (['math','m2','physics'].indexOf(code) >= 0 && !Object.prototype.hasOwnProperty.call(catalog.subjects, code)) catalog.subjects[code] = []; });
       if (!catalog || !catalog.subjects || !SUBJECT_ORDER.every(function (code) {
         return Array.isArray(catalog.subjects[code]) && catalog.subjects[code].every(function (year) { return /^20\d{2}$/.test(year); });
       })) throw new Error('批改卷年份清單無效');
@@ -1366,10 +1363,10 @@
     if (SUBJECT_META[code] && SUBJECT_META[code].soon) {
       $('#app').innerHTML = '<section class="page"><div class="soon-banner"><span class="persona-icon persona-icon-math" aria-hidden="true"></span> ' +
         esc(SUBJECT_META[code].name) + ' 錯題庫即將推出，考完好試卷就會自動出現。</div>' +
-        '<a class="btn btn-primary" href="#/practice/chem">← 返化學</a></section>';
+        '<a class="btn btn-primary" href="#/practice/' + SUBJECT_ORDER[0] + '">← 返回科目</a></section>';
       return;
     }
-    if (!subjOf(code)) code = 'chem';
+    if (!subjOf(code)) code = SUBJECT_ORDER[0];
     var years = Array.from(new Set(itemsOf(code).map(function (it) { return String(it.year); }))).sort().reverse();
     var selected = requestedYear || 'all';
     if (years.indexOf(selected) < 0) selected = 'all';
@@ -1520,6 +1517,7 @@
   }
 
   function renderSession(code, topic, mcOnly, year) {
+    if (code !== 'all' && SUBJECT_ORDER.indexOf(code) < 0) return renderPractice(SUBJECT_ORDER[0]);
     if (!topic) { location.hash = '#/practice'; return; }
     if (!subjOf(code)) {
       $('#app').innerHTML =
@@ -1610,7 +1608,7 @@
           '</tr></thead><tbody>' + table.rows.map(function (row) { return '<tr>' + row.map(function (cell) { return '<td>' + text(cell) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
       }).join('') : '') +
       (Array.isArray(it.figures) ? it.figures.map(function (f) {
-        if (!f || !/^images\/(?:chem|bio|math)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path)) return '';
+        if (!f || !/^images\/(?:chem|bio|math|m2|physics)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path)) return '';
         return '<figure><img class="q-img" ' + (PRIVATE_BANK ? 'data-bank-image="' + esc(f.path) + '"' : 'src="' + esc(f.path) + '"') +
           ' loading="lazy" decoding="async" alt="' + esc(f.alt || '原題圖表') + '"' +
           (f.width > 0 && f.height > 0 ? ' width="' + Number(f.width) + '" height="' + Number(f.height) + '"' : '') +
@@ -2284,7 +2282,7 @@
 
         '<div class="panel"><div class="panel-h-row"><h2 class="panel-h"><span class="persona-icon persona-icon-sync" aria-hidden="true"></span> 錯題複習狀態（仍錯在上、已通過嘅沉底）</h2>' +
           '<div class="filter-seg" id="wrongFilter">' +
-            ['ALL', 'chem', 'bio'].map(function (c) {
+            ['ALL'].concat(SUBJECT_ORDER).map(function (c) {
               var lbl = c === 'ALL' ? '全部' : SUBJECT_META[c].name;
               return '<button class="seg' + (c === 'ALL' ? ' on' : '') + '" data-f="' + c + '" type="button">' + lbl + '</button>';
             }).join('') +

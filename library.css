@@ -103,3 +103,7 @@ a.ml-subject:hover { transform: translateY(-3px); box-shadow: 0 14px 32px #183b3
   .ml-answer { padding: 17px; }
 }
 @media (prefers-reduced-motion: reduce) { a.ml-subject { transition: none; } }
+
+.subject-symbol { display:inline-flex; align-items:center; justify-content:center; min-width:1.2em; font-weight:900; font-size:1.2em; line-height:1; }
+.ml-subject-m2 { color:#49375f; border-color:#dacee9; background:linear-gradient(140deg,#f5effc,#fff 90%); }
+.ml-subject-physics { color:#243e59; border-color:#c9dbea; background:linear-gradient(140deg,#edf4fc,#fff 90%); }

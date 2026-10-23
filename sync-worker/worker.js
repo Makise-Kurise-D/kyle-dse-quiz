@@ -1,3 +1,6 @@
+import '../subject-config.js';
+const subjectConfig = globalThis.DSESubjects;
+function accountFor(token) { return typeof token === 'object' ? token.userId : 'kyle'; }
 const SITE_ORIGIN = 'https://makise-kurisu-d.github.io';
 const SITE_HOME = `${SITE_ORIGIN}/kyle-dse-quiz/`;
 const REPO = 'Makise-Kurisu-D/kyle-dse-quiz-data';
@@ -6,7 +9,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'user-isolation-20261023';
+const SERVICE_VERSION = 'account-subjects-20261023';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
@@ -159,7 +162,7 @@ async function aiRoute(request, env, url) {
     const figures=[];
     if (body.includeFigures === true && configuration.figuresEnabled) {
       for (const f of (item.figures || []).slice(0,2)) {
-        if (!/^images\/(chem|bio|math)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path)) continue;
+        if (!/^images\/(chem|bio|math|m2|physics)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path)) continue;
         const file=await github(`/repos/${REPO}/contents/question-bank/${f.path}`,auth.token);
         if (file.encoding!=='base64' || typeof file.content!=='string' || file.content.length>800000) throw new Error('ai_figure_unavailable');
         figures.push('data:image/jpeg;base64,'+file.content.replace(/\n/g,''));
@@ -366,9 +369,9 @@ function privateBank(token) {
   const entry = { until: Date.now() + 30000, promise: null };
   entry.promise = github(`/repos/${REPO}/contents/${BANK_PATH}`, token).then(file => {
     if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_bank_file');
-    return JSON.parse(decodeUtf8(file.content));
+    return subjectConfig.bankFor(accountFor(token), JSON.parse(decodeUtf8(file.content)));
   }).catch(error => {
-    if (typeof token === 'object' && error.status === 404) return { subjects: Object.fromEntries([['chem','化學'],['bio','生物'],['math','數學']].map(([id,name]) => [id,{name,topics:[],items:[]}])) };
+    if (typeof token === 'object' && error.status === 404) return subjectConfig.emptyBank(accountFor(token));
     if (bankReads.get(key) === entry) bankReads.delete(key);
     throw error;
   });
@@ -429,21 +432,20 @@ function paperSummary(value) {
 
 async function githubPaperCatalog(token, fresh = false) {
   const catalog = await privateMetadata('papers/catalog.json', token, fresh).catch(error => {
-    if (typeof token === 'object' && error.status === 404) return { subjects: { chem: [], bio: [], math: [] } };
+    if (typeof token === 'object' && error.status === 404) return { subjects: {} };
     throw error;
   });
-  const subjects = catalog?.subjects ? { math: [], ...catalog.subjects } : null;
-  if (!subjects || typeof subjects !== 'object' || Array.isArray(subjects) ||
-      Object.keys(subjects).some(subject => !['chem', 'bio', 'math'].includes(subject)) ||
-      !['chem', 'bio', 'math'].every(subject => Array.isArray(subjects[subject]) &&
+  const codes = subjectConfig.codes(accountFor(token));
+  const subjects = catalog?.subjects ? Object.fromEntries(codes.map(code => [code, Object.prototype.hasOwnProperty.call(catalog.subjects, code) ? catalog.subjects[code] : ['math','m2','physics'].includes(code) ? [] : undefined])) : null;
+  if (!subjects || typeof catalog.subjects !== 'object' || Array.isArray(catalog.subjects) ||
+      Object.keys(catalog.subjects).some(subject => !Object.prototype.hasOwnProperty.call(subjectConfig.names, subject)) ||
+      !codes.every(subject => Array.isArray(subjects[subject]) &&
         subjects[subject].every(year => typeof year === 'string' && /^20\d{2}$/.test(year)) &&
-        new Set(subjects[subject]).size === subjects[subject].length)) {
-    throw new Error('invalid_paper_catalog');
-  }
-  const result = { subjects: { chem: subjects.chem, bio: subjects.bio, math: subjects.math } };
+        new Set(subjects[subject]).size === subjects[subject].length)) throw new Error('invalid_paper_catalog');
+  const result = { subjects };
   if (catalog.papers && typeof catalog.papers === 'object' && !Array.isArray(catalog.papers)) {
-    result.papers = { chem: {}, bio: {}, math: {} };
-    for (const subject of ['chem', 'bio', 'math']) {
+    result.papers = Object.fromEntries(codes.map(code => [code, {}]));
+    for (const subject of codes) {
       for (const year of subjects[subject]) {
         const summary = paperSummary(catalog.papers[subject]?.[year]);
         if (summary) result.papers[subject][year] = summary;
@@ -745,7 +747,7 @@ const worker = {
     }
     if (url.pathname === '/bank' || url.pathname.startsWith('/bank/')) {
       if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
-      const image = url.pathname.match(/^\/bank\/images\/((?:chem|bio|math)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg)$/);
+      const image = url.pathname.match(/^\/bank\/images\/((?:chem|bio|math|m2|physics)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg)$/);
       if (url.pathname !== '/bank' && !image) return json({ error: 'not_found' }, 404, cors(request));
       const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
       if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
@@ -755,6 +757,7 @@ const worker = {
         if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
         if (!await isOwner(auth, env)) return json({ error: 'owner_only' }, 403, cors(request));
         if (!image) return json(await privateBank(auth.token), 200, cors(request));
+        if (!subjectConfig.allows(accountFor(auth.token), image[1].split('-')[0])) return json({ error: 'not_found' }, 404, cors(request));
         const path = `question-bank/images/${image[1]}`;
         const file = await github(`/repos/${REPO}/contents/${path}`, auth.token);
         if (file.encoding !== 'base64' || typeof file.content !== 'string' || file.content.length > 1_400_000) throw new Error('invalid_bank_file');
@@ -773,9 +776,9 @@ const worker = {
     if (url.pathname === '/papers' || url.pathname.startsWith('/papers/')) {
       if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
       const catalog = url.pathname === '/papers/catalog';
-      const manifest = url.pathname.match(/^\/papers\/(chem|bio|math)\/(20\d{2})\/manifest$/);
-      const page = url.pathname.match(/^\/papers\/(chem|bio|math)\/(20\d{2})\/pages\/([0-9a-f]{16})\/([1-9]\d{0,3})$/);
-      const thumbnails = url.pathname.match(/^\/papers\/(chem|bio|math)\/(20\d{2})\/thumbnails\/([0-9a-f]{16})$/);
+      const manifest = url.pathname.match(/^\/papers\/(chem|bio|math|m2|physics)\/(20\d{2})\/manifest$/);
+      const page = url.pathname.match(/^\/papers\/(chem|bio|math|m2|physics)\/(20\d{2})\/pages\/([0-9a-f]{16})\/([1-9]\d{0,3})$/);
+      const thumbnails = url.pathname.match(/^\/papers\/(chem|bio|math|m2|physics)\/(20\d{2})\/thumbnails\/([0-9a-f]{16})$/);
       if (!catalog && !manifest && !page && !thumbnails) return json({ error: 'not_found' }, 404, cors(request));
       const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
       if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
@@ -784,10 +787,11 @@ const worker = {
         const auth = await tokenFor(request, env);
         if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
         if (!await isOwner(auth, env)) return json({ error: 'owner_only' }, 403, cors(request));
+        if (!catalog && !subjectConfig.allows(accountFor(auth.token), (manifest || page || thumbnails)[1])) return json({ error: 'paper_not_accessible' }, 404, cors(request));
         const available = await githubPaperCatalog(auth.token, url.searchParams.has('refresh'));
         if (catalog) return json(available, 200, cors(request));
         const subject = (manifest || page || thumbnails)[1], year = (manifest || page || thumbnails)[2];
-        if (!available.subjects[subject].includes(year)) return json({ error: 'paper_not_accessible' }, 404, cors(request));
+        if (!subjectConfig.allows(accountFor(auth.token), subject) || !available.subjects[subject].includes(year)) return json({ error: 'paper_not_accessible' }, 404, cors(request));
         const current = await githubPaperManifest(subject, year, auth.token, url.searchParams.has('refresh'));
         if (manifest) return json(current, 200, cors(request));
         const version = (page || thumbnails)[3], number = page ? Number(page[4]) : 0;

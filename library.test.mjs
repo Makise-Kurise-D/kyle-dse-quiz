@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 
 const context = { Date, window: {} };
 vm.createContext(context);
+vm.runInContext(readFileSync(new URL('./subject-config.js', import.meta.url), 'utf8'), context);
 vm.runInContext(readFileSync(new URL('./library.js', import.meta.url), 'utf8'), context);
 const library = context.window.DSELibrary;
 const right = { ok: true, marks: 3, tot: 3 };
