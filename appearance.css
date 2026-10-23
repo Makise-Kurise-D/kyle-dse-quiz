@@ -733,10 +733,9 @@ html .opt.wrong{background:var(--red-bg);color:var(--red)}
 .answer-modes{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}.answer-modes [aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .step-row{display:block;margin:14px 0}.step-row>span{display:flex;align-items:baseline;gap:8px;margin-bottom:7px;overflow-wrap:anywhere}.step-row b{color:var(--accent)}
 .step-input{display:block;width:100%;max-width:100%;box-sizing:border-box;min-height:72px;resize:vertical;border:1px solid var(--line);border-radius:6px;background:var(--choice-surface);color:var(--ink);padding:12px;font:inherit;font-size:16px;line-height:1.7}
-.step-input:focus-visible,.formula-pad button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.answer-free{display:block;margin-top:12px}.step-answer [hidden]{display:none!important}
-.formula-pad{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}.formula-pad button{min-width:44px;min-height:44px;padding:7px 11px;border:1px solid var(--line);border-radius:6px;background:var(--choice-surface);color:var(--ink);font:inherit;cursor:pointer}.formula-pad button:hover{border-color:var(--accent)}
+.step-input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.answer-free{display:block;margin-top:12px}.step-answer [hidden]{display:none!important}
 .step-note{font-size:13px;margin-top:10px;line-height:1.7;color:var(--gray)}.step-answer .review-note{margin-top:8px;line-height:1.8}
-@media(max-width:650px){.step-answer{padding:12px}.answer-modes>.btn{flex:1 1 auto}.formula-pad{gap:5px}.formula-pad button{padding:6px 9px}}
+@media(max-width:650px){.step-answer{padding:12px}.answer-modes>.btn{flex:1 1 auto}}
 
 .ai-point-overview{padding:16px;background:var(--choice-surface);border:1px solid var(--line);margin:16px 0}.ai-coverage-dots{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px}.ai-dot{font-size:28px;line-height:1.4;font-family:Arial,sans-serif}.ai-dot-hit{color:var(--green)}.ai-dot-missed{color:var(--red)}.ai-dot-partial{color:var(--gold)}.ai-dot-uncertain{color:var(--ink)}
 details.ai-point{border:1px solid var(--line);border-left:4px solid var(--accent);padding:0;margin:10px 0}details.ai-point-hit{border-left-color:var(--green)}details.ai-point-missed{border-left-color:var(--red)}details.ai-point-partial{border-left-color:var(--gold)}details.ai-point-warning{border-left-color:var(--gray)}

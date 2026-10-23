@@ -1579,7 +1579,7 @@ test('one-mark subjective answers use one field without practice AI or prefilled
   const html=app.node('#app').innerHTML;
   assert.match(html,/data-answer-mode="steps" aria-pressed="true"/);
   assert.equal((html.match(/class="step-input"/g)||[]).length,1);
-  assert.doesNotMatch(html,/data-ai-mode|ai-panel|AI 幫我拆題|方向提示/);assert.match(html,/data-formula="√\(\)"/);
+  assert.doesNotMatch(html,/data-ai-mode|ai-panel|AI 幫我拆題|方向提示|step-add|formula-pad|data-formula/);
   assert.doesNotMatch(html,/PRIVATE_CHECK|PRIVATE_CORRECT|PRIVATE_DEDUCTION/);
   assert.match(html,/<label class="answer-free" hidden>/);
 });
@@ -1626,4 +1626,21 @@ test('practice loads no AI configuration or generation requests even when an aut
   await settle();
   assert.equal(calls.some(url=>url.includes('/ai/')),false);
   assert.doesNotMatch(app.node('#app').innerHTML,/ai-panel|data-ai-mode|ai-probe|ai-question/);
+});
+
+test('saved added rows collapse to the preset fields while preserving nonempty extra answers', () => {
+  for (const extra of ['', '舊補充內容']) {
+    const original='原本答案'+(extra?'\n2. '+extra:'');
+    const draft={pick:{},text:{'example-mc':original},paper:{},steps:{'example-mc':{version:2,mode:'steps',rows:[
+      {prompt:'本題結論',answer:'原本答案'},{prompt:'補充步驟',answer:''},{prompt:'補充步驟',answer:extra}
+    ]}}};
+    const app=boot('',undefined,{dse_quiz_draft_v2:JSON.stringify({'chem:T3':draft})}),item=structuredQuestion(app);
+    item.kind='sub';item.marks=1;item.answerFields=['本題結論'];
+    app.location.hash='#/session/chem/T3/2021';app.events.hashchange();
+    const html=app.node('#app').innerHTML;
+    assert.equal((html.match(/class="step-input"/g)||[]).length,1);
+    assert.match(html,extra?/原本答案\n舊補充內容<\/textarea>/:/原本答案<\/textarea>/);
+    assert.doesNotMatch(html,/補充步驟|step-add|formula-pad|data-formula/);
+    assert.equal(JSON.parse(app.saved.get('dse_quiz_draft_v2'))['chem:T3'].text['example-mc'],original);
+  }
 });
