@@ -18,10 +18,16 @@
   var LS_REVIEW = 'dse_quiz_review_v1';
   var LS_TODAY = 'dse_quiz_today_v1';
   var LS_AI = 'dse_quiz_ai_reviews_v1';
+  var activeUser = localStorage.getItem('dse_quiz_user_v1') || 'kyle';
+  // Preserve legacy Kyle keys. Other accounts never load or migrate those keys.
+  function userKey(key) { return activeUser === 'kyle' ? key : key + ':' + activeUser; }
+  LS_SESS = userKey(LS_SESS); LS_DRAFT = userKey(LS_DRAFT);
+  LS_ARCHIVE = userKey(LS_ARCHIVE); LS_CYCLE = userKey(LS_CYCLE);
+  LS_REVIEW = userKey(LS_REVIEW); LS_TODAY = userKey(LS_TODAY); LS_AI = userKey(LS_AI);
   var aiReviews = load(LS_AI, {});
   var todaySelection = null;
   var LS_SYNC_SESSION = 'dse_quiz_sync_session_v1';
-  var LS_SYNCED_AT = 'dse_quiz_sync_at_v1';
+  var LS_SYNCED_AT = userKey('dse_quiz_sync_at_v1');
   var LS_AUTH_MODE = 'dse_quiz_auth_mode_v1';
   var SYNC_API = String(window.QUIZ_SYNC_API || '').replace(/\/+$/, '');
   var PASSWORD_AUTH = window.QUIZ_PASSWORD_AUTH === true;
@@ -216,7 +222,7 @@
     }
     var before = state(backupData());
     var sentRevision = syncRevision;
-    function current() { return localStorage.getItem(LS_SYNC_SESSION) === session; }
+    function current() { return localStorage.getItem(LS_SYNC_SESSION) === session && (localStorage.getItem('dse_quiz_user_v1') || 'kyle') === activeUser; }
     function attemptSync(attempt) {
       if (!current()) return Promise.resolve(null);
       // 寫入可能已成功而回應途中斷線；每次重試必須重讀及合併，不能重送舊 sha。
@@ -294,7 +300,9 @@
     if (PRIVATE_BANK) { DATA = emptyBank(); bankLoaded = false; }
   }
   function passwordForm() {
-    return '<form id="passwordLoginForm" class="sync-login"><label for="syncPassword">網站密碼</label>' +
+    return '<form id="passwordLoginForm" class="sync-login"><label for="syncUsername">使用者名稱</label>' +
+      '<input id="syncUsername" type="text" autocomplete="username" maxlength="32" value="' + (activeUser === 'yeelam' ? 'Yeelam' : 'Kyle') + '" required>' +
+      '<label for="syncPassword">網站密碼</label>' +
       '<input id="syncPassword" type="password" autocomplete="current-password" maxlength="256" required placeholder="輸入密碼" aria-describedby="syncStatus">' +
       '<button id="passwordLoginBtn" class="btn btn-primary" type="submit">登入並自動同步</button></form>' +
       '<p class="review-note">登入後，做題記錄會自動同步；本機記錄會保留。</p>' +
@@ -316,11 +324,14 @@
       var existing = localStorage.getItem(LS_SYNC_SESSION);
       var authenticated = false;
       if (existing) headers.Authorization = 'Bearer ' + existing;
-      syncFetch('/auth/password', { method: 'POST', headers: headers, body: JSON.stringify({ password: password }), cache: 'no-store' })
+      syncFetch('/auth/password', { method: 'POST', headers: headers, body: JSON.stringify({ username: ($('#syncUsername').value || 'Kyle').trim(), password: password }), cache: 'no-store' })
         .then(readSyncResponse).then(function (data) {
           if (!data || !/^[A-Za-z0-9_-]{40,80}$/.test(data.sessionId || '')) throw new Error('登入服務未回傳有效連接');
-          localStorage.setItem(LS_AUTH_MODE, 'password');
+          var nextUser = data.userId || 'kyle';
+          localStorage.setItem('dse_quiz_user_v1', nextUser);
+          if (PASSWORD_AUTH) localStorage.setItem(LS_AUTH_MODE, 'password');
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
+          if (nextUser !== activeUser) { location.reload(); return; }
           authenticated = true;
           setSyncStatus('已登入，正在背景同步…');
           forgetBank(); bankMessage = '';
@@ -410,7 +421,7 @@
   }
   function renderBankGate() {
     $('#app').innerHTML = '<section class="home"><div class="hero">' +
-      '<div class="hero-kicker">DSE · 化學 / 生物</div><h1 class="hero-title">Kyle 嘅錯題本</h1>' +
+      '<div class="hero-kicker">DSE · 化學 / 生物</div><h1 class="hero-title">' + (activeUser === 'yeelam' ? 'Yeelam' : 'Kyle') + ' 嘅錯題本</h1>' +
       '<p class="hero-sub">' + (PASSWORD_AUTH ? '輸入密碼即可讀取你的錯題庫、原題圖片和做題記錄。' : '連接 GitHub 後即可讀取你的錯題庫和原題圖片。') + '</p>' +
       '<p class="review-note" id="syncStatus" role="status" aria-live="polite">' + esc(bankMessage || syncMessage || '你的做題記錄會保留。') + '</p>' +
       (SYNC_API ? (PASSWORD_AUTH ? passwordForm() : '<a class="btn btn-primary" href="' + esc(SYNC_API + '/auth/start') + '" target="_blank" rel="noopener">連接 GitHub</a>') : '') +
@@ -465,8 +476,11 @@
         body: JSON.stringify({ handoff: handoff })
       }).then(function (r) { if (!r.ok) throw new Error('授权会话已失效'); return r.json(); })
         .then(function (data) {
+          var nextUser = data.userId || 'kyle';
+          localStorage.setItem('dse_quiz_user_v1', nextUser);
           if (PASSWORD_AUTH) localStorage.setItem(LS_AUTH_MODE, 'password');
           localStorage.setItem(LS_SYNC_SESSION, data.sessionId);
+          if (nextUser !== activeUser) { history.replaceState(null, '', '#/'); location.reload(); return; }
           return Promise.all([loadBank(), syncNow(true)]);
         }).catch(function (err) { setSyncStatus('连接失败：' + err.message); });
     } else if (hash.indexOf('sync=cancelled') >= 0) {
@@ -493,7 +507,8 @@
     if (localStorage.getItem(LS_SYNC_SESSION)) { loadBank(); syncNow(true); }
   });
   window.addEventListener('storage', function (event) {
-    if (event.key === LS_SYNC_SESSION) {
+    if (event.key === 'dse_quiz_user_v1' || event.key === LS_SYNC_SESSION) {
+      if ((localStorage.getItem('dse_quiz_user_v1') || 'kyle') !== activeUser) { location.reload(); return; }
       forgetBank(); route();
       if (event.newValue) Promise.all([loadBank(), syncNow(true)]);
     }
@@ -768,7 +783,7 @@
     return (
       '<section class="home"><div class="home-stage">' +
         '<div class="hero">' +
-          '<div class="hero-kicker">Kyle 嘅錯題本 / DSE</div>' +
+          '<div class="hero-kicker">' + (activeUser === 'yeelam' ? 'Yeelam' : 'Kyle') + ' 嘅錯題本 / DSE</div>' +
           '<h1 class="hero-title">從上次的<br>錯題繼續。</h1>' +
           '<a class="continue-command" href="#/today/all/5"><b aria-hidden="true">TODAY</b><span>開始今日複習 ↗ · 到期 ' + (bankLoaded ? todayDue : '—') + ' 題</span></a>' +
           '<div class="home-info" role="group" aria-label="學習與同步資訊">' +

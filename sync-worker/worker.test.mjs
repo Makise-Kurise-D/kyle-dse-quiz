@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { pbkdf2Sync } from 'node:crypto';
 import worker, { mergeBackup, aiConfiguration, aiMessages, validateAIFeedback, requestAIFeedback } from './worker.js';
 
 const ORIGIN = 'https://makise-kurisu-d.github.io';
@@ -186,7 +187,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'reader-mistake-jump-20261023');
+  assert.equal(status.version, 'user-isolation-20261023');
   assert.equal(status.passwordConfigured, false);
   assert.equal(status.aiFiguresEnabled, false);
   const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
@@ -220,7 +221,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'reader-mistake-jump-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'user-isolation-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -830,4 +831,108 @@ test('mathematics papers and figures keep the same authentication and path restr
   assert.equal((await worker.fetch(new Request(`${BASE}/papers/math/2022/manifest`, { headers: { Origin: ORIGIN } }), env)).status, 401);
   assert.equal((await worker.fetch(new Request(`${BASE}/papers/math/2022/manifest`, { headers: { ...headers, Origin: 'https://other.example' } }), env)).status, 403);
   assert.equal(paths.filter(path => path.includes('/contents/')).length, before, 'denied mathematics reads never reach private files');
+});
+
+test('Yeelam identity isolates every private route and cannot upgrade or select another user', async t => {
+  const password = 'synthetic-yeelam-password';
+  const salt = '0123456789abcdef0123456789abcdef';
+  const hash = `pbkdf2-sha256:100000:${salt}:${pbkdf2Sync(password, Buffer.from(salt,'hex'), 100000, 32, 'sha256').toString('hex')}`;
+  const env = { ...aiEnv, SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'synthetic-owner-password', YEELAM_PASSWORD_VERIFIER: hash, GITHUB_TOKEN: 'synthetic-isolation-token' };
+  const seen = [], files = new Map();
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const path = new URL(url).pathname;
+    if (path === '/user') return Response.json({ login: 'Makise-Kurisu-D' });
+    seen.push({ path, method: init.method || 'GET' });
+    assert.match(path, /\/contents\/users\/yeelam\//, 'no guest request may reach owner data');
+    if (init.method === 'PUT') {
+      files.set(path, JSON.parse(init.body).content);
+      return Response.json({ content: { sha: 'a'.repeat(40) } });
+    }
+    if (init.method === 'DELETE') { files.delete(path); return Response.json({}); }
+    if (files.has(path)) return Response.json({ encoding: 'base64', content: files.get(path), sha: 'a'.repeat(40) });
+    return Response.json({ message: 'not found' }, { status: 404 });
+  };
+  t.after(() => { globalThis.fetch = original; });
+  const login = async (username, pass = password, options = {}) => worker.fetch(new Request(`${BASE}/auth/password`, {
+    method: 'POST', headers: { Origin: ORIGIN, 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password: pass })
+  }), { ...env, ...options });
+  assert.equal((await login('Kyle')).status, 401);
+  assert.equal((await login('../kyle')).status, 401);
+  assert.equal((await login('Yeelam', password, { YEELAM_PASSWORD_VERIFIER: undefined })).status, 401);
+  const response = await login(' Yeelam ');
+  assert.equal(response.status, 200);
+  const session = await response.json();
+  assert.equal(session.userId, 'yeelam');
+  assert.doesNotMatch(JSON.stringify(session), /synthetic-/);
+  const call = (path, method = 'GET', body) => worker.fetch(new Request(`${BASE}${path}`, {
+    method, headers: { Origin: ORIGIN, Authorization: `Bearer ${session.sessionId}`, 'Content-Type': 'application/json' },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  }), env);
+  assert.deepEqual((await (await call('/bank')).json()).subjects.chem.items, []);
+  assert.deepEqual((await (await call('/papers/catalog')).json()).subjects, { chem: [], bio: [], math: [] });
+  assert.equal((await call('/bank/images/chem-2022-mc-01.jpg')).status, 404);
+  assert.equal((await call('/papers/chem/2022/manifest')).status, 404);
+  assert.equal((await call('/auth/upgrade', 'POST')).status, 403);
+  assert.equal((await call('/ai/review', 'POST', { questionId: 'owner-question', answer: 'answer' })).status, 404);
+  const data = { app: 'kyle-dse-quiz', sessions: [{ t: 1, subj: 'chem', results: {} }], drafts: {}, archive: [] };
+  assert.equal((await call('/sync?userId=kyle', 'PUT', { data, userId: 'kyle' })).status, 200);
+  assert.deepEqual((await (await call('/sync')).json()).data.sessions, data.sessions);
+  assert.ok(seen.some(v => v.path.endsWith('/users/yeelam/records.json') && v.method === 'PUT'));
+  assert.equal((await call('/sync', 'DELETE')).status, 200);
+  assert.equal((await (await call('/sync')).json()).data, null);
+  env.YEELAM_PASSWORD_VERIFIER = '0'.repeat(64);
+  assert.equal((await call('/sync')).status, 401, 'changing only guest verifier revokes guest sessions');
+  const owner = await login('Kyle', env.SITE_PASSWORD);
+  assert.equal(owner.status, 200, 'guest verifier rotation does not invalidate owner login');
+});
+
+test('salted Kyle verifier replaces legacy password and revokes old sessions without affecting Yeelam', async () => {
+  const salt = 'abcdef0123456789abcdef0123456789';
+  const verifier = password => `pbkdf2-sha256:100000:${salt}:${pbkdf2Sync(password, Buffer.from(salt, 'hex'), 100000, 32, 'sha256').toString('hex')}`;
+  const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'synthetic-old-owner', GITHUB_TOKEN: 'synthetic-verifier-token' };
+  const login = (username, password) => worker.fetch(new Request(`${BASE}/auth/password`, {
+    method: 'POST', headers: { Origin: ORIGIN }, body: JSON.stringify({ username, password })
+  }), env);
+  const old = await (await login('Kyle', env.SITE_PASSWORD)).json();
+  env.KYLE_PASSWORD_VERIFIER = verifier('synthetic-new-owner');
+  env.YEELAM_PASSWORD_VERIFIER = verifier('synthetic-new-guest');
+  assert.equal((await login('Kyle', env.SITE_PASSWORD)).status, 401);
+  assert.equal((await login('Kyle', 'synthetic-new-guest')).status, 401);
+  assert.equal((await login('Yeelam', 'synthetic-new-owner')).status, 401);
+  assert.equal((await login('Kyle', 'synthetic-new-owner')).status, 200);
+  assert.equal((await login('Yeelam', 'synthetic-new-guest')).status, 200);
+  const upgrade = await worker.fetch(new Request(`${BASE}/auth/upgrade`, {
+    method: 'POST', headers: { Origin: ORIGIN, Authorization: `Bearer ${old.sessionId}` }
+  }), env);
+  assert.equal(upgrade.status, 401);
+  env.KYLE_PASSWORD_VERIFIER = 'invalid';
+  assert.equal((await login('Kyle', env.SITE_PASSWORD)).status, 401, 'invalid verifier cannot fall back to old password');
+});
+
+test('deployment requires both protected passwords before any secret write and never logs verifiers', async () => {
+  const { readFileSync } = await import('node:fs');
+  const workflow = readFileSync(new URL('../.github/workflows/deploy-worker.yml', import.meta.url), 'utf8');
+  const section = workflow.split('      - name: Configure isolated account password secrets\n')[1].split('      - name: Deploy Worker\n')[0];
+  const code = section.split("node --input-type=module <<'NODE'\n")[1].split('          NODE')[0]
+    .split('\n').map(line => line.startsWith('          ') ? line.slice(10) : line).join('\n')
+    .replace("import { pbkdf2Sync } from 'node:crypto';", '');
+  const execute = new (Object.getPrototypeOf(async function(){}).constructor)('pbkdf2Sync', 'process', 'fetch', 'console', code);
+  let writes = 0;
+  const logged = [];
+  const sink = { log: value => logged.push(value) };
+  await assert.rejects(execute(pbkdf2Sync, { env: { KYLE_SITE_PASSWORD: 'synthetic-owner' } }, async () => { writes++; }, sink), /YEELAM_SITE_PASSWORD/);
+  assert.equal(writes, 0);
+  await execute(pbkdf2Sync, { env: { KYLE_SITE_PASSWORD: 'synthetic-owner', YEELAM_SITE_PASSWORD: 'synthetic-guest', CLOUDFLARE_API_TOKEN: 'synthetic-cloud-token' } }, async (url, init) => {
+    writes++;
+    assert.match(url, /\/workers\/scripts\/snowy-cake-a0a7\/secrets$/);
+    const body = JSON.parse(init.body);
+    const [method, iterations, salt, derived] = body.text.split(':');
+    assert.equal(method, 'pbkdf2-sha256');
+    const password = body.name === 'KYLE_PASSWORD_VERIFIER' ? 'synthetic-owner' : 'synthetic-guest';
+    assert.equal(derived, pbkdf2Sync(password, Buffer.from(salt, 'hex'), Number(iterations), 32, 'sha256').toString('hex'));
+    return Response.json({ success: true });
+  }, sink);
+  assert.equal(writes, 2);
+  assert.doesNotMatch(logged.join('\n'), /synthetic-|pbkdf2|[a-f0-9]{32}/);
 });

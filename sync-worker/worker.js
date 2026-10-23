@@ -6,7 +6,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'reader-mistake-jump-20261023';
+const SERVICE_VERSION = 'user-isolation-20261023';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
@@ -151,7 +151,7 @@ async function aiRoute(request, env, url) {
     if (aiFlights.has(flight)) { flight=null;return json({error:'ai_in_progress'},429,cors(request)); }
     aiFlights.add(flight);
     const day = Math.floor((Date.now()+8*3600e3)/864e5);
-    const userKey=`ai-limit:${auth.sessionKey}:${day}`, totalKey=`ai-total:${day}`;
+    const userKey=`ai-limit:${auth.userId || 'kyle'}:${day}`, totalKey=`ai-total:${day}`;
     const [userRaw,totalRaw]=await Promise.all([env.SESSIONS.get(userKey),env.SESSIONS.get(totalKey)]);
     const usage=JSON.parse(userRaw || '{"count":0,"at":0}'), total=Number(totalRaw)||0;
     if (usage.count>=20 || total>=80 || Date.now()-usage.at<10000) return json({error:'ai_rate_limited'},429,cors(request,{'retry-after':Date.now()-usage.at<10000?'10':'3600'}));
@@ -333,7 +333,17 @@ async function storageJson(url, init = {}) {
   } finally { clearTimeout(timer); }
 }
 
+// A scoped credential is created only from the authenticated, encrypted session.
+// All private repository access (including AI material) passes this boundary.
 async function github(path, token, init = {}) {
+  if (typeof token === 'object') {
+    const prefix = `/repos/${REPO}/contents/`;
+    if (!path.startsWith(prefix) || /(?:\.\.|%|\\|\?)/.test(path.slice(prefix.length))) {
+      throw Object.assign(new Error('scope_denied'), { status: 403 });
+    }
+    path = prefix + `users/${token.userId}/` + path.slice(prefix.length);
+    token = token.accessToken;
+  }
   const { response, body } = await storageJson(`https://api.github.com${path}`, {
     ...init,
     headers: {
@@ -350,23 +360,25 @@ async function github(path, token, init = {}) {
 }
 
 function privateBank(token) {
-  const cached = bankReads.get(token);
+  const key = JSON.stringify(token);
+  const cached = bankReads.get(key);
   if (cached && cached.until > Date.now()) return cached.promise;
   const entry = { until: Date.now() + 30000, promise: null };
   entry.promise = github(`/repos/${REPO}/contents/${BANK_PATH}`, token).then(file => {
     if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('invalid_bank_file');
     return JSON.parse(decodeUtf8(file.content));
   }).catch(error => {
-    if (bankReads.get(token) === entry) bankReads.delete(token);
+    if (typeof token === 'object' && error.status === 404) return { subjects: Object.fromEntries([['chem','化學'],['bio','生物'],['math','數學']].map(([id,name]) => [id,{name,topics:[],items:[]}])) };
+    if (bankReads.get(key) === entry) bankReads.delete(key);
     throw error;
   });
-  bankReads.set(token, entry);
+  bankReads.set(key, entry);
   while (bankReads.size > 4) bankReads.delete(bankReads.keys().next().value);
   return entry.promise;
 }
 
 function privateMetadata(path, token, fresh = false) {
-  const key = token + ':' + path;
+  const key = JSON.stringify(token) + ':' + path;
   const cached = metadataReads.get(key);
   if (!fresh && cached && cached.until > Date.now()) return cached.promise;
   const entry = { until: Date.now() + 30000, promise: null };
@@ -416,7 +428,10 @@ function paperSummary(value) {
 }
 
 async function githubPaperCatalog(token, fresh = false) {
-  const catalog = await privateMetadata('papers/catalog.json', token, fresh);
+  const catalog = await privateMetadata('papers/catalog.json', token, fresh).catch(error => {
+    if (typeof token === 'object' && error.status === 404) return { subjects: { chem: [], bio: [], math: [] } };
+    throw error;
+  });
   const subjects = catalog?.subjects ? { math: [], ...catalog.subjects } : null;
   if (!subjects || typeof subjects !== 'object' || Array.isArray(subjects) ||
       Object.keys(subjects).some(subject => !['chem', 'bio', 'math'].includes(subject)) ||
@@ -469,14 +484,28 @@ async function githubPaperManifest(subject, year, token, fresh = false) {
     ...(manifest.sections ? { sections: paperSections(manifest) } : {}) };
 }
 
-async function passwordVersion(env) {
-  return signedState(String(env.SITE_PASSWORD), env.SESSION_SECRET);
+const PASSWORD_VERIFIER = /^pbkdf2-sha256:100000:([0-9a-f]{32}):([0-9a-f]{64})$/;
+function userPassword(env, userId) {
+  const configured = userId === 'kyle' ? env.KYLE_PASSWORD_VERIFIER : userId === 'yeelam' ? env.YEELAM_PASSWORD_VERIFIER : null;
+  if (configured !== undefined && configured !== null) return PASSWORD_VERIFIER.test(configured) ? configured : null;
+  return userId === 'kyle' ? env.SITE_PASSWORD : null;
+}
+async function passwordDigests(password, configured) {
+  const verifier = PASSWORD_VERIFIER.exec(configured || '');
+  if (!verifier) return [await digest(password), await digest(configured || 'unconfigured-user')];
+  const salt = Uint8Array.from(verifier[1].match(/../g), byte => parseInt(byte, 16));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100000 }, key, 256);
+  return [[...new Uint8Array(bits)].map(byte => byte.toString(16).padStart(2, '0')).join(''), verifier[2]];
+}
+async function passwordVersion(env, userId = 'kyle') {
+  return signedState(String(userPassword(env, userId)), env.SESSION_SECRET);
 }
 
-async function passwordSession(env) {
+async function passwordSession(env, userId = 'kyle') {
   const sessionId = await randomId();
-  await env.SESSIONS.put(await digest(sessionId), await seal({ kind: 'password',
-    passwordVersion: await passwordVersion(env), expiresAt: Date.now() + PASSWORD_TTL * 1000,
+  await env.SESSIONS.put(await digest(sessionId), await seal({ kind: 'password', userId,
+    passwordVersion: await passwordVersion(env, userId), expiresAt: Date.now() + PASSWORD_TTL * 1000,
   }, env.SESSION_SECRET), { expirationTtl: PASSWORD_TTL });
   return sessionId;
 }
@@ -547,12 +576,13 @@ async function tokenFor(request, env) {
   try { session = await unseal(saved, env.SESSION_SECRET); }
   catch { await env.SESSIONS.delete(sessionKey); return null; }
   if (session.kind === 'password') {
-    if (!env.SITE_PASSWORD || session.expiresAt <= Date.now() || session.passwordVersion !== await passwordVersion(env)) {
+    const userId = session.userId || 'kyle';
+    if (!userPassword(env, userId) || session.expiresAt <= Date.now() || session.passwordVersion !== await passwordVersion(env, userId)) {
       await env.SESSIONS.delete(sessionKey); return null;
     }
     const credential = await ownerCredential(env);
     if (!credential) throw Object.assign(new Error('owner_connection_required'), { status: 503 });
-    return { token: credential.accessToken, sessionKey, credentialKey: OWNER_KEY };
+    return { token: userId === 'kyle' ? credential.accessToken : { accessToken: credential.accessToken, userId }, userId, sessionKey, credentialKey: OWNER_KEY };
   }
   const credential = await credentialFor(sessionKey, env);
   return credential ? { token: credential.accessToken, sessionKey, credentialKey: sessionKey } : null;
@@ -562,7 +592,7 @@ async function isOwner(auth, env) {
   // The stored owner credential was checked when it was connected. An explicitly
   // configured token still gets checked because its account is not known here.
   if (auth.credentialKey === OWNER_KEY && !env.GITHUB_TOKEN) return true;
-  const user = await github('/user', auth.token);
+  const user = await github('/user', typeof auth.token === 'object' ? auth.token.accessToken : auth.token);
   return String(user.login).toLowerCase() === OWNER.toLowerCase();
 }
 
@@ -577,6 +607,7 @@ const worker = {
       try {
         const auth = await tokenFor(request, env);
         if (!auth) return json({ error: 'not_connected' }, 401, cors(request));
+        if (auth.userId && auth.userId !== 'kyle') return json({ error: 'owner_only' }, 403, cors(request));
         const user = await github('/user', auth.token);
         if (String(user.login).toLowerCase() !== OWNER.toLowerCase()) return json({ error: 'owner_only' }, 403, cors(request));
         if (auth.credentialKey !== OWNER_KEY) {
@@ -597,16 +628,19 @@ const worker = {
         return json({ error: 'service_not_configured' }, 503, cors(request));
       }
       const body = await request.json().catch(() => ({}));
+      const userId = body.username === undefined ? 'kyle' : typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';
+      const password = userPassword(env, userId);
       if (typeof body.password !== 'string' || body.password.length > 256) return json({ error: 'invalid_password' }, 401, cors(request));
       const limitKey = 'login-limit:' + await digest(request.headers.get('CF-Connecting-IP') || 'unknown');
       const attempts = JSON.parse(await env.SESSIONS.get(limitKey) || 'null');
       const recent = attempts && attempts.until > Date.now() ? attempts : { count: 0, until: Date.now() + 900000 };
       if (recent.count >= 5) return json({ error: 'too_many_attempts' }, 429, cors(request, { 'retry-after': String(Math.ceil((recent.until - Date.now()) / 1000)) }));
-      const supplied = new TextEncoder().encode(await digest(body.password));
-      const expected = new TextEncoder().encode(await digest(env.SITE_PASSWORD));
+      const [suppliedDigest, expectedDigest] = await passwordDigests(body.password, password);
+      const supplied = new TextEncoder().encode(suppliedDigest);
+      const expected = new TextEncoder().encode(expectedDigest);
       let mismatch = 0;
       supplied.forEach((byte, i) => { mismatch |= byte ^ expected[i]; });
-      if (mismatch) {
+      if (mismatch || !password) {
         await env.SESSIONS.put(limitKey, JSON.stringify({ ...recent, count: recent.count + 1 }), { expirationTtl: 900 });
         return json({ error: 'invalid_password' }, 401, cors(request));
       }
@@ -625,7 +659,7 @@ const worker = {
           }
         }
         if (!owner) return json({ error: 'owner_connection_required' }, 503, cors(request));
-        if (ctx && typeof ctx.waitUntil === 'function') {
+        if (userId === 'kyle' && ctx && typeof ctx.waitUntil === 'function') {
           const warm = async () => {
             let credential = typeof owner === 'string' ? { accessToken: owner } : owner;
             if (credential.expiresAt && credential.expiresAt <= Date.now() + 60000) credential = await ownerCredential(env);
@@ -635,9 +669,9 @@ const worker = {
           // return trip. Warming never delays password verification.
           ctx.waitUntil(warm().catch(() => {}));
         }
-        const sessionId = await passwordSession(env);
+        const sessionId = await passwordSession(env, userId);
         if (attempts) await env.SESSIONS.delete(limitKey);
-        return json({ sessionId, expiresIn: PASSWORD_TTL }, 200, cors(request));
+        return json({ sessionId, expiresIn: PASSWORD_TTL, userId }, 200, cors(request));
       } catch (error) {
         return json({ error: error.status === 503 ? error.message : 'login_unavailable' }, error.status === 503 ? 503 : 502, cors(request));
       }

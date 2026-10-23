@@ -1490,3 +1490,51 @@ test('saving mathematics marks preserves existing chemistry sessions and other s
   app.location.hash = '#/records'; app.events.hashchange();
   assert.match(app.node('#app').innerHTML, /數學/);
 });
+
+test('Yeelam loads only account-scoped browser records and never uploads Kyle records', async () => {
+  const owner = [{ t: 1791510000000, subj: 'chem', topic: 'T3', results: { 'owner-only': { ok: true } } }];
+  let uploaded;
+  const app = boot('#/records', async (url, options) => {
+    if (options.method === 'PUT') uploaded = JSON.parse(options.body).data;
+    return { ok: true, json: async () => options.method === 'GET' ? { data: null } : { savedAt: '2026-10-22T00:00:00Z' } };
+  }, {
+    dse_quiz_user_v1: 'yeelam', dse_quiz_sessions_v2: JSON.stringify(owner),
+    dse_quiz_draft_v2: JSON.stringify({ 'owner-private': {} }),
+    dse_quiz_ai_reviews_v1: JSON.stringify({ 'owner-ai': {} }),
+    dse_quiz_sync_session_v1: 'synthetic-guest-session', dse_quiz_auth_mode_v1: 'password'
+  }, false, true);
+  app.timers.filter(timer => timer.delay === 0 && !timer.cleared).forEach(timer => timer.fn());
+  await settle();
+  assert.ok(uploaded);
+  assert.deepEqual(uploaded.sessions, []);
+  assert.deepEqual(uploaded.drafts, {});
+  assert.deepEqual(uploaded.aiReviews, {});
+  assert.equal(app.saved.get('dse_quiz_sessions_v2'), JSON.stringify(owner));
+  assert.doesNotMatch(app.node('#app').innerHTML, /owner-only|owner-private|owner-ai/);
+  let reloaded = false;
+  app.location.reload = () => { reloaded = true; };
+  app.saved.set('dse_quiz_user_v1', 'kyle');
+  app.events.storage({ key: 'dse_quiz_user_v1' });
+  assert.equal(reloaded, true, 'other tabs discard old in-memory account state');
+});
+
+test('switching from Kyle to Yeelam reloads before any old records can sync', async () => {
+  const owner = [{ t: Date.now(), subj: 'chem', results: { 'owner-only': { ok: true } } }];
+  const calls = [];
+  const app = boot('', async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, json: async () => ({ sessionId: 'Y'.repeat(48), userId: 'yeelam' }) };
+  }, { dse_quiz_sessions_v2: JSON.stringify(owner) }, true, true);
+  let reloaded = false;
+  app.location.reload = () => { reloaded = true; };
+  app.node('#syncUsername').value = 'Yeelam';
+  app.node('#syncPassword').value = 'synthetic-guest-password';
+  app.node('#passwordLoginForm').listeners.submit({ preventDefault() {} });
+  await settle();
+  assert.equal(reloaded, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].body.username, 'Yeelam');
+  assert.equal(app.saved.get('dse_quiz_user_v1'), 'yeelam');
+  assert.equal(app.saved.get('dse_quiz_sessions_v2'), JSON.stringify(owner));
+  assert.ok(![...app.saved.values()].some(v => String(v).includes('synthetic-guest-password')));
+});
