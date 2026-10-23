@@ -187,7 +187,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'account-subjects-20261023');
+  assert.equal(status.version, 'step-answer-ai-20261023');
   assert.equal(status.passwordConfigured, false);
   assert.equal(status.aiFiguresEnabled, false);
   const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
@@ -221,7 +221,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'account-subjects-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'step-answer-ai-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -987,4 +987,96 @@ test('account subject profiles isolate M2 and physics materials while preserving
   }
   assert.equal(seen.length,before,'disabled subject routes never reach storage');
   assert.ok(seen.filter(url=>/m2|physics/.test(url)).every(url=>url.includes('/users/yeelam/')));
+});
+
+test('scaffold excludes private reference answers and accepts only bounded question prompts', () => {
+  const item={...aiItem,correct:'HIDDEN_SOLUTION',points:'HIDDEN_NOTES',my:[['HIDDEN_OLD_ANSWER']],deduct:'HIDDEN_ERROR'};
+  const messages=aiMessages(item,{mode:'scaffold',answer:'我的草稿'});
+  const task=JSON.parse(messages.at(-1).content);
+  assert.equal(task.studentAnswer,'我的草稿');
+  assert.doesNotMatch(messages.at(-1).content,/HIDDEN_|checks|reference|originalAttempt/);
+  assert.match(messages[0].content,/不可替學生補出未表達的推理/);
+  const value={summary:'拆題',points:[],tags:[],steps:[{prompt:'先選哪個方法？',answer:'DO_NOT_ACCEPT'},{prompt:'結論要附甚麼？'}]};
+  const out=validateAIFeedback(value,item,'','scaffold');
+  assert.equal(out.steps.length,2);assert.equal(out.steps[0].answer,undefined);assert.equal(out.points.length,0);
+  assert.throws(()=>validateAIFeedback({...value,steps:[]},item,'','scaffold'),/ai_invalid_response/);
+  assert.throws(()=>validateAIFeedback({...value,steps:[{prompt:''},{prompt:'下一步'}]},item,'','scaffold'),/ai_invalid_response/);
+});
+
+test('fallback requires independent complete HTTPS settings and never reveals either credential', () => {
+  const env={DEEPSEEK_API_KEY:'private-primary',AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'backup'};
+  assert.equal(aiConfiguration(env).fallbackConfigured,false);
+  const configured=aiConfiguration({...env,AI_FALLBACK_API_KEY:'private-backup'});
+  assert.equal(configured.fallbackConfigured,true);assert.equal(configured.fallbackModel,'backup');
+  assert.doesNotMatch(JSON.stringify(configured),/private-primary|private-backup/);
+  assert.equal(aiConfiguration({...env,AI_FALLBACK_API_KEY:'private-backup',AI_FALLBACK_BASE_URL:'http://localhost:5918'}).fallbackConfigured,false);
+});
+
+test('provider failures switch once, isolate keys and omit images unsupported by the fallback', async () => {
+  const env={DEEPSEEK_API_KEY:'failover-primary-one',AI_VISION:'true',AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'backup',AI_FALLBACK_API_KEY:'failover-backup-one'};
+  const calls=[],item={...aiItem,figures:[{path:'private.jpg'}]};
+  const fetcher=async(url,init)=>{
+    calls.push(url);const payload=JSON.parse(init.body);
+    if(url.startsWith('https://api.deepseek.com')) {assert.equal(init.headers.authorization,'Bearer failover-primary-one');return new Response('',{status:503});}
+    assert.equal(init.headers.authorization,'Bearer failover-backup-one');
+    assert.doesNotMatch(init.body,/data:image/);assert.equal(payload.model,'backup');
+    return Response.json({model:'backup',choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture('原答'))}}]});
+  };
+  const out=await requestAIFeedback(item,{answer:'原答'},env,['data:image/jpeg;base64,private'],fetcher);
+  assert.equal(out.failover,true);assert.equal(out.failoverReason,'ai_provider_error');assert.match(out.materialNotes,/圖表未送入/);
+  assert.equal(calls.length,2);
+  const next=await requestAIFeedback(item,{answer:'原答'},env,[],fetcher);
+  assert.equal(next.failoverReason,'ai_circuit_open');assert.equal(calls.length,3);
+});
+
+test('invalid grading evidence never switches providers, while network errors do', async () => {
+  const env={DEEPSEEK_API_KEY:'evidence-primary',AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'backup',AI_FALLBACK_API_KEY:'evidence-backup'};
+  let calls=0;
+  await assert.rejects(requestAIFeedback(aiItem,{answer:'真正原答'},env,[],async()=>{
+    calls++;return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture('虛構原答'))}}]});
+  }),/ai_invalid_evidence/);
+  assert.equal(calls,1);
+  const out=await requestAIFeedback(aiItem,{answer:'真正原答'},env,[],async(url)=>{
+    calls++;if(url.startsWith('https://api.deepseek.com'))throw new TypeError('fetch failed');
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture('真正原答'))}}]});
+  });
+  assert.equal(out.failover,true);assert.equal(out.failoverReason,'ai_network_error');assert.equal(calls,3);
+});
+
+test('provider diagnostics distinguish auth, balance, rate limiting and request rejection without raw errors', async () => {
+  for(const [status,code] of [[401,'ai_auth_error'],[403,'ai_auth_error'],[402,'ai_balance_exhausted'],[429,'ai_provider_busy'],[400,'ai_request_rejected']]) {
+    await assert.rejects(requestAIFeedback(aiItem,{answer:'原答'},aiEnv,[],async()=>new Response('PRIVATE_PROVIDER_DIAGNOSTIC',{status})),new RegExp('^Error: '+code+'$'));
+  }
+  const env={...aiEnv,AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'backup',AI_FALLBACK_API_KEY:'all-down-backup'};
+  let calls=0;
+  await assert.rejects(requestAIFeedback(aiItem,{answer:'原答'},env,[],async()=>{calls++;return new Response('',{status:503});}),/ai_provider_error/);
+  assert.equal(calls,2,'one attempt per provider, never a retry loop');
+});
+
+test('step drafts merge without losing legacy answers and completed-draft tombstones clear both forms', () => {
+  const base={app:'kyle-dse-quiz',cycle:'1',sessions:[],drafts:{session:{text:{q:'舊草稿'},steps:{q:{mode:'steps',assisted:true,rows:[{prompt:'下一步',answer:'舊草稿'}]}},changedAt:{'text:q':10,'steps:q':10}}}};
+  const incoming={...base,drafts:{session:{text:{q:'新草稿'},steps:{q:{mode:'text',assisted:true,rows:[]}},changedAt:{'text:q':20,'steps:q':20}}}};
+  const merged=mergeBackup(base,incoming).drafts.session;
+  assert.equal(merged.text.q,'新草稿');assert.equal(merged.steps.q.mode,'text');
+  const cleared=mergeBackup(base,{...base,drafts:{session:{deletedAt:30}}}).drafts.session;
+  assert.deepEqual(cleared.text,{});assert.deepEqual(cleared.steps,{});
+});
+
+test('AI probe performs real synthetic generation without reading a bank or writing practice records', async t => {
+  const original=globalThis.fetch;let providerCalls=0;
+  globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith('/user'))return Response.json({login:'Makise-Kurisu-D'});
+    assert.equal(url,'https://ai.example/v1/chat/completions');providerCalls++;
+    const task=JSON.parse(JSON.parse(init.body).messages.at(-1).content);
+    assert.equal(task.materials.questionId,'service-probe');
+    return Response.json({model:'synthetic-model',choices:[{finish_reason:'stop',message:{content:JSON.stringify({summary:'成功',points:[],tags:[],reply:'合成測試',uncertainty:''})}}]});
+  };t.after(()=>{globalThis.fetch=original;});
+  const env={...aiEnv,SESSIONS:new MemoryKV(),SESSION_SECRET:SECRET,SITE_PASSWORD:'probe-password',GITHUB_TOKEN:'probe-only-token'};
+  const login=await worker.fetch(new Request(BASE+'/auth/password',{method:'POST',headers:{Origin:ORIGIN},body:JSON.stringify({password:'probe-password'})}),env);
+  const session=(await login.json()).sessionId,headers={Origin:ORIGIN,Authorization:'Bearer '+session};
+  const probe=()=>worker.fetch(new Request(BASE+'/ai/probe',{method:'POST',headers,body:'{}'}),env);
+  const result=await probe();assert.equal(result.status,200);assert.equal((await result.json()).ok,true);assert.equal(providerCalls,1);
+  assert.equal((await probe()).status,429);assert.equal(providerCalls,1);
+  assert.equal((await worker.fetch(new Request(BASE+'/ai/probe',{method:'POST',headers:{Origin:ORIGIN}}),env)).status,401);
+  assert.equal([...env.SESSIONS.values.keys()].some(k=>k.includes('records')),false);
 });
