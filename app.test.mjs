@@ -1474,7 +1474,7 @@ test('saving mathematics marks preserves existing chemistry sessions and other s
   app.node('#resultPanel').scrollIntoView = () => {};
   app.location.hash = '#/session/math/U8/2022'; app.events.hashchange();
   app.node('#submitBtn').listeners.click();
-  assert.match(app.node('#resultPanel').innerHTML, /0 \/ 3/);
+  assert.match(app.node('#resultPanel').innerHTML, /待核對 \/ 3/);
   const a = app.node('.chk-form[data-id="math-example-a"]');
   const b = app.node('.chk-form[data-id="math-example-b"]');
   a.dataset = { wtot: '1' }; b.dataset = { wtot: '2' };
@@ -1572,14 +1572,14 @@ test('Yeelam subject entrances use math, M2 and physics while Kyle keeps all ori
   assert.match(owner.node('#app').innerHTML,/數學/); assert.doesNotMatch(owner.node('#app').innerHTML,/M2|物理/);
 });
 
-test('new subjective answers open as neutral step fields without prefilled solution content', () => {
+test('one-mark subjective answers use one field without practice AI or prefilled solutions', () => {
   const app=boot(),item=structuredQuestion(app);
-  item.kind='sub';item.checks=['PRIVATE_CHECK'];item.correct='PRIVATE_CORRECT';
+  item.kind='sub';item.marks=1;item.checks=['PRIVATE_CHECK','PRIVATE_ALTERNATIVE','✗ PRIVATE_WARNING'];item.correct='PRIVATE_CORRECT';
   app.location.hash='#/session/chem/T3/2021';app.events.hashchange();
   const html=app.node('#app').innerHTML;
   assert.match(html,/data-answer-mode="steps" aria-pressed="true"/);
-  assert.equal((html.match(/class="step-input"/g)||[]).length,3);
-  assert.match(html,/AI 幫我拆題/);assert.match(html,/data-formula="√\(\)"/);
+  assert.equal((html.match(/class="step-input"/g)||[]).length,1);
+  assert.doesNotMatch(html,/data-ai-mode|ai-panel|AI 幫我拆題|方向提示/);assert.match(html,/data-formula="√\(\)"/);
   assert.doesNotMatch(html,/PRIVATE_CHECK|PRIVATE_CORRECT|PRIVATE_DEDUCTION/);
   assert.match(html,/<label class="answer-free" hidden>/);
 });
@@ -1593,4 +1593,37 @@ test('legacy free-text drafts remain visible and are not converted on opening a 
   assert.match(html,/data-answer-mode="text" aria-pressed="true"/);
   assert.match(html,/>保留原來的完整答案<\/textarea>/);
   assert.equal(JSON.parse(app.saved.get('dse_quiz_draft_v2'))['chem:T3'].text['example-mc'],'保留原來的完整答案');
+});
+
+test('personalized fields follow the question rather than the number of checks and escape field labels', () => {
+  const app=boot(),item=structuredQuestion(app);
+  item.kind='sub';item.marks=2;item.checks=['PRIVATE_POINT_ONE','PRIVATE_POINT_TWO','✗ PRIVATE_WARNING'];
+  item.answerFields=['試劑名稱','預期觀察 <script>unsafe()</script>'];
+  app.location.hash='#/session/chem/T3/2021';app.events.hashchange();
+  const html=app.node('#app').innerHTML;
+  assert.equal((html.match(/class="step-input"/g)||[]).length,2);
+  assert.match(html,/試劑名稱/);assert.match(html,/預期觀察 &lt;script&gt;unsafe\(\)&lt;\/script&gt;/);
+  assert.doesNotMatch(html,/PRIVATE_POINT|PRIVATE_WARNING|data-ai-mode|ai-panel|<script>unsafe/);
+});
+
+test('old three-step drafts migrate into the new one-mark field without dropping any answer text', () => {
+  const original='1. 舊思路\n2. 舊計算\n3. 舊結論';
+  const draft={pick:{},text:{'example-mc':original},paper:{},steps:{'example-mc':{mode:'steps',assisted:true,rows:[{prompt:'OLD_AI_PROMPT',answer:'舊思路'},{prompt:'OLD_FORMULA_PROMPT',answer:'舊計算'},{prompt:'OLD_FINAL_PROMPT',answer:'舊結論'}]}}};
+  const app=boot('',undefined,{dse_quiz_draft_v2:JSON.stringify({'chem:T3':draft})}),item=structuredQuestion(app);
+  item.kind='sub';item.marks=1;item.answerFields=['本題結論'];item.checks=['核對點'];
+  app.location.hash='#/session/chem/T3/2021';app.events.hashchange();
+  const html=app.node('#app').innerHTML;
+  assert.equal((html.match(/class="step-input"/g)||[]).length,1);
+  assert.match(html,/舊思路\n2\. 舊計算\n3\. 舊結論/);
+  assert.doesNotMatch(html,/OLD_AI_PROMPT|OLD_FORMULA_PROMPT|OLD_FINAL_PROMPT/);
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_draft_v2'))['chem:T3'].text['example-mc'],original);
+});
+
+test('practice loads no AI configuration or generation requests even when an authenticated student types', async () => {
+  const calls=[],app=boot('',async(url)=>{calls.push(url);return {ok:true,json:async()=>({data:null})};},{dse_quiz_sync_session_v1:'s'.repeat(48)}),item=structuredQuestion(app);
+  item.kind='sub';item.marks=1;item.checks=['PRIVATE_POINT'];
+  app.location.hash='#/session/chem/T3/2021';app.events.hashchange();
+  await settle();
+  assert.equal(calls.some(url=>url.includes('/ai/')),false);
+  assert.doesNotMatch(app.node('#app').innerHTML,/ai-panel|data-ai-mode|ai-probe|ai-question/);
 });
