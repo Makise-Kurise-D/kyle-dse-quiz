@@ -1642,7 +1642,11 @@
     var fields=questionAnswerFields(item), rows=fields.map(function(prompt){return {prompt:prompt,answer:''};});
     var compatible=saved && saved.version===2 && Array.isArray(saved.rows) && saved.rows.length>=fields.length && saved.rows.length<=6 &&
       saved.rows.every(function(r){return r && typeof r.answer==='string';});
-    if(compatible)rows=saved.rows.map(function(r,i){return {prompt:fields[i] || '補充答案',answer:r.answer};});
+    if(compatible){
+      rows=fields.map(function(prompt,i){return {prompt:prompt,answer:saved.rows[i].answer};});
+      var extra=saved.rows.slice(fields.length).map(function(r){return r.answer;}).filter(function(answer){return answer.trim();});
+      if(extra.length)rows[rows.length-1].answer=[rows[rows.length-1].answer].concat(extra).filter(Boolean).join('\n');
+    }
     else if(value)rows[0].answer=value;
     return { version:2, mode:saved?saved.mode==='text'?'text':'steps':value?'text':'steps', assisted:!!(saved && saved.assisted), rows:rows };
   }
@@ -1659,28 +1663,22 @@
       '<button class="btn btn-ghost" type="button" data-answer-mode="text" aria-pressed="'+!steps+'">自由輸入</button></div>' +
       '<p class="review-note">'+(marksOf(item)<=1?'本題 1 分，一格作答即可。':'按本題要求分欄；可用短句、關鍵詞或公式作答。')+' 提交後再核對答案。</p>' +
       '<div class="step-rows"'+(steps?'':' hidden')+'>'+stepRowsHtml(state.rows)+'</div>' +
-      '<button class="btn btn-ghost step-add" type="button"'+(steps?'':' hidden')+'>＋ 加一步</button>' +
       '<label class="answer-free"'+(steps?' hidden':'')+'>我的答案<textarea class="ans-box" maxlength="6000" aria-label="本題文字答案" data-id="'+esc(item.id)+'" rows="4" placeholder="例如：設 x → 列式 → 結論；AI 會檢查有沒有缺少必要步驟">'+esc(value)+'</textarea></label>' +
-      '<div class="formula-pad" role="group" aria-label="常用公式符號">'+['＝','＋','−','×','÷','/','²','³','√()','()','→','∴','∵','Δ','θ','π','≤','≥','mol','cm³'].map(function (symbol) {
-        return '<button type="button" data-formula="'+esc(symbol)+'" aria-label="插入 '+esc(symbol)+'">'+esc(symbol)+'</button>';
-      }).join('')+'</div><p class="step-note" role="status">答案會自動保存；未使用的欄位可留空。</p></section>';
+      '<p class="step-note" role="status">答案會自動保存；未使用的欄位可留空。</p></section>';
   }
   function bindStepAnswers(root, draft, items, persist) {
     $all('.step-answer', root).forEach(function (widget) {
-      var id=widget.dataset.answerId, item=items.filter(function(i){return i.id===id;})[0], field=$('.ans-box',widget), state=answerStepState(item,field.value,(draft.steps || {})[id]), target=null;
+      var id=widget.dataset.answerId, item=items.filter(function(i){return i.id===id;})[0], field=$('.ans-box',widget), state=answerStepState(item,field.value,(draft.steps || {})[id]);
       function save() {
         if(state.mode==='steps') field.value=stepAnswerText(state.rows);
         persist(id,state,field.value);
       }
       function bindRows() {
         $all('.step-input',widget).forEach(function (input) {
-          input.addEventListener('focus',function () {target=input;});
           input.addEventListener('input',function () {state.rows[Number(input.dataset.step)].answer=input.value;save();});
         });
-        $('.step-add',widget).disabled=state.rows.length>=6;
       }
-      function renderRows() {$('.step-rows',widget).innerHTML=stepRowsHtml(state.rows);bindRows();target=null;}
-      field.addEventListener('focus',function () {target=field;});
+      function renderRows() {$('.step-rows',widget).innerHTML=stepRowsHtml(state.rows);bindRows();}
       field.addEventListener('input',function () {if(state.mode==='text')save();});
       $all('[data-answer-mode]',widget).forEach(function (button) {button.addEventListener('click',function () {
         if(reviewState)return;
@@ -1689,19 +1687,9 @@
         if(mode==='steps' && field.value!==stepAnswerText(state.rows)) {
           state.rows=questionAnswerFields(item).map(function(prompt,i){return {prompt:prompt,answer:i===0?field.value:''};});renderRows();
         }
-        state.mode=mode;target=null;
-        $('.step-rows',widget).hidden=mode!=='steps';$('.step-add',widget).hidden=mode!=='steps';$('.answer-free',widget).hidden=mode==='steps';
+        state.mode=mode;
+        $('.step-rows',widget).hidden=mode!=='steps';$('.answer-free',widget).hidden=mode==='steps';
         $all('[data-answer-mode]',widget).forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.answerMode===mode));});save();
-      });});
-      $('.step-add',widget).addEventListener('click',function () {if(reviewState || state.rows.length>=6)return;state.rows.push({prompt:'補充步驟',answer:''});renderRows();save();});
-      $all('[data-formula]',widget).forEach(function(button){button.addEventListener('click',function(){
-        if(reviewState)return;
-        var input=target || (state.mode==='steps'?$('.step-input',widget):field), symbol=button.dataset.formula;
-        var start=Number.isInteger(input.selectionStart)?input.selectionStart:input.value.length, end=Number.isInteger(input.selectionEnd)?input.selectionEnd:start;
-        if(input.value.length-(end-start)+symbol.length>input.maxLength)return;
-        input.setRangeText(symbol,start,end,'end');
-        if(symbol.endsWith('()'))input.setSelectionRange(start+symbol.length-1,start+symbol.length-1);
-        input.focus();input.dispatchEvent(new Event('input',{bubbles:true}));
       });});
       bindRows();
     });
