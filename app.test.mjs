@@ -1571,3 +1571,26 @@ test('Yeelam subject entrances use math, M2 and physics while Kyle keeps all ori
   assert.match(owner.node('#app').innerHTML,/化學/); assert.match(owner.node('#app').innerHTML,/生物/);
   assert.match(owner.node('#app').innerHTML,/數學/); assert.doesNotMatch(owner.node('#app').innerHTML,/M2|物理/);
 });
+
+test('new subjective answers open as neutral step fields without prefilled solution content', () => {
+  const app=boot(),item=structuredQuestion(app);
+  item.kind='sub';item.checks=['PRIVATE_CHECK'];item.correct='PRIVATE_CORRECT';
+  app.location.hash='#/session/chem/T3/2021';app.events.hashchange();
+  const html=app.node('#app').innerHTML;
+  assert.match(html,/data-answer-mode="steps" aria-pressed="true"/);
+  assert.equal((html.match(/class="step-input"/g)||[]).length,3);
+  assert.match(html,/AI 幫我拆題/);assert.match(html,/data-formula="√\(\)"/);
+  assert.doesNotMatch(html,/PRIVATE_CHECK|PRIVATE_CORRECT|PRIVATE_DEDUCTION/);
+  assert.match(html,/<label class="answer-free" hidden>/);
+});
+
+test('legacy free-text drafts remain visible and are not converted on opening a question', () => {
+  const draft={pick:{},text:{'example-mc':'保留原來的完整答案'},paper:{}};
+  const app=boot('',undefined,{dse_quiz_draft_v2:JSON.stringify({'chem:T3':draft})}),item=structuredQuestion(app);
+  item.kind='sub';item.checks=['給分點'];
+  app.location.hash='#/session/chem/T3/2021';app.events.hashchange();
+  const html=app.node('#app').innerHTML;
+  assert.match(html,/data-answer-mode="text" aria-pressed="true"/);
+  assert.match(html,/>保留原來的完整答案<\/textarea>/);
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_draft_v2'))['chem:T3'].text['example-mc'],'保留原來的完整答案');
+});
