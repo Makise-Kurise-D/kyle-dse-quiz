@@ -97,8 +97,8 @@
       return '<span><i class="ml-dot ml-' + s.key + '"></i>' + s.label + ' <b>' + stats[s.key] + '</b></span>';
     }).join('') + '</div>';
   }
-  function subjectName(code) { return { chem: '化學', bio: '生物', math: '數學' }[code] || code; }
-  function icon(code) { return '<span class="persona-icon persona-icon-' + code + '" aria-hidden="true"></span>'; }
+  function subjectName(code) { return global.DSESubjects.names[code] || code; }
+  function icon(code) { return global.DSESubjects.icon(code); }
   function header(title, sub, back, label) {
     return '<header class="page-head"><div><h1 class="page-title">' + title + '</h1><p class="page-sub">' + sub +
       '</p></div><a class="btn btn-ghost" href="' + back + '">← ' + label + '</a></header>';
@@ -120,7 +120,7 @@
     var subjects = context.data.subjects;
     frame('subjects', header('<span class="persona-icon persona-icon-library" aria-hidden="true"></span> 錯題庫', '從科目到課題，直接找到需要重溫的錯題。', '#/', '主頁') +
       '<a class="btn btn-primary ml-global-entry" href="#/library/books/search">搜尋全科錯題 · 題號、知識點、答案與解析</a>' +
-      '<div class="ml-subject-dock"><div class="ml-subjects">' + ['bio', 'chem', 'math'].filter(function (code) { return subjects[code]; }).map(function (code) {
+      '<div class="ml-subject-dock"><div class="ml-subjects">' + global.DSESubjects.libraryOrder(subjects).map(function (code) {
         var stats = summarize(subjects[code].items, context.index);
         var percent = stats.total ? Math.round(stats.mastered / stats.total * 100) : 0;
         return '<a class="ml-subject ml-subject-' + code + '" href="#/library/books/' + code + '">' +
@@ -154,7 +154,7 @@
     var years = Array.from(new Set(subject.items.map(function (item) { return String(item.year); }))).sort().reverse();
     var selected = selectedYears[code] || 'all', catalog = null;
     if (selected !== 'all' && years.indexOf(selected) < 0) selected = 'all';
-    var order = ['bio', 'chem', 'math'].filter(function (subject) { return api.data.subjects[subject]; });
+    var order = global.DSESubjects.libraryOrder(api.data.subjects);
     var subjectIndex = order.indexOf(code);
     var previous = order[(subjectIndex + order.length - 1) % order.length];
     var next = order[(subjectIndex + 1) % order.length];
@@ -257,7 +257,7 @@
           '</tr></thead><tbody>' + table.rows.map(function (row) { return '<tr>' + row.map(function (cell) { return '<td>' + text(cell) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
       }).join('') : '') +
       figures.map(function (f) {
-        return /^images\/(chem|bio|math)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path) ? '<figure><img data-library-image="' + esc(f.path) +
+        return /^images\/(chem|bio|math|m2|physics)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path) ? '<figure><img data-library-image="' + esc(f.path) +
           '" loading="lazy" decoding="async" alt="' + esc(f.alt || '原題圖表') + '"' +
           (f.width > 0 && f.height > 0 ? ' width="' + Number(f.width) + '" height="' + Number(f.height) + '"' : '') + '><figcaption>' + esc(f.alt) + '</figcaption></figure>' : '';
       }).join('') + '</div><div class="ml-answer ml-answer-own"><h3>我的原答案</h3><p>' + own + '</p></div>' +

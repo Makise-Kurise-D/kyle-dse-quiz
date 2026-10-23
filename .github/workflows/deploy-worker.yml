@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'sync-worker/**'
+      - 'subject-config.js'
       - '.github/workflows/deploy-worker.yml'
   workflow_dispatch:
 
@@ -173,6 +174,15 @@ jobs:
               throw new Error('Account login verification failed for ' + username + ' (HTTP ' + response.status + ')');
             }
             try {
+              const expected = username === 'Kyle' ? ['chem','bio','math'] : ['math','m2','physics'];
+              for (const endpoint of ['/bank', '/papers/catalog']) {
+                const result = await fetch(base + endpoint, { signal: AbortSignal.timeout(20000),
+                  headers: { Origin: origin, Authorization: 'Bearer ' + session.sessionId } });
+                const body = await result.json();
+                if (!result.ok || JSON.stringify(Object.keys(body.subjects || {}).sort()) !== JSON.stringify(expected.slice().sort())) {
+                  throw new Error('Account subject profile verification failed for ' + username + ' at ' + endpoint);
+                }
+              }
               if (username === 'Yeelam') {
                 const upgrade = await fetch(base + '/auth/upgrade', { method: 'POST', signal: AbortSignal.timeout(15000),
                   headers: { Origin: origin, Authorization: 'Bearer ' + session.sessionId } });
@@ -183,6 +193,6 @@ jobs:
                 headers: { Origin: origin, Authorization: 'Bearer ' + session.sessionId } });
               if (!logout.ok) throw new Error('Verification session cleanup failed');
             }
-            console.log('Verified isolated login for ' + username + '; no practice records written');
+            console.log('Verified isolated login and subjects for ' + username + '; no practice records written');
           }
           NODE

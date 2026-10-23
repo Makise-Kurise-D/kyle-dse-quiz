@@ -7,6 +7,7 @@ on:
       - '.github/workflows/check-service.yml'
       - 'paper-reader.js'
       - 'app.js'
+      - 'subject-config.js'
       - 'app.test.mjs'
       - 'index.html'
       - 'library.js'
@@ -88,8 +89,8 @@ jobs:
           import { readFileSync } from 'node:fs';
           const base = 'https://makise-kurisu-d.github.io/kyle-dse-quiz/';
           const index = readFileSync('index.html', 'utf8');
-          const versionedAssets = [...index.matchAll(/(?:src|href)="((?:app|library|appearance|paper-reader)\.js\?v=[^"\s]+|(?:style|library|appearance)\.css\?v=[^"\s]+|images\/avatar\.jpg\?v=[^"\s]+)"/g)].map(m => m[1]);
-          if (versionedAssets.length !== 8) throw new Error('Missing versioned website assets or avatar favicon');
+          const versionedAssets = [...index.matchAll(/(?:src|href)="((?:app|library|appearance|paper-reader|subject-config)\.js\?v=[^"\s]+|(?:style|library|appearance)\.css\?v=[^"\s]+|images\/avatar\.jpg\?v=[^"\s]+)"/g)].map(m => m[1]);
+          if (versionedAssets.length !== 9) throw new Error('Missing versioned website assets or avatar favicon');
           const visualAssets = [...readFileSync('appearance.css', 'utf8').matchAll(/url\(['"]?(visual\/[^)'"\s]+)['"]?\)/g)].map(m => m[1]);
           for (const file of ['home-day.webp', 'home-night.webp', 'home-day-wide.webp', 'home-night-wide.webp', 'archive-day.webp', 'archive-night.webp', 'Barlow-BlackItalic.ttf']) {
             if (!visualAssets.includes('visual/' + file)) throw new Error('Missing theme artwork or font: ' + file);

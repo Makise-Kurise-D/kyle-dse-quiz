@@ -187,7 +187,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'user-isolation-20261023');
+  assert.equal(status.version, 'account-subjects-20261023');
   assert.equal(status.passwordConfigured, false);
   assert.equal(status.aiFiguresEnabled, false);
   const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
@@ -221,7 +221,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'user-isolation-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'account-subjects-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -415,7 +415,7 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   const loaded = await worker.fetch(new Request(`${BASE}/bank`, { headers: privateHeaders }), env);
   assert.equal(loaded.status, 200);
   assert.equal(loaded.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await loaded.json(), bank);
+  assert.deepEqual(await loaded.json(), globalThis.DSESubjects.bankFor('kyle', bank));
   const image = await worker.fetch(new Request(`${BASE}/bank/images/chem-2022-mc-01.jpg`, { headers: privateHeaders }), env);
   assert.equal(image.status, 200);
   assert.equal(image.headers.get('content-type'), 'image/jpeg');
@@ -494,7 +494,7 @@ test('OAuth handoff authenticates and sync merges through GitHub contents API', 
   const userCallsBeforePasswordReads = userCalls;
   const bankViaPassword = await worker.fetch(new Request(`${BASE}/bank`, { headers: passwordHeaders }), env);
   assert.equal(bankViaPassword.status, 200);
-  assert.deepEqual(await bankViaPassword.json(), bank);
+  assert.deepEqual(await bankViaPassword.json(), globalThis.DSESubjects.bankFor('kyle', bank));
   const savedViaPassword = await worker.fetch(new Request(`${BASE}/sync`, {
     method: 'PUT', headers: { ...passwordHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ data: backup }),
   }), env);
@@ -652,7 +652,7 @@ test('login warms the bank while saving its session and private reads share only
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(bankCalls, 1);
   finishBank(Response.json({ encoding: 'base64', content: b64json(bank) }));
-  assert.deepEqual(await (await read).json(), bank);
+  assert.deepEqual(await (await read).json(), globalThis.DSESubjects.bankFor('kyle', bank));
   await Promise.all(background);
   assert.equal((await worker.fetch(new Request(`${BASE}/bank`, { headers }), env)).headers.get('cache-control'), 'no-store');
   assert.equal(bankCalls, 1, 'a recent authorized bank read skips GitHub');
@@ -869,8 +869,8 @@ test('Yeelam identity isolates every private route and cannot upgrade or select 
     method, headers: { Origin: ORIGIN, Authorization: `Bearer ${session.sessionId}`, 'Content-Type': 'application/json' },
     ...(body ? { body: JSON.stringify(body) } : {})
   }), env);
-  assert.deepEqual((await (await call('/bank')).json()).subjects.chem.items, []);
-  assert.deepEqual((await (await call('/papers/catalog')).json()).subjects, { chem: [], bio: [], math: [] });
+  assert.deepEqual((await (await call('/bank')).json()).subjects.math.items, []);
+  assert.deepEqual((await (await call('/papers/catalog')).json()).subjects, { math: [], m2: [], physics: [] });
   assert.equal((await call('/bank/images/chem-2022-mc-01.jpg')).status, 404);
   assert.equal((await call('/papers/chem/2022/manifest')).status, 404);
   assert.equal((await call('/auth/upgrade', 'POST')).status, 403);
@@ -935,4 +935,56 @@ test('deployment requires both protected passwords before any secret write and n
   }, sink);
   assert.equal(writes, 2);
   assert.doesNotMatch(logged.join('\n'), /synthetic-|pbkdf2|[a-f0-9]{32}/);
+});
+
+test('account subject profiles isolate M2 and physics materials while preserving mathematics', async t => {
+  const salt = 'abcdef0123456789abcdef0123456789';
+  const guestVerifier = `pbkdf2-sha256:100000:${salt}:${pbkdf2Sync('synthetic-guest',Buffer.from(salt,'hex'),100000,32,'sha256').toString('hex')}`;
+  const env = { ...aiEnv, SESSIONS:new MemoryKV(), SESSION_SECRET:SECRET, SITE_PASSWORD:'synthetic-owner', YEELAM_PASSWORD_VERIFIER:guestVerifier, GITHUB_TOKEN:'subject-profile-token' };
+  const allCodes = ['chem','bio','math','m2','physics'];
+  const subjects = Object.fromEntries(allCodes.map(code => [code,{ name:globalThis.DSESubjects.names[code],topics:[{code:'U1',name:'合成課題'}],items:[{...aiItem,id:code+'-question',topic:'U1',year:'2024',figures:[{path:'images/'+code+'-2024-fig-synthetic.jpg'}]}] }]));
+  const rawBank = { subjects }, seen = [], original = globalThis.fetch, sha = 'a'.repeat(64), version = sha.slice(0,16);
+  globalThis.fetch = async (input,init={}) => {
+    const url=String(input);
+    if(url.endsWith('/user')) return Response.json({login:'Makise-Kurisu-D'});
+    if(url==='https://ai.example/v1/chat/completions') return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture('合成答案'))}}]});
+    seen.push(url);
+    if(url.endsWith('/question-bank/bank.json')) return Response.json({encoding:'base64',content:b64json(rawBank)});
+    if(url.endsWith('/papers/catalog.json')) return Response.json({encoding:'base64',content:b64json({subjects:Object.fromEntries(allCodes.map(code=>[code,['2024']]))})});
+    if(url.endsWith('/manifest.json')) return Response.json({encoding:'base64',content:b64json({version,source_sha256:sha,pages:1,format:'jpeg',dpi:200,quality:85})});
+    if(url.endsWith('.jpg')) return Response.json({encoding:'base64',content:btoa(String.fromCharCode(255,216,255,217))});
+    throw new Error('Unexpected subject fixture URL');
+  };
+  t.after(()=>{globalThis.fetch=original;});
+  const login=async(username,password)=>{
+    const response=await worker.fetch(new Request(BASE+'/auth/password',{method:'POST',headers:{Origin:ORIGIN},body:JSON.stringify({username,password})}),env);
+    assert.equal(response.status,200);return (await response.json()).sessionId;
+  };
+  const owner=await login('Kyle','synthetic-owner'),guest=await login('Yeelam','synthetic-guest');
+  const call=(session,path,method='GET',body)=>worker.fetch(new Request(BASE+path,{method,headers:{Origin:ORIGIN,Authorization:'Bearer '+session,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),env);
+  const guestBank=await (await call(guest,'/bank')).json();
+  const ownerBank=await (await call(owner,'/bank')).json();
+  assert.deepEqual(Object.keys(guestBank.subjects),['math','m2','physics']);
+  assert.deepEqual(Object.keys(ownerBank.subjects),['chem','bio','math']);
+  assert.deepEqual(guestBank.subjects.math,subjects.math);
+  assert.deepEqual(ownerBank.subjects.chem,subjects.chem);
+  assert.deepEqual(ownerBank.subjects.bio,subjects.bio);
+  assert.deepEqual(ownerBank.subjects.math,subjects.math);
+  assert.deepEqual(Object.keys((await (await call(guest,'/papers/catalog')).json()).subjects),['math','m2','physics']);
+  for (const code of ['m2','physics']) {
+    assert.equal((await call(guest,'/bank/images/'+code+'-2024-fig-synthetic.jpg')).status,200);
+    assert.equal((await call(guest,'/papers/'+code+'/2024/manifest')).status,200);
+    assert.equal((await call(guest,'/papers/'+code+'/2024/pages/'+version+'/1')).status,200);
+    for(const key of env.SESSIONS.values.keys()) if(key.startsWith('ai-limit:')) await env.SESSIONS.delete(key);
+    assert.equal((await call(guest,'/ai/review','POST',{questionId:code+'-question',answer:'合成答案'})).status,200);
+  }
+  const before=seen.length;
+  for (const [session,codes] of [[guest,['chem','bio']],[owner,['m2','physics']]]) {
+    for(const code of codes) {
+      assert.equal((await call(session,'/bank/images/'+code+'-2024-fig-synthetic.jpg')).status,404);
+      assert.equal((await call(session,'/papers/'+code+'/2024/manifest')).status,404);
+    }
+  }
+  assert.equal(seen.length,before,'disabled subject routes never reach storage');
+  assert.ok(seen.filter(url=>/m2|physics/.test(url)).every(url=>url.includes('/users/yeelam/')));
 });
