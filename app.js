@@ -33,7 +33,7 @@
   var passwordLoginBusy = false;
   var syncTimer = null, syncBusy = false, syncAgain = false, syncRevision = 0;
   var syncMessage = '';
-  var paperSubject = '', paperYear = '', paperPage = 1, paperManifest = null;
+  var paperSubject = '', paperYear = '', paperIdentifier = '', paperPage = 1, paperManifest = null;
   var paperReader = null, paperController = null, paperRequest = 0;
   var paperToolsOpen = false, paperHeaderVisible = false;
   var readerPages = new Map();
@@ -612,7 +612,9 @@
   function updateReviewPlan(id, result, at) {
     var previous = reviewPlan[id];
     var ratio = result.tot ? result.marks / result.tot : (result.ok ? 1 : 0);
-    var passed = result.ok === true && ratio >= 1;
+    var passed = result.ok === true && ratio >= 1 && !result.assisted && !(result.attempt && result.attempt.assisted);
+    // Early drills and assisted answers do not postpone an already scheduled review.
+    if (previous && ((passed && at < previous.dueAt) || result.assisted || (result.attempt && result.attempt.assisted))) return;
     var level = passed ? Math.min(previous ? previous.level + 1 : 0, REVIEW_DAYS.length - 1) : 0;
     var days = REVIEW_DAYS[level];
     reviewPlan[id] = {
@@ -946,6 +948,7 @@
       if (SUBJECT_ORDER.indexOf(parts[1]) >= 0) {
         if (parts.length === 2) return renderPaperYears(parts[1]);
         if (parts.length === 3 && /^\d{4}$/.test(parts[2])) return renderPaperReader(parts[1], parts[2]);
+        if (parts.length === 4 && /^20\d{2}$/.test(parts[2]) && /^[a-z0-9][a-z0-9-]{0,79}$/.test(parts[3])) return renderPaperReader(parts[1], parts[2], false, parts[3]);
       }
     }
     var latest = latestMap(), total = 0, pending = 0;
@@ -1009,7 +1012,7 @@
       if (requestId !== paperRequest || localStorage.getItem(LS_SYNC_SESSION) !== session) return;
       var years = [], count = 0, subjects = 0;
       SUBJECT_ORDER.forEach(function (code) {
-        count += catalog.subjects[code].length;
+        count += Array.isArray(catalog.entries) ? catalog.entries.filter(function (entry) { return entry.subject === code; }).length : catalog.subjects[code].length;
         if (catalog.subjects[code].length) subjects++;
         years = years.concat(catalog.subjects[code]);
       });
@@ -1062,8 +1065,8 @@
     var components = metrics && Array.isArray(assessment.components) ? assessment.components.map(function (c) {
       return esc(c.label) + ' ' + c.earned + '/' + c.total;
     }).join(' · ') : '';
-    return '<a class="paper-year" href="#/library/papers/' + subject + '/' + year + '">' +
-      '<span class="paper-year-heading"><strong>' + year + '</strong><small>' + esc(metrics ? assessment.scope : '紅筆批改卷') + '</small></span>' +
+    return '<a class="paper-year" href="#/library/papers/' + subject + '/' + year + (detail.paper_id ? '/' + detail.paper_id : '') + '">' +
+      '<span class="paper-year-heading"><strong>' + year + '</strong><small>' + esc(detail.title || (metrics ? assessment.scope : '紅筆批改卷')) + '</small></span>' +
       '<span class="paper-year-score">' + score + '</span><span class="paper-grade-gaps">' + gaps + '</span>' +
       '<span class="paper-year-arrow" aria-hidden="true">→</span>' +
       '<span class="paper-year-foot">' + (components ? components + ' · ' : '') + (Number.isInteger(detail.pages) ? detail.pages + ' 頁 · ' : '') +
@@ -1122,9 +1125,10 @@
       }
       var years = catalog.subjects[subject].filter(function (year) { return /^20\d{2}$/.test(year); }).sort().reverse();
       if (!years.length) { status.textContent = '此科目尚無已發布的批改卷。'; return; }
-      status.textContent = '已發布 ' + years.length + ' 個年份的批改卷。';
-      $('#paperYears').innerHTML = years.map(function (year) {
-        return renderPaperYear(subject, year, catalog.papers && catalog.papers[subject] && catalog.papers[subject][year]);
+      var entries = Array.isArray(catalog.entries) ? catalog.entries.filter(function (entry) { return entry.subject === subject; }).sort(function (a, b) { return b.year.localeCompare(a.year) || a.title.localeCompare(b.title); }) : years.map(function (year) { return Object.assign({ year: year }, catalog.papers && catalog.papers[subject] && catalog.papers[subject][year]); });
+      status.textContent = '已發布 ' + entries.length + ' 套批改卷，涵蓋 ' + years.length + ' 個年份。';
+      $('#paperYears').innerHTML = entries.map(function (entry) {
+        return renderPaperYear(subject, entry.year, entry);
       }).join('');
     }).catch(function (err) {
       paperError(err, session, requestId, status, false);
@@ -1165,7 +1169,7 @@
   }
   function startPaperReader(session, requestId) {
     var subject = paperSubject, year = paperYear, manifest = paperManifest;
-    var base = '/papers/' + subject + '/' + year;
+    var base = '/papers/' + subject + '/' + year + (paperIdentifier ? '/' + paperIdentifier : '');
     paperReader = window.DSEPaperReader({
       root: $('#paperReader'), scrollRoot: $('#contentScroll'), thumbs: $('#paperThumbList'),
       toolbar: $('#paperToolbar'), manifest: manifest, page: paperPage,
@@ -1231,7 +1235,7 @@
     paperController = controller;
     var timeout = setTimeout(function () { controller.abort(); }, 15000);
     status.textContent = '正在查看' + SUBJECT_META[paperSubject].name + ' ' + paperYear + ' 年批改卷頁數…';
-    fetch(SYNC_API + '/papers/' + paperSubject + '/' + paperYear + '/manifest' + (fresh ? '?refresh=' + Date.now() : ''), {
+    fetch(SYNC_API + '/papers/' + paperSubject + '/' + paperYear + (paperIdentifier ? '/' + paperIdentifier : '') + '/manifest' + (fresh ? '?refresh=' + Date.now() : ''), {
       method: 'GET', headers: { Authorization: 'Bearer ' + session },
       cache: 'no-store', signal: controller.signal,
     }).then(readSyncResponse).then(function (manifest) {
@@ -1249,15 +1253,20 @@
       if (requestId === paperRequest) paperController = null;
     });
   }
-  function renderPaperReader(subject, year, fresh) {
-    if (paperSubject !== subject || paperYear !== year) paperPage = 1;
-    paperSubject = subject; paperYear = year;
+  function renderPaperReader(subject, year, fresh, identifier) {
+    identifier = identifier || '';
+    if (paperSubject !== subject || paperYear !== year || paperIdentifier !== identifier) paperPage = 1;
+    paperSubject = subject; paperYear = year; paperIdentifier = identifier;
+    var catalogEntry = paperCatalogSnapshot && Array.isArray(paperCatalogSnapshot.entries) && paperCatalogSnapshot.entries.filter(function (entry) {
+      return entry.subject === subject && entry.year === year && entry.paper_id === identifier;
+    })[0];
+    var readerTitle = SUBJECT_META[subject].name + ' ' + (catalogEntry ? catalogEntry.title : year + ' 年批改卷');
     paperToolsOpen = false; paperHeaderVisible = false;
     $('#app').innerHTML = '<section class="page library-page paper-reading-page" id="paperReadingPage" aria-labelledby="paperTitle">' +
       '<div class="paper-toolbar" id="paperToolbar">' +
         '<div class="paper-controls"><a class="btn btn-ghost paper-back" href="#/library/papers/' + subject + '" aria-label="返回批改卷年份" title="返回年份">←</a>' +
         '<button class="btn btn-ghost" id="paperThumbToggle" type="button" aria-controls="paperThumbnails" aria-expanded="true" title="頁面預覽">預覽</button>' +
-        '<h1 class="paper-reader-title" id="paperTitle">' + SUBJECT_META[subject].name + ' ' + year + ' 年批改卷</h1>' +
+        '<h1 class="paper-reader-title" id="paperTitle">' + esc(readerTitle) + '</h1>' +
         '<button class="btn btn-ghost paper-next-mistake" id="paperNextMistake" type="button" aria-label="下一錯題位置" disabled title="正在載入錯題位置"><span class="paper-mistake-long">下一錯題位置</span><span class="paper-mistake-short" aria-hidden="true">下一錯題</span></button>' +
         '<label class="paper-page-label"><select id="paperPageSelect" aria-label="選擇批改卷頁碼"></select><span> / <span id="paperPageCount">—</span></span></label>' +
         '<button class="btn btn-ghost" id="paperToolsToggle" type="button" aria-label="更多閱讀工具" title="更多閱讀工具" aria-controls="paperTools" aria-expanded="false">⋯</button></div>' +
@@ -1275,7 +1284,7 @@
         '<div class="paper-stream" id="paperReader" hidden></div></div></section>';
     $('#paperReader').hidden = true;
     $('#paperOpen').hidden = true; $('#paperOpen').href = '';
-    $('#paperReload').addEventListener('click', function () { releasePaper(); renderPaperReader(subject, year, true); });
+    $('#paperReload').addEventListener('click', function () { releasePaper(); renderPaperReader(subject, year, true, identifier); });
     $('#paperSections').addEventListener('click', function (event) {
       var button = event.target.closest('[data-page]');
       if (button) { setPaperTools(false, true); goPaperPage(Number(button.dataset.page)); }
@@ -1842,6 +1851,8 @@
 
   /* ---------- 提交批改 ---------- */
   function submitSession(code, topic, dkey, items, draft, mcOnly) {
+    // Keep the exact submitted text separate from later draft cleanup and sync.
+    draft = JSON.parse(JSON.stringify(draft));
     reviewState = { results: {} };
     $all('input,textarea,button', $('#qPaper')).forEach(function(control){control.disabled=true;});
     var submitted = false;
@@ -1888,16 +1899,19 @@
         var checks = it.checks || [];
         var wList = checks.map(function (c) { return /^✗/.test(c) ? 0 : 1; });
         var wTot = wList.reduce(function (a, b) { return a + b; }, 0);
+        var rubric = window.DSELibrary.practiceRubric(it);
         html += '<details class="review-self-check"><summary>自行核對／調整練習得分</summary><p class="review-note">核對項可能含替代答案或同一分的細節，圈點數量不直接等於分數；練習自評與 AI 分析分開保存。</p><div class="chk-form" data-id="' + esc(it.id) + '" data-marks="' + marksOf(it) +
           '" data-wtot="' + wTot + '">' +
           '<div class="chk-form-h"><span class="persona-icon persona-icon-notes" aria-hidden="true"></span> 你寫到邊個踩分點？（剔中 ' +
             '<span class="chk-got">0</span>/<span class="chk-tot">' + wTot + '</span>' +
-            '　→　<b class="chk-score">0</b>/' + marksOf(it) + ' 分；<span class="persona-icon persona-icon-warning" aria-hidden="true"></span> 項只係防錯提醒，唔計分）</div>' +
+            '　·　<b class="chk-score">' + (rubric ? '0' : '待確認') + '</b>/' + marksOf(it) + ' 分；<span class="persona-icon persona-icon-warning" aria-hidden="true"></span> 項只係防錯提醒，唔計分）</div>' +
           checks.map(function (c, i) {
             return '<label class="chk-line' + (wList[i] ? '' : ' is-warn') + '">' +
               '<input type="checkbox" data-i="' + i + '" data-w="' + wList[i] + '">' +
               '<span class="chk-text">' + checkText(c) + '</span></label>';
-          }).join('') + '</div></details>';
+          }).join('') + (rubric
+            ? '<p class="review-note">依已核實的獨立給分組及替代條件計分；儲存前請核對你的實際答案。</p>'
+            : '<label class="review-manual-score">確認本題練習得分 <input class="manual-score" type="number" min="0" max="' + marksOf(it) + '" step="any" required placeholder="0–' + marksOf(it) + '" aria-label="' + esc(it.qref) + ' 練習自評得分"></label><p class="review-note">本題尚未設定逐點計分規則，請對照參考答案確認得分；勾選核對項不會自動換算分數。</p>') + '</div></details>';
       }
       html += '</article>';
     });
@@ -1912,60 +1926,63 @@
     bindAIPanels(panel, items);
     panel.scrollIntoView({ behavior: motionBehavior(), block: 'start' });
 
+    function subResult(it, f) {
+      var selected = $all('input[type="checkbox"]:checked', f).map(function (cb) { return parseInt(cb.dataset.i, 10); });
+      var n = selected.filter(function (i) { return !/^✗/.test((it.checks || [])[i] || ''); }).length;
+      var manual = $('.manual-score', f), raw = manual && String(manual.value || '').trim();
+      var score = window.DSELibrary.practiceScore(Object.assign({}, it, { marks: marksOf(it) }), selected, raw ? Number(raw) : null);
+      return { kind: 'sub', marks: score, tot: marksOf(it), ok: score === marksOf(it),
+        got: n, checks: (it.checks || []).filter(function (c) { return !/^✗/.test(c); }).length,
+        checkedIndices: selected, assisted: !!((draft.steps || {})[it.id] || {}).assisted };
+    }
     function recalcSub() {
-      var got = 0;
+      var got = 0, pending = false;
       $all('.chk-form', panel).forEach(function (f) {
-        var n = $all('input:checked', f).reduce(function (s, cb) {
-          return s + parseInt(cb.dataset.w, 10);
-        }, 0);
-        var tot = parseInt(f.dataset.wtot, 10);
-        var sc = tot ? Math.round(parseFloat(f.dataset.marks) * n / tot) : 0;
-        $('.chk-got', f).textContent = n;
-        $('.chk-score', f).textContent = sc;
-        reviewState.results[f.dataset.id] = {
-          kind: 'sub', marks: sc, tot: parseFloat(f.dataset.marks),
-          ok: sc >= parseFloat(f.dataset.marks), got: n, checks: tot
-        };
-        got += sc;
+        var it = items.filter(function (item) { return item.id === f.dataset.id; })[0];
+        var result = subResult(it, f);
+        $('.chk-got', f).textContent = result.got;
+        $('.chk-score', f).textContent = result.marks == null ? '待確認' : result.marks;
+        reviewState.results[it.id] = result;
+        pending = pending || result.marks == null; got += result.marks || 0;
       });
-      $('#subScore').innerHTML = '';
-      $('#subScore').appendChild(document.createElement('b')).textContent = got + ' / ' + subFull;
-      $('#allScore').innerHTML = '';
-      $('#allScore').appendChild(document.createElement('b')).textContent =
-        (mcMarks + got) + ' / ' + (mcFull + subFull);
+      $('#subScore').textContent = pending ? '待確認 / ' + subFull : got + ' / ' + subFull;
+      $('#allScore').textContent = pending ? '待確認' : (mcMarks + got) + ' / ' + (mcFull + subFull);
     }
     $all('.chk-form input', panel).forEach(function (cb) {
       cb.addEventListener('change', recalcSub);
+      if (cb.type === 'number') cb.addEventListener('input', recalcSub);
     });
 
     $('#saveSessionBtn').addEventListener('click', function () {
       if (submitted) return;
-      submitted = true;
-      // 落齊大題結果（未剔任何項也要存 0 分）
+      var missingScore = false;
       items.forEach(function (it) {
         if (it.kind !== 'sub' || mcOnly) return;
         var f = $('.chk-form[data-id="' + it.id + '"]', panel);
-        var n = $all('input:checked', f).reduce(function (s, cb) {
-          return s + parseInt(cb.dataset.w, 10);
-        }, 0);
-        var tot = parseInt(f.dataset.wtot, 10);
-        var sc = tot ? Math.round(marksOf(it) * n / tot) : 0;
-        reviewState.results[it.id] = {
-          kind: 'sub', marks: sc, tot: marksOf(it), ok: sc >= marksOf(it),
-          got: n, checks: tot, ...(((draft.steps || {})[it.id] || {}).assisted ? { assisted:true } : {})
-        };
+        var result = subResult(it, f); reviewState.results[it.id] = result;
+        if (result.marks == null && !missingScore) {
+          missingScore = true;
+          var details = f.closest && f.closest('details'); if (details) details.open = true;
+          var manual = $('.manual-score', f); if (manual) manual.focus();
+        }
       });
+      if (missingScore) { toast('請先逐題確認練習得分（0 至本題滿分），再儲存記錄'); return; }
+      submitted = true;
       var subGotFinal = Object.keys(reviewState.results).reduce(function (s, id) {
         var r = reviewState.results[id];
         return s + (r.kind === 'sub' ? r.marks : 0);
       }, 0);
       var savedAt = Date.now();
-      Object.keys(reviewState.results).forEach(function (id) {
-        updateReviewPlan(id, reviewState.results[id], savedAt);
+      items.forEach(function (it) {
+        var result = reviewState.results[it.id];
+        updateReviewPlan(it.id, result, savedAt);
+        result.attempt = window.DSELibrary.attemptSnapshot(Object.assign({}, it, { marks: marksOf(it) }),
+          it.kind === 'mc' ? result.picked : (draft.text[it.id] || ''), result.checkedIndices || [], result, savedAt,
+          { assisted: result.assisted, onPaper: !!(draft.paper || {})[it.id], nextReviewAt: (reviewPlan[it.id] || {}).dueAt });
       });
       sessions.push({
         t: savedAt, subj: code, topic: topic, mcOnly: !!mcOnly,
-        results: reviewState.results,
+        results: JSON.parse(JSON.stringify(reviewState.results)),
         mc: mcMarks + '/' + mcFull, sub: mcOnly ? null : (subGotFinal + '/' + subFull)
       });
       if (topic !== '__random__' && (mcOnly || sessState.year)) {
@@ -2304,6 +2321,16 @@
           '<small>已提交' + (s.mcOnly ? ' · 只做選擇題' : '') + ' · 展開詳情</small></span>' +
           '<span class="session-entry-score">' + correct + ' / ' + ids.length + '</span></summary>' +
           '<div class="session-entry-body">本次全對 ' + correct + ' 題；尚未全對 ' + (ids.length - correct) + ' 題。' +
+          ids.map(function (id) {
+            var result = s.results[id], attempt = result.attempt;
+            if (!attempt || attempt.version !== 1) return '';
+            return '<details class="attempt-snapshot"><summary>' + esc(id) + ' · ' + esc(result.marks + '/' + result.tot) +
+              (attempt.assisted ? ' · 曾使用輔助' : '') + '</summary><p>本次提交原文</p><div class="ans-body">' +
+              esc(attempt.answer).replace(/\n/g, '<br>') + (attempt.onPaper ? '<p>另有紙上作答；未保存影像，不新增獨立掌握證據。</p>' : '') +
+              '</div><p>已勾核對項：' + esc((Array.isArray(attempt.checkedIndices) ? attempt.checkedIndices : []).map(function (i) { return i + 1; }).join('、') || '無') +
+              ' · ' + (attempt.scoreMethod === 'manual' ? '人工確認自評' : attempt.scoreMethod === 'reviewed-rubric' ? '已核實給分規則' : '選項核對') +
+              '</p></details>';
+          }).join('') +
           '<div><a href="#/library/books/' + esc(s.subj) + '">查看錯題歸納</a>' +
           '<a href="#/session/' + esc(s.subj) + '/' + encodeURIComponent(s.topic) + '">再練一次</a></div></div></details>';
       }).join('') || '<p class="review-note">尚未有已提交的練習；閱讀和草稿不計作答。</p>') + '</div>' +

@@ -18,6 +18,79 @@
     return !!result && result.ok === true && (!result.tot ||
       (Number.isFinite(result.marks) && result.marks >= result.tot));
   }
+  // A checklist describes evidence; only a reviewed rubric can assign marks.
+  function practiceMaximum(item) {
+    var count = (item && item.checks || []).length;
+    var marks = item && item.marks;
+    if (!Number.isFinite(marks)) {
+      var matched = String(item && item.qref || '').match(/（\s*([0-9]+(?:\.[0-9]+)?)\s*分/);
+      marks = matched ? Number(matched[1]) : count || 1;
+    }
+    return marks;
+  }
+  function practiceRubric(item) {
+    var rubric = item && item.practiceRubric, count = (item && item.checks || []).length;
+    var marks = practiceMaximum(item);
+    if (!rubric || rubric.version !== 1 || !Array.isArray(rubric.groups) || !rubric.groups.length) return null;
+    function validCondition(condition) {
+      if (Number.isInteger(condition)) return condition >= 0 && condition < count && !/^✗/.test(item.checks[condition]);
+      if (!condition || typeof condition !== 'object') return false;
+      var keys = Object.keys(condition);
+      return keys.length === 1 && ['all', 'any'].indexOf(keys[0]) >= 0 &&
+        Array.isArray(condition[keys[0]]) && condition[keys[0]].length > 0 && condition[keys[0]].every(validCondition);
+    }
+    var ids = new Set(), total = 0;
+    var valid = rubric.groups.every(function (group) {
+      if (!group || typeof group.id !== 'string' || !group.id || ids.has(group.id) ||
+          !Number.isFinite(group.marks) || group.marks <= 0) return false;
+      ids.add(group.id); total += group.marks;
+      var conditionKeys = ['condition', 'all', 'any'].filter(function (name) { return Object.prototype.hasOwnProperty.call(group, name); });
+      if (conditionKeys.length !== 1) return false;
+      var condition = conditionKeys[0] === 'condition' ? group.condition : conditionKeys[0] === 'all' ? { all: group.all } : { any: group.any };
+      return validCondition(condition);
+    });
+    return valid && Math.abs(total - marks) < 1e-9 ? rubric : null;
+  }
+  function practiceScore(item, checkedIndices, manualScore) {
+    var rubric = practiceRubric(item), checked = new Set(checkedIndices || []);
+    function reached(condition) {
+      if (Number.isInteger(condition)) return checked.has(condition);
+      return condition.all ? condition.all.every(reached) : condition.any.some(reached);
+    }
+    if (!rubric) return Number.isFinite(manualScore) && manualScore >= 0 && manualScore <= practiceMaximum(item) ? manualScore : null;
+    return rubric.groups.reduce(function (sum, group) {
+      var condition = Object.prototype.hasOwnProperty.call(group, 'condition') ? group.condition : group.all ? { all: group.all } : { any: group.any };
+      return sum + (reached(condition) ? group.marks : 0);
+    }, 0);
+  }
+  function fingerprint(value) {
+    var text = JSON.stringify(value), hash = 2166136261;
+    for (var i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+    // Version identity only; this is not a security or acceptance hash.
+    return 'fnv1a-' + (hash >>> 0).toString(16).padStart(8, '0');
+  }
+  function attemptSnapshot(item, answer, checkedIndices, result, at, options) {
+    options = options || {};
+    var rubric = practiceRubric(item);
+    return JSON.parse(JSON.stringify({ version: 1, submittedAt: at, questionId: item.id,
+      kind: item.kind, answer: String(answer == null ? '' : answer),
+      checkedIndices: (checkedIndices || []).slice().sort(function (a, b) { return a - b; }),
+      questionVersion: fingerprint([item.id, item.stemFull || item.stem || '', item.options || [],
+        item.figures || [], item.tables || [], item.paper_id || '', item.source_sha256 || null,
+        item.checks || [], item.correct || item.correctOpt || '', item.marks]),
+      sourceSha256: item.source_sha256 || null,
+      rubricVersion: rubric ? fingerprint(rubric) : 'manual-v1',
+      scoreMethod: item.kind === 'mc' ? 'mc-comparison' : rubric ? 'reviewed-rubric' : 'manual',
+      marks: result.marks, total: result.tot, assisted: options.assisted === true,
+      onPaper: options.onPaper === true, nextReviewAt: options.nextReviewAt || null }));
+  }
+  function independentAttempt(result, at) {
+    var attempt = result && result.attempt;
+    return !!attempt && attempt.version === 1 && attempt.submittedAt === at &&
+      typeof attempt.questionVersion === 'string' && typeof attempt.rubricVersion === 'string' &&
+      typeof attempt.answer === 'string' && attempt.answer.trim().length > 0 && !attempt.onPaper && !attempt.assisted && !result.assisted &&
+      attempt.marks === result.marks && attempt.total === result.tot;
+  }
   function independentHistory(history) {
     var grouped = new Map();
     (history || []).forEach(function (session) {
@@ -29,7 +102,7 @@
         var next = session.results[id];
         if (!next || typeof next.ok !== 'boolean') return;
         // Replayed/merged copies of one submitted exercise count only once.
-        if (!row.results[id] || !full(next)) row.results[id] = next;
+        if (!row.results[id] || !full(next) || (full(row.results[id]) && !independentAttempt(next, session.t))) row.results[id] = next;
       });
     });
     return Array.from(grouped.values()).sort(function (a, b) { return a.t - b.t; });
@@ -38,15 +111,29 @@
     var index = Object.create(null);
     independentHistory(history).forEach(function (session) {
       Object.keys(session.results).forEach(function (id) {
-        var result = session.results[id], correct = full(result);
+        var result = session.results[id], correct = full(result), independent = independentAttempt(result, session.t);
         var row = index[id] || { streak: 0, everCorrect: false, attempts: 0, history: [] };
         if (correct && !row.everCorrect) row.firstCorrectAt = session.t;
-        row.state = correct ? (row.streak >= 1 ? 'mastered' : 'learning') :
-          (row.everCorrect ? 'regressed' : 'wrong');
-        row.streak = correct ? row.streak + 1 : 0;
+        if (!correct) {
+          row.state = row.everCorrect ? 'regressed' : 'wrong'; row.streak = 0;
+          row.qualifyingAt = null; row.nextReviewAt = null;
+        } else if (independent) {
+          var version = result.attempt.questionVersion + '/' + result.attempt.rubricVersion;
+          if (row.qualifyingVersion && row.qualifyingVersion !== version) { row.qualifyingAt = null; row.streak = 0; row.state = 'learning'; }
+          var due = row.qualifyingAt == null ? Infinity : Math.max(row.qualifyingAt + 864e5, row.nextReviewAt || 0);
+          if (session.t >= due) { row.streak++; row.state = 'mastered'; }
+          else row.state = row.state === 'mastered' ? 'mastered' : 'learning';
+          // An early repeated success must not move the consolidation goalpost.
+          if (row.qualifyingAt == null || session.t >= due) {
+            row.qualifyingAt = session.t; row.nextReviewAt = result.attempt.nextReviewAt; row.qualifyingVersion = version;
+            row.streak = Math.max(1, row.streak);
+          }
+        } else {
+          row.state = row.state === 'mastered' ? 'mastered' : 'learning';
+        }
         row.everCorrect = row.everCorrect || correct;
         row.attempts++; row.lastAt = session.t;
-        row.history.push({ t: session.t, correct: correct, marks: result.marks, tot: result.tot });
+        row.history.push({ t: session.t, correct: correct, independent: independent, marks: result.marks, tot: result.tot });
         if (row.history.length > 5) row.history.shift();
         index[id] = row;
       });
@@ -131,7 +218,7 @@
           '<span><b>' + percent + '%</b>已掌握</span></div>' + bar(stats) + legend(stats) +
           '<span class="ml-open">查看課題與錯因 <span aria-hidden="true">→</span></span></a>';
       }).join('') + '</div>' +
-      '<p class="library-note">已掌握＝兩次獨立練習連續全對；之後未全對會標為回退。掌握狀態跨雙周保留，閱讀解析不計作答。</p></div>');
+      '<p class="library-note">已掌握＝保存原答後，兩次獨立練習連續全對，並在間隔複習到期後再次答對（至少相隔一天）。舊記錄保留；缺少原答或使用輔助的記錄不新增掌握證據，之後未全對會標為回退。</p></div>');
   }
   function summary(code, items, title) {
     var stats = summarize(items, context.index), fresh = 0, regressions = 0;
@@ -167,7 +254,7 @@
       '<section class="inventory-topics" aria-label="課題目錄"><div class="ml-section-head"><h2>TOPIC LIST / 課題</h2><label>排序 <select id="mlTopicSort"><option value="syllabus">考綱順序</option>' +
       '<option value="pending">待複習最多</option></select></label></div><div class="ml-topics" id="mlTopics"></div>' +
       '<section class="topic-info" aria-label="課題資訊"><span aria-hidden="true">INFO</span><div id="mlTopicInfo" aria-live="polite"></div></section></section></div>' +
-      '<p class="library-note">長期已掌握＝兩次獨立練習連續全對；閱讀不計作答。</p>');
+      '<p class="library-note">長期已掌握＝有原答記錄的兩次獨立練習連續全對，且在間隔複習到期後再次答對；閱讀不計作答。</p>');
     var root = api.root, sort = root.querySelector('#mlTopicSort');
     sort.value = (filters[code] || {}).sort || 'syllabus';
     function currentItems() { return subject.items.filter(function (item) { return selected === 'all' || String(item.year) === selected; }); }
@@ -402,5 +489,6 @@
     return questions(parts[0], topic);
   }
   function reset() { context = null; activeKey = ''; positions = {}; filters = {}; selectedYears = {};searchState={query:'',subject:'',year:'',kind:'',status:'',tag:'',limit:20}; topicGeneration++; }
-  global.DSELibrary = { render: render, remember: remember, reset: reset, independentHistory: independentHistory, indexHistory: indexHistory, summarize: summarize, full: full, dailyCandidates: dailyCandidates, searchRows: searchRows };
+  global.DSELibrary = { render: render, remember: remember, reset: reset, independentHistory: independentHistory, indexHistory: indexHistory, summarize: summarize, full: full, dailyCandidates: dailyCandidates, searchRows: searchRows,
+    practiceRubric: practiceRubric, practiceScore: practiceScore, attemptSnapshot: attemptSnapshot, independentAttempt: independentAttempt };
 })(window);

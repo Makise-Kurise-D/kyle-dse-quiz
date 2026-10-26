@@ -354,7 +354,7 @@ test('structured library uses the loaded private bank without book requests and 
   app.location.hash = '#/library/books/chem/T3'; app.events.hashchange();
   assert.match(app.node('#mlQuestions').innerHTML, /我的原答案/);
   assert.match(app.node('#mlQuestions').innerHTML, /扣分點與錯因/);
-  assert.match(app.node('#mlQuestions').innerHTML, /ml-mastered/);
+  assert.match(app.node('#mlQuestions').innerHTML, /ml-learning/, 'legacy full scores remain visible but do not invent spaced original-answer evidence');
   assert.equal(calls.length, 0, 'browsing text requests neither reader pages nor images');
   assert.equal(app.saved.get('dse_quiz_archive_v1'), JSON.stringify(archive), 'reading does not write exercise records');
   const locked = boot('', async () => { throw new Error('unexpected'); }, {}, true, true);
@@ -451,6 +451,28 @@ test('paper year rows use integer marks at inclusive grade boundaries and distin
   assert.match(html, /已達最高參考等級/);
   assert.match(html, /成績待補/);
   assert.doesNotMatch(html, /<img onerror/);
+});
+
+test('same-year papers retain distinct titles, links and authenticated reader requests', async()=>{
+  const calls=[],catalog={subjects:{math:['2025'],chem:[],bio:[]},papers:{math:{}},entries:[
+    {subject:'math',year:'2025',paper_id:'mock9-p1',title:'Mock 9 卷一',pages:1},
+    {subject:'math',year:'2025',paper_id:'mock10-p1',title:'Mock 10 卷一',pages:1}
+  ]};
+  const app=boot('',async(url)=>{
+    calls.push(url);
+    if(url.endsWith('/catalog'))return {ok:true,json:async()=>catalog};
+    if(url.endsWith('/manifest'))return {ok:true,json:async()=>({version:'d'.repeat(16),pages:1,format:'jpeg',source_sha256:'d'.repeat(64)})};
+    return {ok:true,blob:async()=>new Blob(['synthetic-page'],{type:'image/jpeg'})};
+  },{dse_quiz_sync_session_v1:'valid-session'});
+  app.context.URL={createObjectURL:()=> 'blob:synthetic-page',revokeObjectURL(){}};
+  app.location.hash='#/library/papers/math';app.events.hashchange();await settle();
+  const html=app.node('#paperYears').innerHTML;
+  assert.match(html,/href="#\/library\/papers\/math\/2025\/mock9-p1"/);
+  assert.match(html,/href="#\/library\/papers\/math\/2025\/mock10-p1"/);
+  assert.match(html,/Mock 9 卷一/);assert.match(html,/Mock 10 卷一/);
+  app.location.hash='#/library/papers/math/2025/mock9-p1';app.events.hashchange();await settle();
+  assert.ok(calls.some(url=>url.endsWith('/papers/math/2025/mock9-p1/manifest')));
+  assert.ok(calls.some(url=>url.endsWith('/papers/math/2025/mock9-p1/pages/'+ 'd'.repeat(16)+'/1')));
 });
 
 test('graded-paper reader shares an in-flight next-page request with navigation', async () => {
@@ -1317,7 +1339,7 @@ test('existing correct answers without a review plan do not break startup or OAu
   assert.match(app.node('#app').innerHTML, /Kyle 嘅錯題本/);
   await settle();
   assert.deepEqual(backup.sessions, sessions);
-  assert.equal(backup.reviewPlan['old-mc'].streak, 2);
+  assert.equal(backup.reviewPlan['old-mc'].streak, 1, 'an early repeat does not advance the scheduled consolidation');
   assert.equal(backup.reviewPlan['old-sub'].streak, 1);
   assert.equal(backup.reviewPlan['old-sub'].interval, 15);
   assert.match(app.node('#syncStatus').textContent, /已上傳至雲端/);
@@ -1467,7 +1489,7 @@ test('mathematics is selectable in the library, practice and random picker witho
 test('saving mathematics marks preserves existing chemistry sessions and other subject drafts', () => {
   const cycle = boot().saved.get('dse_quiz_cycle_v1');
   const prior = { t: Date.now() - 1000, subj: 'chem', topic: 'T3', results: { 'example-mc': { ok: true, marks: 1, tot: 1 } } };
-  const draft = { pick: {}, text: {}, paper: { 'math-example-a': true, 'math-example-b': true }, changedAt: {} };
+  const draft = { pick: {}, text: { 'math-example-a':'原答 <script>bad()</script>', 'math-example-b':'第二題原答' }, paper: {}, changedAt: {} };
   const app = boot('', undefined, { dse_quiz_sessions_v2: JSON.stringify([prior]), dse_quiz_cycle_v1: cycle,
     dse_quiz_draft_v2: JSON.stringify({ 'math:U8': draft, 'chem:T3': { pick: { 'example-mc': 'B' } } }) });
   mathFixture(app);
@@ -1478,18 +1500,30 @@ test('saving mathematics marks preserves existing chemistry sessions and other s
   const a = app.node('.chk-form[data-id="math-example-a"]');
   const b = app.node('.chk-form[data-id="math-example-b"]');
   a.dataset = { wtot: '1' }; b.dataset = { wtot: '2' };
-  a.querySelectorAll = () => [{ dataset: { w: '1' } }];
-  b.querySelectorAll = () => [{ dataset: { w: '1' } }];
+  a.querySelectorAll = () => [{ dataset: { w: '1', i:'0' } }];
+  b.querySelectorAll = () => [{ dataset: { w: '1', i:'0' } }];
+  const scoreA={value:'',focus(){}},scoreB={value:'1',focus(){}};
+  a.querySelector=selector=>selector==='.manual-score'?scoreA:app.node(selector);
+  b.querySelector=selector=>selector==='.manual-score'?scoreB:app.node(selector);
+  app.node('#saveSessionBtn').listeners.click();
+  assert.equal(JSON.parse(app.saved.get('dse_quiz_sessions_v2')).length,1,'missing human confirmation cannot become an automatic zero or full score');
+  scoreA.value='1';
   app.node('#saveSessionBtn').listeners.click();
   const saved = JSON.parse(app.saved.get('dse_quiz_sessions_v2'));
   assert.deepEqual(saved[0], prior);
   assert.equal(saved.at(-1).subj, 'math');
-  assert.deepEqual(saved.at(-1).results['math-example-a'], { kind: 'sub', marks: 1, tot: 1, ok: true, got: 1, checks: 1 });
+  assert.equal(saved.at(-1).results['math-example-a'].marks,1);
+  assert.equal(saved.at(-1).results['math-example-a'].attempt.answer,'原答 <script>bad()</script>');
+  assert.deepEqual(saved.at(-1).results['math-example-a'].attempt.checkedIndices,[0]);
+  assert.equal(saved.at(-1).results['math-example-a'].attempt.scoreMethod,'manual');
+  assert.equal(saved.at(-1).results['math-example-a'].attempt.submittedAt,saved.at(-1).t);
   assert.equal(saved.at(-1).results['math-example-b'].ok, false);
   assert.equal(saved.at(-1).sub, '2/3');
   assert.equal(JSON.parse(app.saved.get('dse_quiz_draft_v2'))['chem:T3'].pick['example-mc'], 'B');
   app.location.hash = '#/records'; app.events.hashchange();
   assert.match(app.node('#app').innerHTML, /數學/);
+  assert.match(app.node('#app').innerHTML,/原答 &lt;script&gt;bad\(\)&lt;\/script&gt;/);
+  assert.doesNotMatch(app.node('#app').innerHTML,/<script>bad/);
 });
 
 test('Yeelam loads only account-scoped browser records and never uploads Kyle records', async () => {

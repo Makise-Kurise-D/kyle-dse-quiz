@@ -19,6 +19,22 @@ test('AI stays unconfigured without an authorized provider, model and server key
   assert.equal(aiConfiguration(aiEnv).configured,true);
 });
 
+test('removed provider cannot be selected through primary or fallback configuration', async()=>{
+  for (const patch of [{AI_MODEL:'gemini-4-argon'}, {AI_MODEL:'gemini-argon-thinking'},
+      {AI_BASE_URL:'https://argon.example/v1'}]) {
+    const config=aiConfiguration({...aiEnv,...patch});
+    assert.equal(config.configured,false);
+    assert.equal(config.invalidModel,true);
+    await assert.rejects(()=>requestAIFeedback(aiItem,{answer:'submitted',mode:'review'},
+      {...aiEnv,...patch},[],async()=>{throw new Error('removed provider was contacted');}),
+      error=>error.code==='ai_config_incomplete'||/config|model/i.test(error.message));
+  }
+  const config=aiConfiguration({...aiEnv,AI_FALLBACK_BASE_URL:'https://fallback.example/v1',
+    AI_FALLBACK_MODEL:'gemini-4-argon',AI_FALLBACK_API_KEY:'independent-test-only'});
+  assert.equal(config.configured,true);
+  assert.equal(config.fallbackConfigured,false);
+});
+
 test('DeepSeek defaults use 4.1 Flash, reject Pro, and keep native vision opt-in',()=>{
   const env={DEEPSEEK_API_KEY:'test-only-deepseek-key',AI_VISION:'true'};
   const config=aiConfiguration(env);
@@ -187,7 +203,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'independent-practice-20261023');
+  assert.equal(status.version, 'grading-evidence-papers-20261026');
   assert.equal(status.passwordConfigured, false);
   assert.equal(status.aiFiguresEnabled, false);
   const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
@@ -221,7 +237,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'independent-practice-20261023', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'grading-evidence-papers-20261026', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -1066,4 +1082,54 @@ test('AI probe performs real synthetic generation without reading a bank or writ
   assert.equal((await probe()).status,429);assert.equal(providerCalls,1);
   assert.equal((await worker.fetch(new Request(BASE+'/ai/probe',{method:'POST',headers:{Origin:ORIGIN}}),env)).status,401);
   assert.equal([...env.SESSIONS.values.keys()].some(k=>k.includes('records')),false);
+});
+
+
+test('named papers of the same year use exact catalog membership and preserve account isolation', async t => {
+  const original = globalThis.fetch, paths = [];
+  const password = 'synthetic-named-guest';
+  const salt = '1123456789abcdef0123456789abcdef';
+  const verifier = `pbkdf2-sha256:100000:${salt}:${pbkdf2Sync(password, Buffer.from(salt, 'hex'), 100000, 32, 'sha256').toString('hex')}`;
+  const env = { SESSIONS: new MemoryKV(), SESSION_SECRET: SECRET, SITE_PASSWORD: 'named-owner-password',
+    YEELAM_PASSWORD_VERIFIER: verifier, GITHUB_TOKEN: 'named-paper-fixture-token' };
+  const identities = ['', 'publisher-2025-mock9-p1', 'publisher-2025-mock10-p1'];
+  const shaFor = id => (id.includes('mock10') ? 'b' : id ? 'c' : 'd').repeat(64);
+  const catalog = { subjects: { chem: [], bio: [], math: ['2025'], m2: [], physics: [] },
+    entries: identities.map(id => ({ subject: 'math', year: '2025', paper_id: id, title: id || 'Legacy paper', pages: 1, source_sha256: shaFor(id) })) };
+  globalThis.fetch = async input => {
+    const url = String(input); paths.push(url);
+    if (url.endsWith('/user')) return Response.json({ login: 'Makise-Kurisu-D' });
+    if (url.endsWith('/papers/catalog.json')) return Response.json({ encoding: 'base64', content: b64json(catalog) });
+    const named = url.match(/\/papers\/math\/2025(?:\/(publisher-2025-mock(?:9|10)-p1))?\/manifest.json$/);
+    if (named) {
+      const id = named[1] || '', sha = shaFor(id);
+      return Response.json({ encoding: 'base64', content: b64json({ version: sha.slice(0, 16), source_sha256: sha,
+        pages: 1, format: 'jpeg', dpi: 200, quality: 85, ...(id ? { paper_id: id } : {}) }) });
+    }
+    if (url.endsWith('.jpg')) return Response.json({ encoding: 'base64', content: btoa(String.fromCharCode(255, 216, 255, 217)) });
+    throw new Error('Unexpected fixture path ' + url);
+  };
+  t.after(() => { globalThis.fetch = original; });
+  for (const [account, pass] of [['kyle', env.SITE_PASSWORD], ['yeelam', password]]) {
+    const login = await worker.fetch(new Request(BASE + '/auth/password', { method: 'POST', headers: { Origin: ORIGIN }, body: JSON.stringify({ username: account, password: pass }) }), env);
+    assert.equal(login.status, 200);
+    const headers = { Origin: ORIGIN, Authorization: 'Bearer ' + (await login.json()).sessionId };
+    const call = path => worker.fetch(new Request(BASE + path, { headers }), env);
+    const before = paths.length;
+    const published = await (await call('/papers/catalog')).json();
+    assert.equal(published.entries.length, 3);
+    for (const id of identities) {
+      const base = '/papers/math/2025' + (id ? '/' + id : '');
+      const manifest = await (await call(base + '/manifest')).json();
+      assert.equal(manifest.source_sha256, shaFor(id));
+      assert.equal((await call(base + '/pages/' + shaFor(id).slice(0, 16) + '/1')).status, 200);
+    }
+    const contents = paths.slice(before).filter(url => url.includes('/contents/'));
+    assert.ok(contents.length > 0);
+    assert.ok(contents.every(url => account === 'yeelam' ? url.includes('/contents/users/yeelam/') : !url.includes('/contents/users/')));
+    const deniedBefore = paths.filter(url => url.includes('/contents/')).length;
+    assert.equal((await call('/papers/math/2025/unknown-p1/manifest')).status, 404);
+    assert.equal((await call('/papers/math/2025/Bad_ID/manifest')).status, 404);
+    assert.equal(paths.filter(url => url.includes('/contents/')).length, deniedBefore, 'unknown identities cannot read private files');
+  }
 });

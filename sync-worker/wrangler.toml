@@ -21,8 +21,7 @@ keep_vars = true
 # AI_FALLBACK_API_KEY (secret), plus AI_FALLBACK_VISION="true" for opt-in images.
 # One attempt per provider; transport/auth/balance/rate-limit errors can fail over.
 # Invalid evidence never triggers failover. Primary cools down for 60 seconds.
-# Argon currently has only a private Git relay, not a production HTTPS endpoint;
-# leave fallback unset until an independent service is configured and tested.
+# Leave fallback unset until an independent service is configured and tested.
 # AI_VISION="true" enables the optional figure checkbox for supported providers.
 # Limits: 20 calls/user/Beijing day, 80/service/day, 10 seconds between requests.
 # KV limits are best-effort across Cloudflare regions; each isolate also blocks overlap.
