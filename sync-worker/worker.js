@@ -9,7 +9,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'grading-evidence-papers-20261026';
+const SERVICE_VERSION = 'grading-model-allowlist-20261026';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
@@ -35,9 +35,8 @@ function aiSettings(env) {
     }
     catch { valid = false; }
   }
-  // Removed provider cannot be restored through old primary or fallback settings.
-  const removedProvider = /argon/i.test(model) || /argon/i.test(baseUrl);
-  const invalidModel = removedProvider || (deepseek && model !== 'deepseek-flash');
+  // Only the explicitly supported model can be configured, including independent fallback credentials.
+  const invalidModel = model !== 'deepseek-flash';
   return { baseUrl, model, apiKey, deepseek, configuration: {
     configured: missing.length === 0 && valid && !invalidModel, missing, invalidEndpoint: !valid, invalidModel,
     provider: deepseek ? 'DeepSeek' : 'custom', model,

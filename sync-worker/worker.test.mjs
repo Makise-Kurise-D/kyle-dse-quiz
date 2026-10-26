@@ -9,7 +9,7 @@ const BASE = 'https://sync.example.workers.dev';
 const SECRET = 'test-only-session-secret-with-enough-entropy';
 
 const aiItem={id:'synthetic-ai',kind:'sub',stem:'解釋擴散方向與能量需求。',correct:'從高濃度向低濃度移動，不需能量。',checks:['由高濃度向低濃度移動','不需要能量','✗ 勿混淆主動運輸']};
-const aiEnv={AI_BASE_URL:'https://ai.example/v1',AI_MODEL:'synthetic-model',AI_API_KEY:'test-only-key'};
+const aiEnv={AI_BASE_URL:'https://ai.example/v1',AI_MODEL:'deepseek-flash',AI_API_KEY:'test-only-key'};
 function aiFixture(answer,status='hit') { return {summary:'合成服務測試回應',points:aiItem.checks.map((_,index)=>({index,status,evidence:answer,reason:'依本題提供的給分點比較。',suggestion:status==='hit'?'':'補上方向及能量條件。'})),tags:status==='hit'?[]:['概念混淆'],reply:'只限本題的合成說明',uncertainty:''}; }
 
 test('AI stays unconfigured without an authorized provider, model and server key',()=>{
@@ -17,23 +17,10 @@ test('AI stays unconfigured without an authorized provider, model and server key
   assert.deepEqual(aiConfiguration({}).missing,['DEEPSEEK_API_KEY']);
   assert.equal(aiConfiguration({...aiEnv,AI_BASE_URL:'http://example.com'}).configured,false);
   assert.equal(aiConfiguration(aiEnv).configured,true);
+  assert.equal(aiConfiguration({...aiEnv,AI_MODEL:'unsupported-model'}).configured,false);
+  assert.equal(aiConfiguration({...aiEnv,AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'unsupported-model',AI_FALLBACK_API_KEY:'test-only'}).fallbackConfigured,false);
 });
 
-test('removed provider cannot be selected through primary or fallback configuration', async()=>{
-  for (const patch of [{AI_MODEL:'gemini-4-argon'}, {AI_MODEL:'gemini-argon-thinking'},
-      {AI_BASE_URL:'https://argon.example/v1'}]) {
-    const config=aiConfiguration({...aiEnv,...patch});
-    assert.equal(config.configured,false);
-    assert.equal(config.invalidModel,true);
-    await assert.rejects(()=>requestAIFeedback(aiItem,{answer:'submitted',mode:'review'},
-      {...aiEnv,...patch},[],async()=>{throw new Error('removed provider was contacted');}),
-      error=>error.code==='ai_config_incomplete'||/config|model/i.test(error.message));
-  }
-  const config=aiConfiguration({...aiEnv,AI_FALLBACK_BASE_URL:'https://fallback.example/v1',
-    AI_FALLBACK_MODEL:'gemini-4-argon',AI_FALLBACK_API_KEY:'independent-test-only'});
-  assert.equal(config.configured,true);
-  assert.equal(config.fallbackConfigured,false);
-});
 
 test('DeepSeek defaults use 4.1 Flash, reject Pro, and keep native vision opt-in',()=>{
   const env={DEEPSEEK_API_KEY:'test-only-deepseek-key',AI_VISION:'true'};
@@ -203,7 +190,7 @@ test('health and CORS preflight are available locally', async () => {
   assert.equal(health.status, 200);
   const status = await health.json();
   assert.equal(status.service, 'kyle-dse-quiz-sync');
-  assert.equal(status.version, 'grading-evidence-papers-20261026');
+  assert.equal(status.version, 'grading-model-allowlist-20261026');
   assert.equal(status.passwordConfigured, false);
   assert.equal(status.aiFiguresEnabled, false);
   const enabled = await worker.fetch(new Request(`${BASE}/health`), {...env, DEEPSEEK_API_KEY: 'synthetic-only', AI_VISION: 'true'});
@@ -237,7 +224,7 @@ test('the Worker responds through a local HTTP service', { skip: process.env.QUI
 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'grading-evidence-papers-20261026', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
+  assert.deepEqual(await response.json(), { ok: true, service: 'kyle-dse-quiz-sync', version: 'grading-model-allowlist-20261026', passwordConfigured: false, aiConfigured: false, aiProvider: 'DeepSeek', aiModel: 'deepseek-flash', aiFiguresEnabled: false });
 });
 
 test('concurrent drafts merge by answer, and deletion prevents stale answers returning', () => {
@@ -1006,23 +993,23 @@ test('account subject profiles isolate M2 and physics materials while preserving
 });
 
 test('fallback requires independent complete HTTPS settings and never reveals either credential', () => {
-  const env={DEEPSEEK_API_KEY:'private-primary',AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'backup'};
+  const env={DEEPSEEK_API_KEY:'private-primary',AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'deepseek-flash'};
   assert.equal(aiConfiguration(env).fallbackConfigured,false);
   const configured=aiConfiguration({...env,AI_FALLBACK_API_KEY:'private-backup'});
-  assert.equal(configured.fallbackConfigured,true);assert.equal(configured.fallbackModel,'backup');
+  assert.equal(configured.fallbackConfigured,true);assert.equal(configured.fallbackModel,'deepseek-flash');
   assert.doesNotMatch(JSON.stringify(configured),/private-primary|private-backup/);
-  assert.equal(aiConfiguration({...env,AI_FALLBACK_API_KEY:'private-backup',AI_FALLBACK_BASE_URL:'http://localhost:5918'}).fallbackConfigured,false);
+  assert.equal(aiConfiguration({...env,AI_FALLBACK_API_KEY:'private-backup',AI_FALLBACK_BASE_URL:'http://localhost:1234'}).fallbackConfigured,false);
 });
 
 test('provider failures switch once, isolate keys and omit images unsupported by the fallback', async () => {
-  const env={DEEPSEEK_API_KEY:'failover-primary-one',AI_VISION:'true',AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'backup',AI_FALLBACK_API_KEY:'failover-backup-one'};
+  const env={DEEPSEEK_API_KEY:'failover-primary-one',AI_VISION:'true',AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'deepseek-flash',AI_FALLBACK_API_KEY:'failover-backup-one'};
   const calls=[],item={...aiItem,figures:[{path:'private.jpg'}]};
   const fetcher=async(url,init)=>{
     calls.push(url);const payload=JSON.parse(init.body);
     if(url.startsWith('https://api.deepseek.com')) {assert.equal(init.headers.authorization,'Bearer failover-primary-one');return new Response('',{status:503});}
     assert.equal(init.headers.authorization,'Bearer failover-backup-one');
-    assert.doesNotMatch(init.body,/data:image/);assert.equal(payload.model,'backup');
-    return Response.json({model:'backup',choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture('原答'))}}]});
+    assert.doesNotMatch(init.body,/data:image/);assert.equal(payload.model,'deepseek-flash');
+    return Response.json({model:'deepseek-flash',choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture('原答'))}}]});
   };
   const out=await requestAIFeedback(item,{answer:'原答'},env,['data:image/jpeg;base64,private'],fetcher);
   assert.equal(out.failover,true);assert.equal(out.failoverReason,'ai_provider_error');assert.match(out.materialNotes,/圖表未送入/);
@@ -1032,7 +1019,7 @@ test('provider failures switch once, isolate keys and omit images unsupported by
 });
 
 test('invalid grading evidence never switches providers, while network errors do', async () => {
-  const env={DEEPSEEK_API_KEY:'evidence-primary',AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'backup',AI_FALLBACK_API_KEY:'evidence-backup'};
+  const env={DEEPSEEK_API_KEY:'evidence-primary',AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'deepseek-flash',AI_FALLBACK_API_KEY:'evidence-backup'};
   let calls=0;
   await assert.rejects(requestAIFeedback(aiItem,{answer:'真正原答'},env,[],async()=>{
     calls++;return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(aiFixture('虛構原答'))}}]});
@@ -1049,7 +1036,7 @@ test('provider diagnostics distinguish auth, balance, rate limiting and request 
   for(const [status,code] of [[401,'ai_auth_error'],[403,'ai_auth_error'],[402,'ai_balance_exhausted'],[429,'ai_provider_busy'],[400,'ai_request_rejected']]) {
     await assert.rejects(requestAIFeedback(aiItem,{answer:'原答'},aiEnv,[],async()=>new Response('PRIVATE_PROVIDER_DIAGNOSTIC',{status})),new RegExp('^Error: '+code+'$'));
   }
-  const env={...aiEnv,AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'backup',AI_FALLBACK_API_KEY:'all-down-backup'};
+  const env={...aiEnv,AI_FALLBACK_BASE_URL:'https://backup.example/v1',AI_FALLBACK_MODEL:'deepseek-flash',AI_FALLBACK_API_KEY:'all-down-backup'};
   let calls=0;
   await assert.rejects(requestAIFeedback(aiItem,{answer:'原答'},env,[],async()=>{calls++;return new Response('',{status:503});}),/ai_provider_error/);
   assert.equal(calls,2,'one attempt per provider, never a retry loop');
@@ -1072,7 +1059,7 @@ test('AI probe performs real synthetic generation without reading a bank or writ
     const task=JSON.parse(JSON.parse(init.body).messages.at(-1).content);
     assert.equal(task.materials.questionId,'service-probe');assert.equal(task.mode,'review');
     const fixture={summary:'成功',points:task.materials.checks.map(c=>({index:c.index,status:'hit',evidence:task.studentAnswer,reason:'符合合成核對點',suggestion:''})),tags:[],reply:'合成測試',uncertainty:''};
-    return Response.json({model:'synthetic-model',choices:[{finish_reason:'stop',message:{content:JSON.stringify(fixture)}}]});
+    return Response.json({model:'deepseek-flash',choices:[{finish_reason:'stop',message:{content:JSON.stringify(fixture)}}]});
   };t.after(()=>{globalThis.fetch=original;});
   const env={...aiEnv,SESSIONS:new MemoryKV(),SESSION_SECRET:SECRET,SITE_PASSWORD:'probe-password',GITHUB_TOKEN:'probe-only-token'};
   const login=await worker.fetch(new Request(BASE+'/auth/password',{method:'POST',headers:{Origin:ORIGIN},body:JSON.stringify({password:'probe-password'})}),env);
