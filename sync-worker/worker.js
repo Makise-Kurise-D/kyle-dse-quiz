@@ -9,7 +9,7 @@ const BANK_PATH = 'question-bank/bank.json';
 const OWNER = REPO.split('/')[0];
 const OWNER_KEY = 'service:github-owner';
 const PASSWORD_TTL = 30 * 24 * 3600;
-const SERVICE_VERSION = 'independent-practice-20261023';
+const SERVICE_VERSION = 'grading-evidence-papers-20261026';
 const refreshes = new Map();
 const bankReads = new Map();
 const metadataReads = new Map();
@@ -35,7 +35,9 @@ function aiSettings(env) {
     }
     catch { valid = false; }
   }
-  const invalidModel = deepseek && model !== 'deepseek-flash';
+  // Removed provider cannot be restored through old primary or fallback settings.
+  const removedProvider = /argon/i.test(model) || /argon/i.test(baseUrl);
+  const invalidModel = removedProvider || (deepseek && model !== 'deepseek-flash');
   return { baseUrl, model, apiKey, deepseek, configuration: {
     configured: missing.length === 0 && valid && !invalidModel, missing, invalidEndpoint: !valid, invalidModel,
     provider: deepseek ? 'DeepSeek' : 'custom', model,
@@ -478,6 +480,8 @@ function paperSummary(value) {
   return summary;
 }
 
+const PAPER_ID = /^[a-z0-9][a-z0-9-]{0,79}$/;
+
 async function githubPaperCatalog(token, fresh = false) {
   const catalog = await privateMetadata('papers/catalog.json', token, fresh).catch(error => {
     if (typeof token === 'object' && error.status === 404) return { subjects: {} };
@@ -500,11 +504,32 @@ async function githubPaperCatalog(token, fresh = false) {
       }
     }
   }
+  if (catalog.entries !== undefined) {
+    if (!Array.isArray(catalog.entries) || catalog.entries.length > 2000) throw new Error('invalid_paper_catalog');
+    const seen = new Set();
+    result.entries = [];
+    for (const entry of catalog.entries) {
+      if (!entry || !Object.prototype.hasOwnProperty.call(subjectConfig.names, entry.subject) ||
+          !/^20\d{2}$/.test(entry.year) || typeof entry.paper_id !== 'string' ||
+          (entry.paper_id !== '' && !PAPER_ID.test(entry.paper_id)) ||
+          typeof entry.title !== 'string' || !entry.title.trim() || entry.title.length > 160) throw new Error('invalid_paper_catalog');
+      if (!codes.includes(entry.subject)) continue;
+      if (!subjects[entry.subject].includes(entry.year)) throw new Error('invalid_paper_catalog');
+      const identity = `${entry.subject}/${entry.year}/${entry.paper_id}`;
+      if (seen.has(identity)) throw new Error('invalid_paper_catalog');
+      seen.add(identity);
+      const summary = paperSummary(entry);
+      if (!summary) throw new Error('invalid_paper_catalog');
+      result.entries.push({ subject: entry.subject, year: entry.year, paper_id: entry.paper_id, title: entry.title, ...summary });
+    }
+  }
   return result;
 }
 
-async function githubPaperManifest(subject, year, token, fresh = false) {
-  const manifest = await privateMetadata(`papers/${subject}/${year}/manifest.json`, token, fresh);
+async function githubPaperManifest(subject, year, token, fresh = false, paperId = '') {
+  const suffix = paperId ? `/${paperId}` : '';
+  const manifest = await privateMetadata(`papers/${subject}/${year}${suffix}/manifest.json`, token, fresh);
+  if (paperId && manifest.paper_id !== paperId) throw new Error('invalid_paper_manifest');
   const sha = manifest.source_sha256;
   if (typeof sha !== 'string' || !/^[0-9a-f]{64}$/.test(sha) ||
       manifest.version !== sha.slice(0, 16) ||
@@ -528,6 +553,7 @@ async function githubPaperManifest(subject, year, token, fresh = false) {
     manifest.pages > 200 || atlas.width !== 200 || atlas.height !== 283)) throw new Error('invalid_paper_thumbnails');
   return { version: manifest.version, pages: manifest.pages, format: 'jpeg',
     source_sha256: sha, dpi: manifest.dpi, quality: manifest.quality,
+    ...(paperId ? { paper_id: paperId } : {}),
     ...(sizes ? { page_sizes: sizes } : {}),
     ...(mistakes ? { mistakes: mistakes.map(({ label, page, x, y }) => ({ label, page, x, y })) } : {}),
     ...(atlas ? { thumbnails: { columns: atlas.columns, rows: atlas.rows, width: 200, height: 283 } } : {}),
@@ -824,9 +850,9 @@ const worker = {
     if (url.pathname === '/papers' || url.pathname.startsWith('/papers/')) {
       if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
       const catalog = url.pathname === '/papers/catalog';
-      const manifest = url.pathname.match(/^\/papers\/(chem|bio|math|m2|physics)\/(20\d{2})\/manifest$/);
-      const page = url.pathname.match(/^\/papers\/(chem|bio|math|m2|physics)\/(20\d{2})\/pages\/([0-9a-f]{16})\/([1-9]\d{0,3})$/);
-      const thumbnails = url.pathname.match(/^\/papers\/(chem|bio|math|m2|physics)\/(20\d{2})\/thumbnails\/([0-9a-f]{16})$/);
+      const manifest = url.pathname.match(/^\/papers\/(chem|bio|math|m2|physics)\/(20\d{2})(?:\/([a-z0-9][a-z0-9-]{0,79}))?\/manifest$/);
+      const page = url.pathname.match(/^\/papers\/(chem|bio|math|m2|physics)\/(20\d{2})(?:\/([a-z0-9][a-z0-9-]{0,79}))?\/pages\/([0-9a-f]{16})\/([1-9]\d{0,3})$/);
+      const thumbnails = url.pathname.match(/^\/papers\/(chem|bio|math|m2|physics)\/(20\d{2})(?:\/([a-z0-9][a-z0-9-]{0,79}))?\/thumbnails\/([0-9a-f]{16})$/);
       if (!catalog && !manifest && !page && !thumbnails) return json({ error: 'not_found' }, 404, cors(request));
       const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
       if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
@@ -840,14 +866,19 @@ const worker = {
         if (catalog) return json(available, 200, cors(request));
         const subject = (manifest || page || thumbnails)[1], year = (manifest || page || thumbnails)[2];
         if (!subjectConfig.allows(accountFor(auth.token), subject) || !available.subjects[subject].includes(year)) return json({ error: 'paper_not_accessible' }, 404, cors(request));
-        const current = await githubPaperManifest(subject, year, auth.token, url.searchParams.has('refresh'));
+        const paperId = (manifest || page || thumbnails)[3] || '';
+        if (available.entries && !available.entries.some(entry => entry.subject === subject && entry.year === year && entry.paper_id === paperId)) {
+          return json({ error: 'paper_not_accessible' }, 404, cors(request));
+        }
+        if (paperId && !available.entries) return json({ error: 'paper_not_accessible' }, 404, cors(request));
+        const current = await githubPaperManifest(subject, year, auth.token, url.searchParams.has('refresh'), paperId);
         if (manifest) return json(current, 200, cors(request));
-        const version = (page || thumbnails)[3], number = page ? Number(page[4]) : 0;
+        const version = (page || thumbnails)[4], number = page ? Number(page[5]) : 0;
         if (version !== current.version || number > current.pages || (thumbnails && !current.thumbnails)) {
           return json({ error: 'paper_not_accessible' }, 404, cors(request));
         }
         const filename = thumbnails ? 'thumbnails.jpg' : `page-${String(number).padStart(4, '0')}.jpg`;
-        const file = await github(`/repos/${REPO}/contents/papers/${subject}/${year}/${version}/${filename}`, auth.token);
+        const file = await github(`/repos/${REPO}/contents/papers/${subject}/${year}${paperId ? `/${paperId}` : ''}/${version}/${filename}`, auth.token);
         if (file.encoding !== 'base64' || typeof file.content !== 'string' || file.content.length > 1_400_000) {
           throw new Error('invalid_paper_page');
         }

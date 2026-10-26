@@ -11,6 +11,11 @@ const library = context.window.DSELibrary;
 const right = { ok: true, marks: 3, tot: 3 };
 const wrong = { ok: false, marks: 2, tot: 3 };
 const exercise = (t, results) => ({ t, subj: 'chem', topic: 'T1', results });
+const verifiedExercise = (t, results, options = {}) => exercise(t, Object.fromEntries(Object.entries(results).map(([id, result]) => {
+  const copy = { ...result }, item = { id, kind:'sub', marks:result.tot, stem:'合成題', checks:['合成核對點'] };
+  copy.attempt = library.attemptSnapshot(item, '學生原答', [0], copy, t, options);
+  return [id, copy];
+})));
 
 test('daily review orders due, regression and repeated errors without counting replayed submissions', () => {
   const now = Date.now(), days = 864e5;
@@ -74,15 +79,23 @@ test('reading position belongs to the content pane, not the fixed document', () 
   assert.equal(pane.scrollTop, 0, 'a stale restoration cannot scroll a different route');
 });
 
-test('mastery requires two distinct submitted exercises, survives archives, and regresses after any non-full answer', () => {
-  const first = exercise(1, { q: right });
+test('mastery requires saved independent evidence and a due spaced review, then regresses after a non-full answer', () => {
+  const day = 864e5;
+  const first = verifiedExercise(1, { q: right }, {nextReviewAt:15*day+1});
   assert.equal(library.indexHistory([first]).q.state, 'learning');
-  const second = exercise(2, { q: right });
+  assert.equal(library.indexHistory([first, verifiedExercise(2, {q:right})]).q.state, 'learning', 'an immediate repeat is not consolidation');
+  assert.equal(library.indexHistory([first, verifiedExercise(day+1, {q:right})]).q.state, 'learning', 'the review must also be due');
+  const second = verifiedExercise(15*day+1, { q: right });
   assert.equal(library.indexHistory([second, first]).q.state, 'mastered');
-  assert.equal(library.indexHistory([first, second, exercise(3, { q: wrong })]).q.state, 'regressed');
-  assert.equal(library.indexHistory([first, second, exercise(3, { q: wrong }), exercise(4, { q: right })]).q.state, 'learning');
+  assert.equal(library.indexHistory([first, second, exercise(16*day, { q: wrong })]).q.state, 'regressed');
+  assert.equal(library.indexHistory([first, second, exercise(16*day, { q: wrong }), verifiedExercise(17*day, { q: right })]).q.state, 'learning');
   assert.equal(library.indexHistory([exercise(1, { q: wrong })]).q.state, 'wrong');
   assert.equal(library.full({ ok: true, marks: 299, tot: 300 }), false, 'almost-full marks are not full marks');
+  assert.equal(library.indexHistory([exercise(1,{q:right}),exercise(20*day,{q:right})]).q.state,'learning','legacy scores do not invent original-answer evidence');
+  assert.equal(library.indexHistory([first,verifiedExercise(20*day,{q:right},{assisted:true})]).q.state,'learning');
+  assert.equal(library.indexHistory([first,verifiedExercise(20*day,{q:right},{onPaper:true})]).q.state,'learning');
+  const changed=verifiedExercise(20*day,{q:right});changed.results.q.attempt.questionVersion='changed';
+  assert.equal(library.indexHistory([first,changed]).q.state,'learning','different question versions require new evidence');
 });
 
 test('duplicate sync and archive copies never manufacture mastery, and conflicting copies fail conservatively', () => {
@@ -98,11 +111,47 @@ test('duplicate sync and archive copies never manufacture mastery, and conflicti
 
 test('summary counts cards once and never substitutes question maximum for original lost marks', () => {
   const stats = library.summarize([{ id: 'a', lost: 1 }, { id: 'b', tot: 12 }, { id: 'c', lost: 2 }],
-    library.indexHistory([exercise(1, { a: right }), exercise(2, { a: right, b: wrong })]));
+    library.indexHistory([verifiedExercise(1, { a: right }), verifiedExercise(864e5+1, { a: right, b: wrong })]));
   assert.equal(stats.total, 3);
   assert.equal(stats.mastered, 1);
   assert.equal(stats.wrong, 1);
   assert.equal(stats.unseen, 1);
   assert.equal(stats.lost, 3);
   assert.equal(stats.lostKnown, 2);
+});
+
+test('a one-mark checklist cannot produce a full score by rounding half its descriptions',()=>{
+  const item={id:'one-mark',kind:'sub',marks:1,checks:['比較單位成本','選擇正確方法']};
+  assert.equal(library.practiceScore(item,[0],null),null);
+  assert.equal(library.practiceScore(item,[0],0),0);
+  assert.equal(library.practiceScore(item,[0],1),1,'a score without reviewed groups is an explicit human assessment');
+  assert.equal(library.practiceScore(item,[0],1.1),null);
+  item.practiceRubric={version:1,groups:[{id:'correct-selection',marks:1,all:[1]}]};
+  assert.equal(library.practiceScore(item,[0],null),0);
+  assert.equal(library.practiceScore(item,[1],null),1);
+});
+
+test('reviewed scoring groups preserve independent marks, required conditions and alternative answers',()=>{
+  const item={marks:3,checks:['方法','條件','替代甲','替代乙','✗提醒'],practiceRubric:{version:1,groups:[
+    {id:'method',marks:1,condition:{all:[0,1]}},
+    {id:'answer',marks:2,condition:{any:[2,3]}}
+  ]}};
+  assert.equal(library.practiceScore(item,[0,2],null),2);
+  assert.equal(library.practiceScore(item,[0,1,3,4],null),3);
+  assert.equal(library.practiceScore(item,[2,3],null),2,'alternatives never count twice');
+  item.practiceRubric.groups[0].condition={all:[4]};
+  assert.equal(library.practiceRubric(item),null,'a warning cannot become a scoring condition');
+  item.practiceRubric.groups[0].condition={all:[0,1]};item.practiceRubric.groups[1].marks=1;
+  assert.equal(library.practiceRubric(item),null,'group maxima must match the actual maximum');
+});
+
+test('attempt snapshots preserve submitted text, selections and source versions without retaining a mutable draft or bank',()=>{
+  const item={id:'snapshot',kind:'sub',marks:1,stem:'PRIVATE_QUESTION',correct:'PRIVATE_REFERENCE',checks:['point'],source_sha256:'a'.repeat(64)};
+  const checked=[0],score={marks:1,tot:1,ok:true};
+  const snapshot=library.attemptSnapshot(item,'原答 <script>\n第二行',checked,score,123,{nextReviewAt:456});
+  checked.length=0;item.checks[0]='changed';score.marks=0;
+  assert.equal(snapshot.answer,'原答 <script>\n第二行');assert.deepEqual(Array.from(snapshot.checkedIndices),[0]);
+  assert.equal(snapshot.marks,1);assert.equal(snapshot.sourceSha256,'a'.repeat(64));
+  assert.equal(snapshot.nextReviewAt,456);assert.equal(snapshot.rubricVersion,'manual-v1');
+  assert.doesNotMatch(JSON.stringify(snapshot),/PRIVATE_QUESTION|PRIVATE_REFERENCE/);
 });
