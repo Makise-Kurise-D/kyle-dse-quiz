@@ -820,7 +820,7 @@ const worker = {
     }
     if (url.pathname === '/bank' || url.pathname.startsWith('/bank/')) {
       if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405, cors(request));
-      const image = url.pathname.match(/^\/bank\/images\/((?:chem|bio|math|m2|physics)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg)$/);
+      const image = url.pathname.match(/^\/bank\/images\/((?:(?:chem|bio|math|m2|physics)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)|math-mock\d+-\d{4}-mc\d+)\.jpg)$/);
       if (url.pathname !== '/bank' && !image) return json({ error: 'not_found' }, 404, cors(request));
       const unavailable = configurationError(env, ['SESSION_SECRET', 'SESSIONS']);
       if (unavailable) return json({ error: 'service_not_configured' }, 503, cors(request));
