@@ -469,7 +469,9 @@ test('same-year papers retain distinct titles, links and authenticated reader re
   const html=app.node('#paperYears').innerHTML;
   assert.match(html,/href="#\/library\/papers\/math\/2025\/mock9-p1"/);
   assert.match(html,/href="#\/library\/papers\/math\/2025\/mock10-p1"/);
-  assert.match(html,/Mock 9 卷一/);assert.match(html,/Mock 10 卷一/);
+  assert.match(html,/<strong>mock test 9<\/strong>/);assert.match(html,/<strong>mock test 10<\/strong>/);
+  assert.ok(html.indexOf('mock test 9') < html.indexOf('mock test 10'));
+  assert.doesNotMatch(html, /<strong>2025<\/strong>/);
   app.location.hash='#/library/papers/math/2025/mock9-p1';app.events.hashchange();await settle();
   assert.ok(calls.some(url=>url.endsWith('/papers/math/2025/mock9-p1/manifest')));
   assert.ok(calls.some(url=>url.endsWith('/papers/math/2025/mock9-p1/pages/'+ 'd'.repeat(16)+'/1')));
@@ -1677,4 +1679,29 @@ test('saved added rows collapse to the preset fields while preserving nonempty e
     assert.doesNotMatch(html,/補充步驟|step-add|formula-pad|data-formula/);
     assert.equal(JSON.parse(app.saved.get('dse_quiz_draft_v2'))['chem:T3'].text['example-mc'],original);
   }
+});
+
+
+
+test('mock labels follow real papers numerically in both library and practice without changing routes', async () => {
+  const app = boot();
+  const subject = app.context.QUIZ_DATA.subjects.chem;
+  subject.items.push(
+    {id:'mock-ten',topic:'T3',year:'2024',paper:'Mock10·卷一',qref:'Q1',kind:'short'},
+    {id:'mock-nine',topic:'T3',year:'2025',paper:'Mock9·卷一',qref:'Q2',kind:'short'}
+  );
+  app.location.hash = '#/library/books/chem'; app.events.hashchange();
+  let html = app.node('#mlYears').innerHTML;
+  assert.ok(html.indexOf('data-year="2022"') < html.indexOf('data-year="2025"'));
+  assert.ok(html.indexOf('mock test 9') < html.indexOf('mock test 10'));
+  assert.doesNotMatch(html, /2025 化學|>25</);
+  app.location.hash = '#/practice/chem/2025'; app.events.hashchange();
+  html = app.node('#practiceYears').innerHTML;
+  assert.ok(html.indexOf('data-practice-year="2022"') < html.indexOf('data-practice-year="2025"'));
+  assert.ok(html.indexOf('mock test 9') < html.indexOf('mock test 10'));
+  assert.match(app.node('#app').innerHTML, /mock test 9/);
+  assert.match(app.node('#app').innerHTML, /href="#\/session\/chem\/T3\/2025"/);
+  app.location.hash = '#/library/books/chem/T3'; app.events.hashchange();
+  assert.match(app.node('#app').innerHTML, /value="2025">mock test 9/);
+  assert.doesNotMatch(app.node('#mlQuestions').innerHTML, /2025 · Mock9/);
 });
