@@ -21,7 +21,7 @@
     (candidates.some(Boolean) ? [] : items || []).filter(function (item) { return String(item.year) === String(year); }).forEach(function (item) { candidates.push(item.paper, item.paper_id); });
     var match = candidates.map(function (value) { return String(value || '').match(/\bmock(?:[\s_-]*(?:test|set))?[\s_·#-]*(\d+)\b/i); }).filter(Boolean)[0];
     var number = match ? Number(match[1]) : null;
-    return { year: String(year), mock: number !== null, number: number, label: number !== null ? 'mock test ' + number : String(year), badge: number !== null ? String(number) : String(year).slice(-2) };
+    return { year: String(year), mock: number !== null, number: number, label: number !== null ? 'MOCK TEST ' + number : String(year), badge: number !== null ? String(number) : String(year).slice(-2) };
   }
   function compareSources(a, b) {
     return Number(a.mock) - Number(b.mock) || (a.mock ? a.number - b.number : b.year.localeCompare(a.year));
