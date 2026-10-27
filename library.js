@@ -14,6 +14,27 @@
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
   function text(value) { return esc(value).replace(/\n/g, '<br>'); }
+  // Publication year remains the storage key; mock set numbers are display metadata.
+  function sourceInfo(year, detail, items) {
+    detail = detail || {};
+    var candidates = [detail.title, detail.paper, detail.paper_id, detail.assessment && detail.assessment.scope];
+    (candidates.some(Boolean) ? [] : items || []).filter(function (item) { return String(item.year) === String(year); }).forEach(function (item) { candidates.push(item.paper, item.paper_id); });
+    var match = candidates.map(function (value) { return String(value || '').match(/\bmock(?:[\s_-]*(?:test|set))?[\s_·#-]*(\d+)\b/i); }).filter(Boolean)[0];
+    var number = match ? Number(match[1]) : null;
+    return { year: String(year), mock: number !== null, number: number, label: number !== null ? 'MOCK TEST ' + number : String(year), badge: number !== null ? String(number) : String(year).slice(-2) };
+  }
+  function compareSources(a, b) {
+    return Number(a.mock) - Number(b.mock) || (a.mock ? a.number - b.number : b.year.localeCompare(a.year));
+  }
+  function sourceYears(items, papers) {
+    return Array.from(new Set(items.map(function (item) { return String(item.year); }))).sort(function (a, b) {
+      return compareSources(sourceInfo(a, papers && papers[a], items), sourceInfo(b, papers && papers[b], items));
+    });
+  }
+  function itemSource(item) {
+    var info = sourceInfo(item.year, item);
+    return info.mock ? info.label + ' · ' + String(item.paper || '').replace(/\bmock(?:[\s_-]*(?:test|set))?[\s_·#-]*\d+\b[\s·-]*/i, '') : item.year + ' · ' + item.paper;
+  }
   function full(result) {
     return !!result && result.ok === true && (!result.tot ||
       (Number.isFinite(result.marks) && result.marks >= result.tot));
@@ -238,7 +259,7 @@
   }
   function topicPage(code) {
     var api = context, generation = ++topicGeneration, subject = api.data.subjects[code];
-    var years = Array.from(new Set(subject.items.map(function (item) { return String(item.year); }))).sort().reverse();
+    var years = sourceYears(subject.items);
     var selected = selectedYears[code] || 'all', catalog = null;
     if (selected !== 'all' && years.indexOf(selected) < 0) selected = 'all';
     var order = global.DSESubjects.libraryOrder(api.data.subjects);
@@ -259,24 +280,26 @@
     sort.value = (filters[code] || {}).sort || 'syllabus';
     function currentItems() { return subject.items.filter(function (item) { return selected === 'all' || String(item.year) === selected; }); }
     function drawYears() {
+      years = sourceYears(subject.items, catalog && catalog.papers && catalog.papers[code]);
       root.querySelector('#mlYears').innerHTML = ['all'].concat(years).map(function (year) {
         var items = subject.items.filter(function (item) { return year === 'all' || String(item.year) === year; });
         var detail = catalog && catalog.papers && catalog.papers[code] && catalog.papers[code][year];
+        var info = sourceInfo(year, detail, items);
         var assessment = detail && detail.assessment;
         var metrics = api.gradeMetrics && api.gradeMetrics(assessment);
         var level = metrics && metrics.current ? metrics.current.level : '—';
         var score = metrics ? assessment.earned + '/' + assessment.total : '—';
         return '<button class="inventory-year" type="button" data-year="' + esc(year) + '" aria-pressed="' + (selected === year) + '">' +
-          '<span class="year-number" aria-hidden="true">' + (year === 'all' ? 'ALL' : esc(year.slice(-2))) + '</span><span class="year-body"><span class="year-name">' +
-          (year === 'all' ? '全部年份' : esc(year + ' ' + subjectName(code))) + '</span><span class="year-meters">' +
+          '<span class="year-number" aria-hidden="true">' + (year === 'all' ? 'ALL' : esc(info.badge)) + '</span><span class="year-body"><span class="year-name">' +
+          (year === 'all' ? '全部年份' : esc(info.label + ' ' + subjectName(code))) + '</span><span class="year-meters">' +
           (year === 'all' ? '' : '<span><abbr title="DSE 試卷等級">LV</abbr> <b>' + esc(level) + '</b></span><span><abbr title="原卷分數">HP</abbr> <b>' + score + '</b></span>') +
           '<span><abbr title="錯題數">SP</abbr> <b>' + items.length + '</b></span></span>' +
-          (year !== 'all' && metrics ? '<span class="year-grade-note">' + esc(assessment.scope) + (metrics.current ? ' · 等級估算' : ' · 等級未評') + '</span>' : '') + '</span></button>';
+          (year !== 'all' && metrics ? '<span class="year-grade-note">' + esc(info.mock ? info.label + ' · ' + subjectName(code) : assessment.scope) + (metrics.current ? ' · 等級估算' : ' · 等級未評') + '</span>' : '') + '</span></button>';
       }).join('');
     }
     function inspect(row) {
       root.querySelector('#mlTopicInfo').innerHTML = '<h3>' + esc(row.topic.code + ' ' + row.topic.name) + '</h3><p>' +
-        (selected === 'all' ? '全部年份' : esc(selected + ' 年')) + ' · ' + row.stats.total + ' 張錯題卡 · ' +
+        (selected === 'all' ? '全部年份' : esc(sourceInfo(selected, null, subject.items).label + (sourceInfo(selected, null, subject.items).mock ? '' : ' 年'))) + ' · ' + row.stats.total + ' 張錯題卡 · ' +
         (row.stats.total - row.stats.mastered) + ' 題待複習／鞏固 · ' + row.stats.mastered + ' 題長期已掌握。</p>' +
         '<a href="#/library/books/' + code + '/' + encodeURIComponent(row.topic.code) + '">展開本課題歸納 ↗</a>';
       Array.prototype.forEach.call(root.querySelectorAll('.ml-topic'), function (link) { link.classList.toggle('inspected', link.getAttribute('data-topic') === row.topic.code); });
@@ -287,7 +310,7 @@
         return { topic: topic, stats: summarize(items.filter(function (item) { return item.topic === topic.code; }), api.index) };
       }).filter(function (row) { return row.stats.total > 0; });
       if (sort.value === 'pending') rows.sort(function (a, b) { return (b.stats.total - b.stats.mastered) - (a.stats.total - a.stats.mastered); });
-      root.querySelector('#mlYearSummary').innerHTML = summary(code, items, selected === 'all' ? '全部年份學習總覽' : selected + ' 年學習總覽');
+      root.querySelector('#mlYearSummary').innerHTML = summary(code, items, selected === 'all' ? '全部年份學習總覽' : sourceInfo(selected, null, subject.items).label + ' 學習總覽');
       root.querySelector('#mlTopics').innerHTML = rows.map(function (row) {
         var st = row.stats;
         return '<a class="ml-topic" data-topic="' + esc(row.topic.code) + '" href="#/library/books/' + code + '/' + encodeURIComponent(row.topic.code) + '">' +
@@ -334,7 +357,7 @@
     }).join('<br>') || '未作答';
     var figures = Array.isArray(item.figures) ? item.figures : [];
     return '<details class="ml-question" id="question-' + esc(item.id) + '"><summary><span class="ml-question-meta">' +
-      esc(item.year + ' · ' + item.paper + ' · ' + item.qref) + (Number.isFinite(item.lost) ? ' · 原卷失分 ' + item.lost : '') + '</span>' + badge(state) +
+      esc(itemSource(item) + ' · ' + item.qref) + (Number.isFinite(item.lost) ? ' · 原卷失分 ' + item.lost : '') + '</span>' + badge(state) +
       '<span class="ml-question-title">' + esc(item.stem) + '</span><span class="ml-question-expand">展開答案與錯因</span></summary>' +
       '<div class="ml-question-body"><div class="ml-stem"><h3>' + (item.stemFull ? '題目' : '題目要點') + '</h3><p>' + text(item.stemFull || item.stem) + '</p>' +
       (Array.isArray(item.options) ? '<ol class="ml-options" type="A">' + item.options.map(function (option) { return '<li>' + text(option) + '</li>'; }).join('') + '</ol>' : '') +
@@ -364,12 +387,12 @@
     var items = subject.items.filter(function (item) { return item.topic === topicCode; });
     var key = code + '/' + topicCode, f = filters[key] || { query: '', status: '', kind: '', year: selectedYears[code] && selectedYears[code] !== 'all' ? selectedYears[code] : '' }, limit = 12;
     filters[key] = f; context.code = code;
-    var years = Array.from(new Set(items.map(function (it) { return it.year; }))).sort().reverse();
+    var years = sourceYears(items);
     frame(key, header(esc(topic.code + ' · ' + topic.name), '原答案、扣分點與正解放在一起，按需要展開閱讀。', '#/library/books/' + code, subjectName(code) + '課題') +
       summary(code, items, topic.name) + '<div class="ml-filters"><label class="ml-search">搜尋<input id="mlSearch" type="search" placeholder="題號、題幹、錯因或答案" value="' + esc(f.query) + '"></label>' +
       '<label>狀態<select id="mlStatus"><option value="">全部狀態</option>' + states.map(function (s) { return '<option value="' + s.key + '">' + s.label + '</option>'; }).join('') + '</select></label>' +
       '<label>題型<select id="mlKind"><option value="">全部題型</option><option value="mc">選擇題</option><option value="sub">主觀題</option></select></label>' +
-      '<label>年份<select id="mlYear"><option value="">全部年份</option>' + years.map(function (y) { return '<option>' + esc(y) + '</option>'; }).join('') + '</select></label></div>' +
+      '<label>年份<select id="mlYear"><option value="">全部年份</option>' + years.map(function (y) { return '<option value="' + esc(y) + '">' + esc(sourceInfo(y, null, items).label) + '</option>'; }).join('') + '</select></label></div>' +
       '<div class="ml-section-head"><p id="mlMatchCount" role="status" aria-live="polite"></p><a class="btn btn-primary" id="mlPracticeLink" href="#/session/' + code + '/' + encodeURIComponent(topicCode) + '">練習本課題</a></div>' +
       '<div id="mlQuestions"></div><button class="btn btn-ghost" id="mlMore" hidden type="button">顯示更多</button>');
     var root = context.root, search = root.querySelector('#mlSearch'), timer;
@@ -457,7 +480,7 @@
       var rows=searchRows(api.data,api.index,f,api.normalize,api.tags);
       root.querySelector('#globalCount').textContent=rows.length+' 題符合條件'+(tags.length?'':' · 尚未有已確認的錯因標籤');
       root.querySelector('#globalResults').innerHTML=rows.slice(0,f.limit).map(function (r) {
-        return '<a class="ml-search-result" href="#/library/books/question/'+r.code+'/'+encodeURIComponent(r.item.id)+'"><span class="ml-result-meta">'+esc(subjectName(r.code)+' · '+r.item.year+' · '+r.item.topic+' '+(r.topic?r.topic.name:'')+' · '+r.item.qref)+'</span>'+badge(r.state)+
+        return '<a class="ml-search-result" href="#/library/books/question/'+r.code+'/'+encodeURIComponent(r.item.id)+'"><span class="ml-result-meta">'+esc(subjectName(r.code)+' · '+sourceInfo(r.item.year,r.item).label+' · '+r.item.topic+' '+(r.topic?r.topic.name:'')+' · '+r.item.qref)+'</span>'+badge(r.state)+
           '<h2>'+esc(r.item.stem)+'</h2><p>'+snippetHtml(r.snippet,f.query)+'</p>'+(r.tags.length?'<small>已確認錯因：'+esc(r.tags.join('、'))+'</small>':'')+'</a>';
       }).join('') || '<div class="empty-note">沒有匹配結果。可減少關鍵詞或放寬篩選條件。</div>';
       root.querySelector('#globalMore').hidden=rows.length<=f.limit;
@@ -474,7 +497,7 @@
     var subject=context.data.subjects[code], item=subject && subject.items.filter(function (it) {return it.id===id;})[0];
     if(!item)return frame('question',header('未找到這道題','請返回搜尋結果或重新載入題庫。','#/library/books/search','搜尋結果'));
     context.code=code;
-    frame('question/'+code+'/'+id,header(esc(subjectName(code)+' · '+item.year+' · '+item.qref),'原卷答案與重做、AI 輔評分開保存。','#/library/books/search','搜尋結果')+card(item,''));
+    frame('question/'+code+'/'+id,header(esc(subjectName(code)+' · '+sourceInfo(item.year,item).label+' · '+item.qref),'原卷答案與重做、AI 輔評分開保存。','#/library/books/search','搜尋結果')+card(item,''));
     var detail=context.root.querySelector('.ml-question');
     if(detail){detail.open=true;Array.prototype.forEach.call(detail.querySelectorAll('[data-library-image]'),function (img) {img.setAttribute('data-bank-image',img.getAttribute('data-library-image'));img.removeAttribute('data-library-image');});context.hydrate(detail);}
   }
@@ -490,5 +513,6 @@
   }
   function reset() { context = null; activeKey = ''; positions = {}; filters = {}; selectedYears = {};searchState={query:'',subject:'',year:'',kind:'',status:'',tag:'',limit:20}; topicGeneration++; }
   global.DSELibrary = { render: render, remember: remember, reset: reset, independentHistory: independentHistory, indexHistory: indexHistory, summarize: summarize, full: full, dailyCandidates: dailyCandidates, searchRows: searchRows,
-    practiceRubric: practiceRubric, practiceScore: practiceScore, attemptSnapshot: attemptSnapshot, independentAttempt: independentAttempt };
+    sourceInfo: sourceInfo, compareSources: compareSources, sourceYears: sourceYears, itemSource: itemSource, practiceRubric: practiceRubric, practiceScore: practiceScore, attemptSnapshot: attemptSnapshot, independentAttempt: independentAttempt };
 })(window);
+

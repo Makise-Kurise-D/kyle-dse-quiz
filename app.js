@@ -1047,6 +1047,7 @@
   }
   function renderPaperYear(subject, year, detail) {
     detail = detail || {};
+    var info = window.DSELibrary.sourceInfo(year, detail, itemsOf(subject));
     var assessment = detail.assessment, metrics = paperGradeMetrics(assessment);
     var tone = metrics && metrics.current ? ({ U: 'red', 1: 'red', 2: 'red', 3: 'amber', 4: 'blue', 5: 'green', '5*': 'gold', '5**': 'purple' })[metrics.current.level] : 'neutral';
     var score = '<span class="paper-score-empty">成績待補</span>', gaps = '<span class="paper-gap-empty">發布成績與參考分界後，顯示升級及保級差距。</span>';
@@ -1066,7 +1067,7 @@
       return esc(c.label) + ' ' + c.earned + '/' + c.total;
     }).join(' · ') : '';
     return '<a class="paper-year" href="#/library/papers/' + subject + '/' + year + (detail.paper_id ? '/' + detail.paper_id : '') + '">' +
-      '<span class="paper-year-heading"><strong>' + year + '</strong><small>' + esc(detail.title || (metrics ? assessment.scope : '紅筆批改卷')) + '</small></span>' +
+      '<span class="paper-year-heading"><strong>' + esc(info.label) + '</strong><small>' + esc(info.mock ? '紅筆批改卷' : detail.title || (metrics ? assessment.scope : '紅筆批改卷')) + '</small></span>' +
       '<span class="paper-year-score">' + score + '</span><span class="paper-grade-gaps">' + gaps + '</span>' +
       '<span class="paper-year-arrow" aria-hidden="true">→</span>' +
       '<span class="paper-year-foot">' + (components ? components + ' · ' : '') + (Number.isInteger(detail.pages) ? detail.pages + ' 頁 · ' : '') +
@@ -1125,7 +1126,8 @@
       }
       var years = catalog.subjects[subject].filter(function (year) { return /^20\d{2}$/.test(year); }).sort().reverse();
       if (!years.length) { status.textContent = '此科目尚無已發布的批改卷。'; return; }
-      var entries = Array.isArray(catalog.entries) ? catalog.entries.filter(function (entry) { return entry.subject === subject; }).sort(function (a, b) { return b.year.localeCompare(a.year) || a.title.localeCompare(b.title); }) : years.map(function (year) { return Object.assign({ year: year }, catalog.papers && catalog.papers[subject] && catalog.papers[subject][year]); });
+      var entries = Array.isArray(catalog.entries) ? catalog.entries.filter(function (entry) { return entry.subject === subject; }) : years.map(function (year) { return Object.assign({ year: year }, catalog.papers && catalog.papers[subject] && catalog.papers[subject][year]); });
+      entries.sort(function (a, b) { return window.DSELibrary.compareSources(window.DSELibrary.sourceInfo(a.year, a, itemsOf(subject)), window.DSELibrary.sourceInfo(b.year, b, itemsOf(subject))); });
       status.textContent = '已發布 ' + entries.length + ' 套批改卷，涵蓋 ' + years.length + ' 個年份。';
       $('#paperYears').innerHTML = entries.map(function (entry) {
         return renderPaperYear(subject, entry.year, entry);
@@ -1257,10 +1259,12 @@
     identifier = identifier || '';
     if (paperSubject !== subject || paperYear !== year || paperIdentifier !== identifier) paperPage = 1;
     paperSubject = subject; paperYear = year; paperIdentifier = identifier;
-    var catalogEntry = paperCatalogSnapshot && Array.isArray(paperCatalogSnapshot.entries) && paperCatalogSnapshot.entries.filter(function (entry) {
+    var catalogEntry = paperCatalogSnapshot && paperCatalogSnapshot.data && Array.isArray(paperCatalogSnapshot.data.entries) && paperCatalogSnapshot.data.entries.filter(function (entry) {
       return entry.subject === subject && entry.year === year && entry.paper_id === identifier;
     })[0];
-    var readerTitle = SUBJECT_META[subject].name + ' ' + (catalogEntry ? catalogEntry.title : year + ' 年批改卷');
+    var readerDetail = catalogEntry || paperCatalogSnapshot && paperCatalogSnapshot.data && paperCatalogSnapshot.data.papers && paperCatalogSnapshot.data.papers[subject] && paperCatalogSnapshot.data.papers[subject][year];
+    var readerInfo = window.DSELibrary.sourceInfo(year, readerDetail, itemsOf(subject));
+    var readerTitle = SUBJECT_META[subject].name + ' ' + (readerInfo.mock ? readerInfo.label : catalogEntry ? catalogEntry.title : year + ' 年批改卷');
     paperToolsOpen = false; paperHeaderVisible = false;
     $('#app').innerHTML = '<section class="page library-page paper-reading-page" id="paperReadingPage" aria-labelledby="paperTitle">' +
       '<div class="paper-toolbar" id="paperToolbar">' +
@@ -1376,7 +1380,7 @@
       return;
     }
     if (!subjOf(code)) code = SUBJECT_ORDER[0];
-    var years = Array.from(new Set(itemsOf(code).map(function (it) { return String(it.year); }))).sort().reverse();
+    var years = window.DSELibrary.sourceYears(itemsOf(code));
     var selected = requestedYear || 'all';
     if (years.indexOf(selected) < 0) selected = 'all';
     var subjectIndex = SUBJECT_ORDER.indexOf(code);
@@ -1398,7 +1402,8 @@
       if ((a.due > 0) !== (b.due > 0)) return a.due > 0 ? -1 : 1;
       return b.marks - a.marks;
     });
-    var yearLabel = selected === 'all' ? '全部年份' : selected + ' 年';
+    var selectionInfo = window.DSELibrary.sourceInfo(selected, null, itemsOf(code));
+    var yearLabel = selected === 'all' ? '全部年份' : selectionInfo.label + (selectionInfo.mock ? '' : ' 年');
     var catalog = null, requestId = paperRequest;
     $('#app').innerHTML = '<section class="page practice-inventory">' +
       '<header class="page-head"><div><h1 class="page-title">課題練習</h1><p class="page-sub">先選年份，再揀課題開始練習。</p></div>' +
@@ -1420,18 +1425,20 @@
       (filtered.length ? '<a class="btn btn-random" href="' + practiceSessionHref(code, '__random__', selected) + '"><span class="persona-icon persona-icon-random" aria-hidden="true"></span> ' + yearLabel + '隨機抽 10 題</a>' : '') +
       '</section></div></section>';
     function drawYears() {
+      years = window.DSELibrary.sourceYears(itemsOf(code), catalog && catalog.papers && catalog.papers[code]);
       $('#practiceYears').innerHTML = ['all'].concat(years).map(function (year) {
         var assessment = catalog && catalog.papers && catalog.papers[code] && catalog.papers[code][year] && catalog.papers[code][year].assessment;
+        var info = window.DSELibrary.sourceInfo(year, catalog && catalog.papers && catalog.papers[code] && catalog.papers[code][year], itemsOf(code));
         var metrics = paperGradeMetrics(assessment);
         var level = metrics && metrics.current ? metrics.current.level : '—';
         var count = itemsOf(code).filter(function (it) { return year === 'all' || String(it.year) === year; }).length;
         return '<button class="inventory-year" type="button" data-practice-year="' + esc(year) + '" aria-pressed="' + (year === selected) + '">' +
-          '<span class="year-number" aria-hidden="true">' + (year === 'all' ? 'ALL' : esc(year.slice(-2))) + '</span><span class="year-body"><span class="year-name">' +
-          (year === 'all' ? '全部年份' : esc(year + ' ' + SUBJECT_META[code].name)) + '</span><span class="year-meters">' +
+          '<span class="year-number" aria-hidden="true">' + (year === 'all' ? 'ALL' : esc(info.badge)) + '</span><span class="year-body"><span class="year-name">' +
+          (year === 'all' ? '全部年份' : esc(info.label + ' ' + SUBJECT_META[code].name)) + '</span><span class="year-meters">' +
           (year === 'all' ? '' : '<span><abbr title="DSE 試卷等級">LV</abbr> <b>' + esc(level) + '</b></span><span><abbr title="原卷分數">HP</abbr> <b>' +
             (metrics ? assessment.earned + '<small>/' + assessment.total + '</small>' : '—') + '</b></span>') +
           '<span><abbr title="錯題數">SP</abbr> <b>' + count + '</b></span></span>' +
-          (year !== 'all' && metrics ? '<span class="year-grade-note">' + esc(assessment.scope) + (metrics.current ? ' · 等級估算' : ' · 等級未評') + '</span>' : '') + '</span></button>';
+          (year !== 'all' && metrics ? '<span class="year-grade-note">' + esc(info.mock ? info.label + ' · ' + SUBJECT_META[code].name : assessment.scope) + (metrics.current ? ' · 等級估算' : ' · 等級未評') + '</span>' : '') + '</span></button>';
       }).join('');
       var list = $('#practiceYears'), active = $('#practiceYears [aria-pressed="true"]');
       if (active && list.scrollWidth > list.clientWidth) list.scrollLeft = active.offsetLeft - (list.clientWidth - active.offsetWidth) / 2;
@@ -1562,7 +1569,7 @@
         '" data-key="' + esc(dkey) + '" data-code="' + code + '" data-topic="' + esc(topic) + '">' +
         '<header class="page-head">' +
           '<div><h1 class="page-title">' + SUBJECT_META[code].icon + ' ' + title + '</h1>' +
-          '<p class="page-sub">' + (year ? year + ' 年 · ' : '') + '<span id="answeredCount">0</span> / <span id="totalCount">' +
+          '<p class="page-sub">' + (year ? esc(window.DSELibrary.sourceInfo(year, null, itemsOf(code)).label) + ' · ' : '') + '<span id="answeredCount">0</span> / <span id="totalCount">' +
             items.length + '</span> 題已作答 · MC 自動批改，大題照踩分點自己勾分</p></div>' +
           '<div class="head-actions">' +
             (topic === '__random__'
@@ -1708,7 +1715,7 @@
     var head =
       '<div class="sq-head">' +
         '<span class="sq-no">' + (idx + 1) + '</span>' +
-        '<span class="sq-badge">' + esc(it.year + ' ' + it.paper + ' · ' + it.qref) + '</span>' +
+        '<span class="sq-badge">' + esc(window.DSELibrary.itemSource(it) + ' · ' + it.qref) + '</span>' +
         '<span class="sq-kind ' + (it.kind === 'mc' ? 'k-mc' : 'k-sub') + '">' +
           (it.kind === 'mc' ? '選擇 ' + marksOf(it) + ' 分' : '大題 ' + marksOf(it) + ' 分') + '</span>' +
       '</div>';
@@ -2786,4 +2793,5 @@
   route();
   initSync(startupHash);
 })();
+
 
