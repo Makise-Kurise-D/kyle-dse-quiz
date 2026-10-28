@@ -377,7 +377,7 @@
           throw new Error('錯題庫格式有誤');
         }
         bank.subjects[code].items.forEach(function (it) {
-          if (it.img && !/^images\/(?:chem|bio|math|m2|physics)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)\.jpg$/.test(it.img)) throw new Error('原題圖片路徑有誤');
+          if (it.img && !/^images\/(?:(?:chem|bio|math|m2|physics)-\d{4}-(?:mc-\d+|fig-[a-z0-9-]+)|math-mock\d+-\d{4}-mc\d+)\.jpg$/.test(it.img)) throw new Error('原題圖片路徑有誤');
         if (it.figures && (!Array.isArray(it.figures) || !it.figures.every(function (f) {
           return f && /^images\/(?:chem|bio|math|m2|physics)-\d{4}-fig-[a-z0-9-]+\.jpg$/.test(f.path);
         }))) throw new Error('原題圖表路徑有誤');
