@@ -813,3 +813,10 @@ html[data-appearance=full][data-theme=day] .paper-thumbnails{padding:18px}
 }
 @media(max-width:380px){.paper-controls{gap:3px;padding-inline:6px}.paper-controls .paper-page-label{margin-left:0}.paper-page-label>span{display:none}.paper-controls select{width:44px;padding:4px}.paper-controls .paper-next-mistake{padding-inline:5px}.paper-mistake-long{display:none}.paper-mistake-short{display:inline}html[data-appearance=full][data-theme=day] .paper-controls{padding-inline:8px}}
 @media print{.paper-toolbar,.paper-thumbnails,.paper-mistake-marker{display:none!important}.paper-workspace{display:block}.paper-sheet{break-inside:avoid;box-shadow:none}}
+
+/* Give the angled navigation frames room around their labels. */
+html[data-appearance=full][data-theme=day] .rail-links .rail-item:before,
+html[data-appearance=full][data-theme=day] .rail-links .rail-item:after{left:-12px;right:-12px}
+html[data-appearance=full] .rail-links .rail-item .rail-word{text-align:center}
+html[data-appearance=full] .rail-links .rail-item .rail-cn{margin-inline:auto}
+html[data-appearance=full][data-theme=day] .home-info{padding-inline:24px}
