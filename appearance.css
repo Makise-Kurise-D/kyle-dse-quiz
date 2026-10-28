@@ -817,6 +817,4 @@ html[data-appearance=full][data-theme=day] .paper-thumbnails{padding:18px}
 /* Give the angled navigation frames room around their labels. */
 html[data-appearance=full][data-theme=day] .rail-links .rail-item:before,
 html[data-appearance=full][data-theme=day] .rail-links .rail-item:after{left:-12px;right:-12px}
-html[data-appearance=full] .rail-links .rail-item .rail-word{text-align:center}
-html[data-appearance=full] .rail-links .rail-item .rail-cn{margin-inline:auto}
 html[data-appearance=full][data-theme=day] .home-info{padding-inline:24px}
