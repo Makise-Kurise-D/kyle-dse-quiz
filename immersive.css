@@ -1,0 +1,184 @@
+/* 隔離預覽：把戲劇性留給導覽，把閱讀空間留給題目。 */
+.preview-banner{position:fixed;right:14px;bottom:12px;z-index:120;display:flex;align-items:center;gap:12px;padding:8px 12px;background:#061d4a;color:#fff;font-size:12px;font-weight:700;box-shadow:0 4px 18px #00102766;border-left:4px solid #36e6ff}
+.preview-banner label{display:flex;gap:5px;align-items:center;white-space:nowrap}.preview-banner select{min-height:32px;padding:3px 6px;background:#fff;color:#10214c;border:0}
+html[data-appearance=full][data-theme=day]{--accent:#56e9ff;--line:#91c6ed70;--card:#071e49;--ink:#f4fbff;--gray:#d0e4f6}
+html[data-appearance=full][data-theme=day] .shell-header{box-shadow:inset 0 -4px #077cc5,0 5px 0 #05296655}
+html[data-appearance=full][data-theme=day] .home-stage .tile{transition:transform .18s cubic-bezier(.2,.8,.2,1),filter .18s}
+html[data-appearance=full][data-theme=day] .home-stage .tile:before{background:linear-gradient(110deg,#061b49ed,#0b3976e8);border-bottom:3px solid #54eaff}
+html[data-appearance=full][data-theme=day] .home-stage .tile:hover,html[data-appearance=full][data-theme=day] .home-stage .tile:focus-visible{filter:brightness(1.14)}
+html[data-appearance=full] .home-stat-strip strong,html[data-appearance=full] .stat-val{font-variant-numeric:tabular-nums}
+html[data-appearance=full] :is(.sq,.rq,.ml-question,.panel,.topic-info){line-height:1.75}
+html[data-appearance=full] :is(.q-stem,.ml-stem,.ans-body,.chk-text){text-wrap:pretty}
+html[data-appearance=full] :is(.sq,.rq,.ml-question){box-shadow:0 10px 30px #00132d22}
+html[data-appearance=full] :is(input,textarea,select):focus-visible{outline:2px solid var(--accent);outline-offset:2px;box-shadow:0 0 0 5px var(--card),0 0 0 7px var(--accent)}
+html[data-appearance=full][data-theme=night] .preview-banner{background:#45142e;border-color:#ffb5d6;border-radius:12px}
+@media(max-width:860px){.preview-banner{bottom:calc(82px + env(safe-area-inset-bottom));right:8px;left:auto;max-width:calc(100% - 16px);font-size:10px;gap:6px;padding:5px 8px}.preview-banner select{min-height:28px}}
+@media(prefers-reduced-motion:reduce){html[data-appearance=full] *,html[data-appearance=full] *::before,html[data-appearance=full] *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+
+/* 預覽二：把首頁重新編排成不對稱的遊戲選單。 */
+html[data-appearance=full][data-theme=day] body[data-view=home] .visual-world{background:radial-gradient(ellipse at 70% 20%,#38cfff 0,#0577d5 31%,#033c8b 68%,#061b49 100%)}
+html[data-appearance=full][data-theme=day] body[data-view=home] .visual-world:after{display:block;background:repeating-linear-gradient(116deg,transparent 0 110px,#8beeff0b 112px 115px,transparent 118px 210px),linear-gradient(90deg,#061737e8 0%,#0349927a 55%,#00265342 100%)}
+html[data-appearance=full][data-theme=day] body[data-view=home] .visual-character{opacity:.55;filter:saturate(.8) contrast(1.05);background-position:85% top}
+html[data-appearance=full] body[data-view=home] .home-stage{position:relative;grid-template-columns:minmax(300px,.9fr) minmax(380px,1.15fr);gap:3vw;align-items:center;min-height:650px;isolation:isolate}
+html[data-appearance=full] body[data-view=home] .home-stage:before{content:'RELOAD / REVIEW';position:absolute;top:0;left:0;color:#b2f5ff;font:900 italic 13px sans-serif;letter-spacing:.35em}
+html[data-appearance=full] body[data-view=home] .home-stage .hero{padding:55px 0 24px;position:relative;z-index:1}
+html[data-appearance=full] body[data-view=home] .hero-kicker{display:inline-block;background:#f4fdff;color:#073668;padding:6px 18px;transform:skew(-12deg);font-size:13px;letter-spacing:.12em}
+html[data-appearance=full] body[data-view=home] .hero-title{font-size:clamp(42px,4.5vw,72px);line-height:1.14;letter-spacing:.02em;color:#fff;text-shadow:4px 4px 0 #0065c0,8px 8px 0 #001e56;max-width:none;margin:16px 0 24px}
+html[data-appearance=full] body[data-view=home] .continue-command{width:min(370px,95%);padding:15px 22px;background:#f8ffff;color:#00346c;border:0;border-left:9px solid #1dd6ff;box-shadow:8px 8px 0 #00387b;transform:skew(-9deg)}
+html[data-appearance=full] body[data-view=home] .continue-command b{font-size:45px;color:#006bb9}
+html[data-appearance=full] body[data-view=home] .continue-command span{font-size:14px;font-weight:700}
+html[data-appearance=full] body[data-view=home] .home-info .hero-bubble{background:#072758e8;color:#fff;border-left:3px solid #3de6ff;box-shadow:none;filter:none;max-width:390px;font-size:13px}
+html[data-appearance=full] body[data-view=home] .tile-grid{gap:3px;position:relative;z-index:2;counter-reset:command;padding:40px 0}
+html[data-appearance=full] body[data-view=home] .tile-grid:before{content:'SELECT  /  選擇行動';display:block;color:#b0f3ff;font:700 12px sans-serif;letter-spacing:.22em;padding:0 0 18px 55px}
+html[data-appearance=full] body[data-view=home] .home-stage .tile{counter-increment:command;clip-path:polygon(5% 0,100% 0,96% 100%,0 100%);border:0;border-radius:0;min-height:84px;padding:11px 35px 11px 30px;background:#062254e8;box-shadow:none;transform:skew(-4deg);transition:transform .18s,background .18s;backdrop-filter:none}
+html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(even){margin-left:28px;margin-right:-28px;background:#07519adf}
+html[data-appearance=full] body[data-view=home] .home-stage .tile:hover,html[data-appearance=full] body[data-view=home] .home-stage .tile:focus-visible{background:#f6fdff;transform:translateX(-12px) skew(-4deg);outline:3px solid #44eaff;outline-offset:2px}
+html[data-appearance=full] body[data-view=home] .home-stage .tile:hover :is(.tile-en,.tile-cn,.tile-desc,.tile-arrow),html[data-appearance=full] body[data-view=home] .home-stage .tile:focus-visible :is(.tile-en,.tile-cn,.tile-desc,.tile-arrow){color:#062954}
+html[data-appearance=full] body[data-view=home] .home-stage .tile-title{display:flex;align-items:baseline;gap:14px;color:#fff;font-size:clamp(30px,3vw,48px);line-height:1}
+html[data-appearance=full] body[data-view=home] .tile-title .tile-cn{font:700 14px sans-serif;color:#a9f6ff;letter-spacing:.05em}
+html[data-appearance=full] body[data-view=home] .tile-desc{color:#d8f3ff;font-size:12px}
+html[data-appearance=full] body[data-view=home] .tile-arrow{font-size:28px;top:22px;color:#69edff}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile{clip-path:none;border-radius:16px;transform:none;background:#541838e8}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile:nth-child(even){background:#8d2754e8}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile:hover,html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile:focus-visible{background:#fff0f7;transform:translateX(-10px)}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile-title .tile-cn{color:#ffb9d9}
+@media(max-width:860px){html[data-appearance=full] body[data-view=home] .home-stage{display:flex;flex-direction:column;align-items:stretch;min-height:0;gap:10px}html[data-appearance=full] body[data-view=home] .home-stage .hero{padding:42px 0 10px}html[data-appearance=full] body[data-view=home] .hero-title{font-size:42px}html[data-appearance=full] body[data-view=home] .tile-grid{padding:10px 12px 20px 0;gap:5px}html[data-appearance=full] body[data-view=home] .tile-grid:before{padding-left:15px}html[data-appearance=full] body[data-view=home] .home-stage .tile{min-height:76px;padding:10px 20px}html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(even){margin-left:14px;margin-right:-14px}html[data-appearance=full] body[data-view=home] .home-stage .tile-title{font-size:30px}html[data-appearance=full] body[data-view=home] .tile-title .tile-cn{font-size:12px}}
+.preview-banner{position:relative;inset:auto;max-width:none;width:100%;box-shadow:none;justify-content:center;z-index:1;flex-wrap:wrap}
+@media(max-width:860px){.preview-banner{position:relative;inset:auto;max-width:none;width:100%;font-size:11px;padding:6px 10px;justify-content:space-between}}
+/* 第三輪：以不等寬字標構成縱向選單，今日複習放到右側。 */
+@media(min-width:861px){
+html[data-appearance=full] body[data-view=home] .home-stage{grid-template-columns:minmax(440px,1.2fr) minmax(310px,.8fr);gap:7vw;min-height:670px}
+html[data-appearance=full] body[data-view=home] .home-stage .tile-grid{grid-column:1;grid-row:1;padding:48px 0 0;gap:0;align-self:center}
+html[data-appearance=full] body[data-view=home] .home-stage .hero{grid-column:2;grid-row:1;align-self:center;padding:35px 0 20px}
+html[data-appearance=full] body[data-view=home] .home-stage .hero-title{font-size:clamp(35px,3.3vw,52px)}
+html[data-appearance=full] body[data-view=home] .home-stage .tile-grid:before{padding-left:24px}
+html[data-appearance=full] body[data-view=home] .home-stage .tile,html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(even){width:max-content;max-width:100%;min-height:72px;padding:5px 48px 7px 23px;margin:0;background:transparent;clip-path:none;transform:rotate(-3deg);overflow:visible}
+html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(2){margin-left:34px}html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(3){margin-left:4px}html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(4){margin-left:58px}html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(5){margin-left:25px}html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(6){margin-left:77px}
+html[data-appearance=full] body[data-view=home] .home-stage .tile-title{font-size:clamp(43px,4.3vw,68px);text-shadow:4px 4px 0 #003574;white-space:nowrap}
+html[data-appearance=full] body[data-view=home] .home-stage .tile-ico,html[data-appearance=full] body[data-view=home] .tile-desc{display:none}
+html[data-appearance=full] body[data-view=home] .home-stage .tile-arrow{right:10px;top:15px;opacity:0}
+html[data-appearance=full] body[data-view=home] .home-stage .tile:hover,html[data-appearance=full] body[data-view=home] .home-stage .tile:focus-visible{background:#f6fdff;transform:rotate(-3deg) translateX(10px)}
+html[data-appearance=full] body[data-view=home] .home-stage .tile:hover .tile-title,html[data-appearance=full] body[data-view=home] .home-stage .tile:focus-visible .tile-title{text-shadow:none}
+html[data-appearance=full] body[data-view=home] .home-stage .tile:hover .tile-arrow,html[data-appearance=full] body[data-view=home] .home-stage .tile:focus-visible .tile-arrow{opacity:1}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile,html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile:nth-child(even){background:transparent;transform:none;border-radius:14px}
+html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile:hover,html[data-appearance=full][data-theme=night] body[data-view=home] .home-stage .tile:focus-visible{background:#fff0f7;transform:translateX(10px)}
+}
+
+/* 第四輪：把右側變成有呼吸空間的今日任務。 */
+html[data-appearance=full] body[data-view=home] .home-stage .hero{display:flex;flex-direction:column;align-items:flex-start}
+html[data-appearance=full] body[data-view=home] .hero-title{margin:20px 0 30px;line-height:1.18}
+html[data-appearance=full] body[data-view=home] .preview-today-label{color:#b8f6ff;font-size:12px;font-weight:800;letter-spacing:.2em;margin:0 0 6px}
+html[data-appearance=full] body[data-view=home] .preview-today-label span{font-weight:600;letter-spacing:.08em}
+html[data-appearance=full] body[data-view=home] .preview-due{display:flex;align-items:center;gap:18px;color:#fff;line-height:1.15;margin:0 0 24px}
+html[data-appearance=full] body[data-view=home] .preview-due strong{font:italic 900 clamp(66px,7vw,104px)/.95 sans-serif;letter-spacing:-.06em;text-shadow:5px 5px #0069bb;font-variant-numeric:tabular-nums}
+html[data-appearance=full] body[data-view=home] .preview-due span{font-weight:800;font-size:18px}
+html[data-appearance=full] body[data-view=home] .preview-due small{font-size:10px;letter-spacing:.12em;color:#c5f4ff}
+html[data-appearance=full] body[data-view=home] .continue-command{display:flex;align-items:center;justify-content:space-between;gap:18px;width:min(410px,100%);padding:16px 22px;min-height:76px;transition:transform .2s ease,box-shadow .2s ease}
+html[data-appearance=full] body[data-view=home] .continue-command b{font-size:36px;line-height:1}
+html[data-appearance=full] body[data-view=home] .continue-command:hover,html[data-appearance=full] body[data-view=home] .continue-command:focus-visible{transform:skew(-9deg) translateX(7px);box-shadow:12px 10px 0 #00387b;outline:3px solid #69ecff;outline-offset:4px}
+html[data-appearance=full] body[data-view=home] .home-info{background:transparent;border:0;box-shadow:none;backdrop-filter:none;padding:0;margin:25px 0 0;max-width:410px}
+html[data-appearance=full] body[data-view=home] .home-info .hero-bubble{background:transparent;border:0;padding:0;color:#e3f6ff;line-height:1.65}
+html[data-appearance=full] body[data-view=home] .home-info .bubble-intro{display:none}
+html[data-appearance=full][data-theme=night] body[data-view=home] .preview-today-label,html[data-appearance=full][data-theme=night] body[data-view=home] .preview-due small{color:#ffd5e7}
+html[data-appearance=full][data-theme=night] body[data-view=home] .preview-due strong{text-shadow:5px 5px #9a2763}
+html[data-appearance=full][data-theme=night] body[data-view=home] .continue-command{transform:none;border-radius:16px;background:#fff0f7;color:#541838;border-color:#ff78b3;box-shadow:6px 6px #8d2754}
+html[data-appearance=full][data-theme=night] body[data-view=home] .continue-command b{color:#a72864}
+html[data-appearance=full][data-theme=night] body[data-view=home] .continue-command:hover,html[data-appearance=full][data-theme=night] body[data-view=home] .continue-command:focus-visible{transform:translateX(7px);outline-color:#ffb3d6}
+@media(min-width:861px){html[data-appearance=full] body[data-view=home] .home-stage{grid-template-columns:minmax(400px,1.05fr) minmax(330px,.95fr);gap:5vw;min-height:740px}html[data-appearance=full] body[data-view=home] .home-stage .hero{padding:55px 0;align-self:center}html[data-appearance=full] body[data-view=home] .home-stage .hero-title{font-size:clamp(34px,3vw,48px)}}
+@media(max-width:860px){html[data-appearance=full] body[data-view=home] .preview-due{margin-bottom:18px}html[data-appearance=full] body[data-view=home] .preview-due strong{font-size:72px}html[data-appearance=full] body[data-view=home] .hero-title{margin-bottom:23px}html[data-appearance=full] body[data-view=home] .home-info{margin-top:17px}}
+@media(prefers-reduced-motion:no-preference){
+ html[data-appearance=full] body[data-view=home] .home-stage .tile{animation:menu-enter .48s both;animation-delay:calc(var(--menu-index, 0) * 65ms)}
+ html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(2){--menu-index:1}html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(3){--menu-index:2}html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(4){--menu-index:3}html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(5){--menu-index:4}
+ html[data-appearance=full] body[data-view=home] .home-stage .hero{animation:panel-enter .65s both .15s}
+ html[data-appearance=full][data-theme=day] body[data-view=home] .visual-world:after{animation:water-light 9s ease-in-out infinite alternate}
+ @keyframes menu-enter{from{opacity:0;filter:blur(5px)}to{opacity:1;filter:blur(0)}}
+ @keyframes panel-enter{from{opacity:0;transform:translateY(15px)}to{opacity:1;transform:translateY(0)}}
+ @keyframes water-light{from{opacity:.7}to{opacity:1}}
+}
+html[data-appearance=full] body[data-view=home] .home-info{clip-path:none;-webkit-backdrop-filter:none}
+html[data-appearance=full] body[data-view=home] .continue-command{flex-direction:row;margin:0}
+html[data-appearance=full] body[data-view=home] .continue-command span{align-self:center;margin:0}
+html[data-appearance=simple] .preview-today-label{font-weight:700;margin-top:20px}
+html[data-appearance=simple] .preview-due{display:flex;align-items:center;gap:12px;margin:8px 0}
+html[data-appearance=simple] .preview-due strong{font-size:36px}
+html[data-appearance=simple] .preview-due small{font-size:11px}
+
+/* 第五輪：全屏遊戲選單，僅保留輕量設定與子頁導覽。 */
+.compact-nav{display:none}
+html[data-appearance=full] body{padding:0}
+html[data-appearance=full] .rail{display:none!important}
+html[data-appearance=full] .shell-header{position:fixed;z-index:90;left:auto;right:24px;top:16px;min-height:0;width:auto;padding:0;background:none;border:0;box-shadow:none;gap:0}
+html[data-appearance=full] .shell-heading,html[data-appearance=full] .rail-toggle{display:none!important}
+html[data-appearance=full] .appearance-tools{max-width:none;gap:8px}
+html[data-appearance=full] .version-switch{background:#061b49d9;border:1px solid #81dfff8c;box-shadow:0 4px 14px #00153055}
+html[data-appearance=full] .version-switch button{min-height:36px;color:#fff}
+html[data-appearance=full] .version-switch button[aria-pressed=true]{background:#d8f7ff;color:#08264e}
+html[data-appearance=full] .day-night-toggle{width:40px;height:40px;background:#061b49e6;color:white;border:1px solid #81dfff8c}
+html[data-appearance=full] .content-scroll{left:0!important;top:0!important;bottom:0!important}
+html[data-appearance=full] .visual-world{left:0!important;bottom:0!important}
+html[data-appearance=full] .preview-banner{position:fixed;z-index:85;left:24px;top:16px;right:auto;width:auto;max-width:calc(100% - 390px);padding:4px 8px;font-size:10px;line-height:1.2;background:#061d4acc;border:0;justify-content:start;gap:8px;opacity:.9}
+html[data-appearance=full] .preview-banner select{min-height:27px;font-size:11px}
+html[data-appearance=full] body:not([data-view=home]) .compact-nav{display:block;position:fixed;z-index:95;top:16px;left:24px;color:#fff}
+html[data-appearance=full] .compact-nav summary{cursor:pointer;list-style:none;padding:10px 16px;background:#061b49ed;border-left:4px solid #53e8ff;font-weight:900;letter-spacing:.1em}
+html[data-appearance=full] .compact-nav summary::-webkit-details-marker{display:none}
+html[data-appearance=full] .compact-nav nav{display:grid;min-width:210px;padding:8px;background:#061b49f5;box-shadow:0 12px 35px #00133299}
+html[data-appearance=full] .compact-nav nav a{color:#fff;padding:12px;text-decoration:none;font-weight:700}
+html[data-appearance=full] .compact-nav nav a:hover,html[data-appearance=full] .compact-nav nav a:focus-visible{background:#d8f7ff;color:#08264e}
+html[data-appearance=full] body:not([data-view=home]) .preview-banner{top:auto;bottom:8px;left:auto;right:8px;max-width:calc(100% - 16px)}
+html[data-appearance=full] body:not([data-view=home]) .app{padding-top:88px}
+html[data-appearance=full] body[data-view=home] .app{max-width:none;padding:60px clamp(30px,6vw,100px) 80px}
+html[data-appearance=full] body[data-view=home] .home-stage{min-height:calc(100dvh - 140px);grid-template-columns:minmax(400px,1fr) minmax(330px,.85fr);gap:8vw}
+html[data-appearance=full] body[data-view=home] .home-stage:before{top:12px}
+html[data-appearance=full] body[data-view=home] .tabbar{display:none}
+html[data-appearance=full][data-theme=night] .shell-header .version-switch,html[data-appearance=full][data-theme=night] .day-night-toggle,html[data-appearance=full][data-theme=night] .compact-nav summary,html[data-appearance=full][data-theme=night] .compact-nav nav{background:#4b1538ee;border-color:#ffb5d6;border-radius:12px}
+@media(max-width:860px){
+ html[data-appearance=full] .shell-header{right:10px;top:10px}
+ html[data-appearance=full] .version-switch button{font-size:10px;padding:5px;min-height:34px}
+ html[data-appearance=full] .day-night-toggle{width:38px;height:38px}
+ html[data-appearance=full] .preview-banner{left:8px;top:8px;max-width:calc(100% - 195px);font-size:9px;gap:3px;padding:3px 5px}
+ html[data-appearance=full] .preview-banner label{font-size:9px}
+ html[data-appearance=full] body[data-view=home] .app{padding:72px 20px 45px}
+ html[data-appearance=full] body[data-view=home] .home-stage{min-height:0}
+ html[data-appearance=full] body:not([data-view=home]) .compact-nav{top:10px;left:10px}
+ html[data-appearance=full] body:not([data-view=home]) .app{padding-top:74px;padding-bottom:90px}
+ html[data-appearance=full] body:not([data-view=home]) .content-scroll{bottom:var(--tabbar-offset)!important}
+ html[data-appearance=full] body:not([data-view=home]) .preview-banner{display:none}
+}
+html[data-appearance=full] .visual-world{top:0!important}
+html[data-appearance=full] .shell-header{height:auto!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+html[data-appearance=full] .compact-nav nav button{border:0;text-align:left;color:#fff;padding:12px;background:transparent;cursor:pointer;font-weight:700}
+html[data-appearance=full] .compact-nav nav button:hover,html[data-appearance=full] .compact-nav nav button:focus-visible{background:#d8f7ff;color:#08264e}
+
+/* 右側以一個行動和一個數字構成視覺中心。 */
+html[data-appearance=full] body[data-view=home] .home-stage .hero{position:relative;align-self:center;max-width:500px;isolation:isolate}
+html[data-appearance=full] body[data-view=home] .hero-kicker{background:none;color:#b8f5ff;padding:0;transform:none;font-style:italic;letter-spacing:.16em;text-shadow:none}
+html[data-appearance=full] body[data-view=home] .home-stage .hero-title{margin:16px 0 30px;line-height:1;display:flex;flex-direction:column;gap:8px}
+html[data-appearance=full] body[data-view=home] .hero-en{font:italic 900 clamp(52px,6.8vw,104px)/.85 PersonaMenu,sans-serif;letter-spacing:-.035em;color:#fff;text-shadow:5px 5px 0 #003e9d;transform:skew(-6deg)}
+html[data-appearance=full] body[data-view=home] .hero-zh{font:800 clamp(17px,1.5vw,23px)/1.3 sans-serif;letter-spacing:.08em;color:#e9fbff;text-shadow:2px 2px #004580}
+html[data-appearance=full] body[data-view=home] .preview-today-label{margin:0 0 10px;padding-top:17px;border-top:2px solid #71e8ff;min-width:min(340px,100%);color:#d4faff}
+html[data-appearance=full] body[data-view=home] .preview-due{gap:16px;margin:0 0 20px;align-items:center}
+html[data-appearance=full] body[data-view=home] .preview-due strong{font-size:clamp(84px,9vw,130px);line-height:.9}
+html[data-appearance=full] body[data-view=home] .preview-due span{font-size:17px;line-height:1.5}
+html[data-appearance=full] body[data-view=home] .continue-command{width:min(340px,100%);min-height:56px;background:#f4fdff;color:#073668;padding:10px 18px;box-shadow:6px 6px #003a83}
+html[data-appearance=full] body[data-view=home] .continue-command b{font-size:30px}
+html[data-appearance=full] body[data-view=home] .home-info{margin-top:19px}
+html[data-appearance=full][data-theme=night] body[data-view=home] .hero-kicker{color:#ffe0ee}
+html[data-appearance=full][data-theme=night] body[data-view=home] .hero-en{text-shadow:5px 5px #92235f}
+html[data-appearance=full][data-theme=night] body[data-view=home] .hero-zh{text-shadow:2px 2px #7b184b}
+html[data-appearance=full][data-theme=night] body[data-view=home] .preview-today-label{border-color:#ffb5d6}
+@media(max-width:860px){html[data-appearance=full] body[data-view=home] .hero-en{font-size:68px}html[data-appearance=full] body[data-view=home] .preview-due strong{font-size:84px}html[data-appearance=full] body[data-view=home] .home-stage .hero-title{margin:12px 0 24px}}
+html[data-appearance=simple] .hero-en,html[data-appearance=simple] .hero-zh{display:block}
+
+/* 收緊手機首頁：先呈現行動選單，再顯示今日複習。 */
+html[data-appearance=full] body[data-view=home] .preview-review-hint{margin:-10px 0 16px;color:#f0fbff;font-size:13px;font-weight:600;text-shadow:0 1px 3px #00315e}
+@media(min-width:861px){html[data-appearance=full] body[data-view=home] .tile-title .tile-cn{font-size:16px}}
+@media(max-width:860px){
+ html[data-appearance=full] body[data-view=home] .home-stage .tile-grid{order:0;padding:16px 0 12px;gap:0}
+ html[data-appearance=full] body[data-view=home] .home-stage .hero{order:1;padding:28px 0 20px}
+ html[data-appearance=full] body[data-view=home] .tile-grid:before{padding:0 0 12px 10px}
+ html[data-appearance=full] body[data-view=home] .home-stage .tile,html[data-appearance=full] body[data-view=home] .home-stage .tile:nth-child(even){min-height:60px;margin:0 0 4px;padding:8px 18px}
+ html[data-appearance=full] body[data-view=home] .tile-title .tile-cn{font-size:14px}
+ html[data-appearance=full] body[data-view=home] .tile-desc{font-size:12px}
+ html[data-appearance=full] body[data-view=home] .preview-review-hint{margin:-8px 0 14px}
+}
+@media(max-width:860px){html[data-appearance=full] body[data-view=home] .home-stage:before{display:none}}

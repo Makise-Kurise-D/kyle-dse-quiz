@@ -783,8 +783,11 @@
       '<section class="home"><div class="home-stage">' +
         '<div class="hero">' +
           '<div class="hero-kicker">' + (activeUser === 'yeelam' ? 'Yeelam' : 'Kyle') + ' 嘅錯題本 / DSE</div>' +
-          '<h1 class="hero-title">從上次的<br>錯題繼續。</h1>' +
-          '<a class="continue-command" href="#/today/all/5"><b aria-hidden="true">TODAY</b><span>開始今日複習 ↗ · 到期 ' + (bankLoaded ? todayDue : '—') + ' 題</span></a>' +
+          '<h1 class="hero-title"><span class="hero-en">REVISIT</span><span class="hero-zh">從錯題，再出發。</span></h1>' +
+          '<div class="preview-today-label">YOUR NEXT MOVE <span>／ 今日複習</span></div>' +
+          '<div class="preview-due"><strong>' + (bankLoaded ? todayDue : '—') + '</strong><span>題到期<br><small>READY TO REVIEW</small></span></div>' +
+          '<p class="preview-review-hint">' + (bankLoaded && todayDue === 0 ? '暫無到期題，仍可開始複習' : '優先安排到期題，最多 5 題') + '</p>' +
+          '<a class="continue-command" href="#/today/all/5"><b aria-hidden="true">START</b><span>開始今日複習 ↗</span></a>' +
           '<div class="home-info" role="group" aria-label="學習與同步資訊">' +
           '<p class="hero-sub hero-bubble bubble-intro">錯過嘅唔可以再錯 —— 逐課題清，每個踩分點都執返。</p>' +
           '<p class="review-note hero-bubble bubble-sync" id="syncStatus" role="status" aria-live="polite"' + (syncMessage ? '' : ' hidden') + '>' + esc(syncMessage) + '</p>' +

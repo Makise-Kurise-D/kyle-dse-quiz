@@ -1,0 +1,175 @@
+/* 非首頁：保留平穩閱讀的題面，將遊戲節奏放在標題與選擇上。 */
+html[data-appearance=full] body:not([data-view=home]) .page-head {
+  position:relative; overflow:hidden; gap:20px; padding:25px 30px;
+  background:linear-gradient(110deg,#061b46 0%,#0a316d 72%,#0759a0 100%);
+  border:0; border-left:6px solid #48e5ff; border-radius:0;
+  box-shadow:8px 8px 0 #00183a55;
+}
+html[data-appearance=full] body:not([data-view=home]) .page-title {
+  color:#fff; font-size:clamp(27px,3vw,42px); font-weight:900; line-height:1.25;
+  letter-spacing:.02em; text-shadow:3px 3px 0 #006cc3;
+}
+html[data-appearance=full] body:not([data-view=home]) .page-sub {color:#c6eafa; margin-top:8px}
+html[data-appearance=full] body:not([data-view=home]) .page-head .btn-ghost {background:#f3fcff;color:#08275a;border:0;border-radius:0;font-weight:800}
+html[data-appearance=full] body:not([data-view=home]) .page-head .btn-ghost:is(:hover,:focus-visible) {background:#4de8ff;color:#061d47}
+html[data-appearance=full] body[data-view=practice] :is(.inventory-years h2,.inventory-topics h2) {
+  font-size:clamp(20px,2vw,30px); color:#aaf5ff; letter-spacing:.04em;
+}
+html[data-appearance=full] body[data-view=practice] :is(.inventory-years,.inventory-topics) {
+  min-width:0; padding:22px; background:#071d46e8;
+}
+html[data-appearance=full] body[data-view=practice] :is(.inventory-year,.practice-topic) {
+  border:0; border-left:4px solid #2478bf; border-radius:0;
+  background:#0a2b60; box-shadow:5px 5px 0 #03173870;
+  transition:transform .18s ease,background .18s ease;
+}
+html[data-appearance=full] body[data-view=practice] :is(.inventory-year,.practice-topic):is(:hover,:focus-visible),
+html[data-appearance=full] body[data-view=practice] :is(.inventory-year[aria-pressed=true],.practice-topic.inspected) {
+  background:#effdff; color:#061c4a; border-left-color:#48dfff; transform:translateX(5px);
+}
+html[data-appearance=full] body[data-view=practice] :is(.inventory-year,.practice-topic):is(:hover,:focus-visible,[aria-pressed=true],.inspected) :is(.year-number,.year-name,.year-meters,.year-meters b,.topic-name,.topic-meta,.practice-topic-code) {color:#061c4a}
+html[data-appearance=full] body[data-view=practice] .practice-topic-count {border:0;border-radius:0;background:#0c4c91;color:#fff}
+html[data-appearance=full] body[data-view=practice] .topic-info {border:0;border-left:4px solid #3ee4ff;border-radius:0;background:#081f4b}
+html[data-appearance=full] body:not([data-view=home]) :is(.sq,.rq,.ml-question) {
+  background:#0a214e; border:0; border-left:4px solid #2abde8; border-radius:0;
+  box-shadow:7px 7px 0 #00163855;
+}
+html[data-appearance=full] body:not([data-view=home]) :is(.sq-no,.ml-question-no) {font-variant-numeric:tabular-nums}
+html[data-appearance=full] body:not([data-view=home]) :is(.q-stem,.ml-stem,.ans-box,.chk-form) {
+  background:#071c42; color:#f7fbff; border-radius:4px;
+}
+html[data-appearance=full] body:not([data-view=home]) :is(.panel,.stat-card,.rec-card,.ml-filters,.ml-summary) {
+  border-radius:0; border-color:#4ba9d455; background:#0b2555;
+}
+html[data-appearance=full] body:not([data-view=home]) :is(a,button,input,textarea,select):focus-visible {
+  outline:3px solid #68eeff; outline-offset:3px;
+}
+/* 作答畫面：遊戲式題號與選擇態，文字和作答欄保持穩定、可讀。 */
+html[data-appearance=full] body[data-view=session] .session {max-width:1100px;margin-inline:auto}
+html[data-appearance=full] body[data-view=session] .q-paper {gap:24px}
+html[data-appearance=full] body[data-view=session] .sq {padding:24px 28px 28px;overflow-wrap:anywhere}
+html[data-appearance=full] body[data-view=session] .sq-head {gap:14px;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid #76dfff66}
+html[data-appearance=full] body[data-view=session] .sq-no {
+  width:auto;min-width:56px;height:46px;padding:0 12px;background:#55e6ff;color:#072550;
+  font:900 italic 32px/1 PersonaMenu,sans-serif;border-radius:0;box-shadow:4px 4px 0 #0064aa;
+}
+html[data-appearance=full] body[data-view=session] .sq-badge {font-size:14px;color:#d5eafa;letter-spacing:.02em}
+html[data-appearance=full] body[data-view=session] .sq-kind {border-radius:0;background:#195b99;color:#fff;font-size:12px;padding:5px 12px}
+html[data-appearance=full] body[data-view=session] .q-stem {padding:20px 22px;border-left:3px solid #46dff5;line-height:1.95}
+html[data-appearance=full] body[data-view=session] .opts {gap:10px;margin-top:18px}
+html[data-appearance=full] body[data-view=session] .opt {
+  min-width:64px;height:52px;border:0;border-bottom:3px solid #46a6d4;border-radius:0;
+  background:#164479;color:#fff;font:900 italic 22px PersonaMenu,sans-serif;
+  transition:background .16s ease,transform .16s ease;
+}
+html[data-appearance=full] body[data-view=session] .opt:is(:hover,:focus-visible,.picked) {background:#f1fcff;color:#072859;border-color:#49e6ff;transform:translateY(-2px)}
+html[data-appearance=full] body[data-view=session] .opt.correct {background:var(--green-bg);color:var(--green);border-color:var(--green)}
+html[data-appearance=full] body[data-view=session] .opt.wrong {background:var(--red-bg);color:var(--red);border-color:var(--red)}
+html[data-appearance=full] body[data-view=session] .submit-bar {position:static;width:max-content;max-width:100%;margin:28px auto 12px;background:#092351;border-radius:0}
+html[data-appearance=full] body[data-view=session] .submit-bar .btn {min-height:54px;padding-inline:32px;font-weight:800}
+/* FeMC 的粉色世界保持圓角，不沿用日間尖角。 */
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) .page-head {background:linear-gradient(110deg,#351127,#6c214c);border-left-color:#ffb9dc;border-radius:16px}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) .page-title {text-shadow:3px 3px 0 #a0205d}
+html[data-appearance=full][data-theme=night] body[data-view=practice] :is(.inventory-years,.inventory-topics) {background:#35142de8;border-radius:16px}
+html[data-appearance=full][data-theme=night] body[data-view=practice] :is(.inventory-years h2,.inventory-topics h2) {color:#ffc5df}
+html[data-appearance=full][data-theme=night] body[data-view=practice] :is(.inventory-year,.practice-topic) {background:#42182f;border-left-color:#f18ab8;border-radius:14px}
+html[data-appearance=full][data-theme=night] body[data-view=practice] :is(.inventory-year,.practice-topic):is(:hover,:focus-visible,[aria-pressed=true],.inspected) {background:#fff0f7;color:#42112d}
+html[data-appearance=full][data-theme=night] body[data-view=practice] :is(.inventory-year,.practice-topic):is(:hover,:focus-visible,[aria-pressed=true],.inspected) :is(.year-number,.year-name,.year-meters,.year-meters b,.topic-name,.topic-meta,.practice-topic-code) {color:#42112d}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) :is(.sq,.rq,.ml-question,.panel,.stat-card,.rec-card,.ml-filters,.ml-summary,.topic-info) {background:#35162b;border-radius:14px;border-left-color:#ee82b3}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) :is(.q-stem,.ml-stem,.ans-box,.chk-form) {background:#251020;color:#fff4fa}
+html[data-appearance=full][data-theme=night] body[data-view=session] .sq-head {border-color:#f4a3c766}
+html[data-appearance=full][data-theme=night] body[data-view=session] .sq-no {background:#ffb9d9;color:#42112d;border-radius:12px;box-shadow:4px 4px 0 #951c5a}
+html[data-appearance=full][data-theme=night] body[data-view=session] .sq-kind {background:#723252;color:#fff;border-radius:20px}
+html[data-appearance=full][data-theme=night] body[data-view=session] .q-stem {border-left-color:#ff9cc7}
+html[data-appearance=full][data-theme=night] body[data-view=session] .opt {background:#632b49;color:#fff;border-color:#ed93bd;border-radius:12px}
+html[data-appearance=full][data-theme=night] body[data-view=session] .opt:is(:hover,:focus-visible,.picked) {background:#fff0f7;color:#42112d}
+html[data-appearance=full][data-theme=night] body[data-view=session] .opt.correct {background:var(--green-bg);color:var(--green);border-color:var(--green)}
+html[data-appearance=full][data-theme=night] body[data-view=session] .opt.wrong {background:var(--red-bg);color:var(--red);border-color:var(--red)}
+html[data-appearance=full][data-theme=night] body[data-view=session] .submit-bar {background:#35162b;border-radius:14px}
+@media(max-width:860px) {
+  html[data-appearance=full] body:not([data-view=home]) .page-head {padding:18px 16px;gap:12px}
+  html[data-appearance=full] body:not([data-view=home]) .page-title {font-size:25px}
+  html[data-appearance=full] body[data-view=practice] :is(.inventory-years h2,.inventory-topics h2) {font-size:21px}
+  html[data-appearance=full] body[data-view=practice] :is(.inventory-years,.inventory-topics) {padding:15px}
+  html[data-appearance=full] body:not([data-view=home]) :is(.sq,.rq,.ml-question) {box-shadow:4px 4px 0 #00163855}
+  html[data-appearance=full] body[data-view=session] .page-head {display:flex;flex-direction:column;align-items:stretch}
+  html[data-appearance=full] body[data-view=session] .head-actions {display:flex;align-items:center;justify-content:space-between;gap:10px}
+  html[data-appearance=full] body[data-view=session] .sq {padding:18px 16px 20px}
+  html[data-appearance=full] body[data-view=session] .sq-head {gap:9px;margin-bottom:14px;padding-bottom:12px}
+  html[data-appearance=full] body[data-view=session] .sq-no {min-width:44px;height:40px;font-size:26px}
+  html[data-appearance=full] body[data-view=session] .q-stem {padding:14px}
+  html[data-appearance=full] body[data-view=session] .opt {min-width:50px;width:50px;height:48px}
+  html[data-appearance=full] body[data-view=session] .submit-bar .btn {min-height:48px;padding:10px 18px}
+}
+@media(prefers-reduced-motion:reduce) {
+  html[data-appearance=full] body[data-view=practice] :is(.inventory-year,.practice-topic) {transition:none}
+  html[data-appearance=full] body[data-view=session] .opt {transition:none}
+}
+
+/* 內容場景：讓水下背景退到後景，讓題目成為視覺焦點。 */
+html[data-appearance=full] body:not([data-view=home]) .visual-world::after {
+  display:block; background:linear-gradient(120deg,rgba(3,17,44,.79),rgba(3,25,64,.70));
+}
+html[data-appearance=full] body:not([data-view=home]) .visual-character {
+  opacity:.24; filter:blur(6px) saturate(.72);
+}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) .visual-world::after {
+  background:linear-gradient(120deg,rgba(35,9,30,.85),rgba(67,13,45,.74));
+}
+/* 選單語彙：用大字與空間建立層次，僅選擇項給予高反差。 */
+html[data-appearance=full] body:not([data-view=home]) .page-head {
+  background:transparent; box-shadow:none; border:0; padding:26px 0 24px;
+}
+html[data-appearance=full] body:not([data-view=home]) .page-title {
+  font-size:clamp(32px,3.7vw,54px); font-weight:900; line-height:1.12;
+  text-shadow:4px 4px 0 #004d99; letter-spacing:0;
+}
+html[data-appearance=full] body:not([data-view=home]) .page-title::before {
+  display:block; color:#68eaff; font:900 italic 14px/1.3 PersonaMenu,sans-serif;
+  letter-spacing:.16em; text-shadow:none; margin-bottom:10px;
+}
+html[data-appearance=full] body[data-view=practice] .page-title::before {content:'TOPICS / SELECT';}
+html[data-appearance=full] body[data-view=session] .page-title::before {content:'PRACTICE / FOCUS';}
+html[data-appearance=full] body[data-view=records] .page-title::before {content:'RECORDS / HISTORY';}
+html[data-appearance=full] body[data-view=library] .page-title::before {content:'ARCHIVE / REVIEW';}
+html[data-appearance=full] body:not([data-view=home]) :is(.panel,.stat-card,.rec-card,.ml-filters,.ml-summary,.saved-card,.rp-head,.topic-card,.ml-subject,.ml-topic,.library-hub-card,.paper-subject,.paper-year,.soon-banner) {
+  background:#0a2352ed; border:0; border-left:3px solid #2dbde0; border-radius:0; box-shadow:none;
+}
+html[data-appearance=full] body:not([data-view=home]) :is(.panel-h,.ml-question-title,.ml-topic-code,.stat-val) {
+  font-weight:900; letter-spacing:.01em;
+}
+html[data-appearance=full] body[data-view=session] :is(.sq,.q-stem) {box-shadow:none;}
+html[data-appearance=full] body[data-view=session] .sq {background:#0a2049f5;border-left:3px solid #44dff5;}
+html[data-appearance=full] body[data-view=session] .q-stem {background:#071a3b;border-left:0;}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) .page-head {background:transparent;border:0;box-shadow:none}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) .page-title::before {color:#ffbfda}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) :is(.panel,.stat-card,.rec-card,.ml-filters,.ml-summary,.saved-card,.rp-head,.topic-card,.ml-subject,.ml-topic,.library-hub-card,.paper-subject,.paper-year,.soon-banner,.sq) {background:#35162bf5;border-left-color:#ee82b3;border-radius:14px}
+html[data-appearance=full][data-theme=night] body[data-view=session] .q-stem {background:#251020}
+@media(max-width:860px){
+  html[data-appearance=full] body:not([data-view=home]) .page-head {padding:18px 0;}
+  html[data-appearance=full] body:not([data-view=home]) .page-title {font-size:30px;}
+  html[data-appearance=full] body:not([data-view=home]) .page-title::before {font-size:12px;margin-bottom:7px;}
+}
+/* 小屏記錄操作換行；夜間細節跟隨粉色主題。 */
+html[data-appearance=full][data-theme=night] body[data-view=practice] .practice-topic-count {background:#8d315c;color:#fff0f7;border-radius:8px}
+html[data-appearance=full][data-theme=night] body[data-view=records] :is(.stat-icon,.stat-ico) {background:#78234e;color:#ffc6e0}
+html[data-appearance=full] body[data-library=books] :is(.archive-backdrop,.archive-tint,.archive-art) {display:none}
+@media(max-width:650px){
+ html[data-appearance=full] body[data-view=records] .page-head {display:flex;flex-direction:column;align-items:stretch}
+ html[data-appearance=full] body[data-view=records] .record-tools {display:flex;flex-wrap:wrap;gap:8px;width:100%}
+ html[data-appearance=full] body[data-view=records] .record-tools .btn {flex:1 1 120px}
+ html[data-appearance=full] body[data-view=records] .page-head > a {align-self:flex-start}
+}
+
+/* 水下場景與首頁同系，閱讀面板本身提供對比。 */
+html[data-appearance=full][data-theme=day] body:not([data-view=home]) .visual-world::after {background:linear-gradient(110deg,rgba(1,27,74,.36),rgba(0,42,112,.20));}
+html[data-appearance=full][data-theme=day] body:not([data-view=home]) .visual-character {opacity:.68;filter:blur(2px) saturate(.92)}
+html[data-appearance=full][data-theme=day] body:not([data-view=home]) :is(.page-title,.page-sub){text-shadow:2px 3px 3px #001d50,4px 4px 0 #004d99}
+
+/* 淺色水面上的標題增加局部襯底；題幹維持單層閱讀面。 */
+html[data-appearance=full] body:not([data-view=home]) .page-head>div:first-child{background:linear-gradient(90deg,#082858d9 0%,#082858a8 78%,transparent 100%);padding:10px 28px 12px 14px}
+html[data-appearance=full] body:not([data-view=home]) .page-sub{color:#fff;text-shadow:0 1px 3px #001638}
+html[data-appearance=full] body[data-view=session] .q-stem{background:transparent;padding:8px 0 4px;line-height:1.8}
+html[data-appearance=full] body[data-view=session] .sq-head{margin-bottom:12px}
+html[data-appearance=full][data-theme=night] body:not([data-view=home]) .page-head>div:first-child{background:linear-gradient(90deg,#42132ed9,#42132ea8 78%,transparent)}
+html[data-appearance=full][data-theme=night] body[data-view=session] .q-stem{background:transparent}

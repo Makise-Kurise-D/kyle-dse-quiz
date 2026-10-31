@@ -11,6 +11,8 @@
 <link rel="stylesheet" href="style.css?v=practice-content-20261021">
 <link rel="stylesheet" href="library.css?v=account-subjects-20261023">
 <link rel="stylesheet" href="appearance.css?v=frame-spacing-left-20261028">
+<link rel="stylesheet" href="immersive.css?v=20261031">
+<link rel="stylesheet" href="immersive-pages.css?v=20261031">
 </head>
 <body>
 <a class="skip-link" id="skipLink" href="#app">跳至主要內容</a>
@@ -62,6 +64,7 @@
   </button>
 </nav>
 
+<details class="compact-nav" id="compactNav"><summary aria-label="開啟導覽">☰ <span>MENU</span></summary><nav aria-label="頁面導覽"><a href="#/">主頁 HOME</a><a href="#/practice">練習 TOPICS</a><a href="#/library/books">錯題庫 ARCHIVE</a><a href="#/library/papers">批改卷 PAPERS</a><a href="#/records">記錄 RECORDS</a><button type="button" id="compactReset">重設本輪進度</button></nav></details>
 <div class="content-scroll" id="contentScroll">
 <main class="app" id="app" tabindex="-1">
   <section class="home"><div class="hero">
@@ -92,6 +95,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
+<script>document.getElementById("compactReset").addEventListener("click", function(){ document.getElementById("compactNav").open=false; document.getElementById("railReset").click(); }); document.querySelectorAll("#compactNav a").forEach(function(a){ a.addEventListener("click", function(){document.getElementById("compactNav").open=false;});});</script>
 <script>window.QUIZ_SYNC_API="https://snowy-cake-a0a7.3355718646.workers.dev";</script>
 <script>
 window.addEventListener('error', function () {
@@ -104,7 +108,7 @@ window.addEventListener('error', function () {
 <script defer src="subject-config.js?v=account-subjects-20261023"></script>
 <script defer src="library.js?v=mock-test-order-20261027"></script>
 <script defer src="paper-reader.js?v=reader-mistake-jump-fit-20261023"></script>
-<script defer src="app.js?v=mock-image-fix-20261028"></script>
+<script defer src="app.js?v=immersive-20261031"></script>
 </body>
 </html>
 
